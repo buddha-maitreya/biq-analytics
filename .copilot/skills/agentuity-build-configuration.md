@@ -1,0 +1,239 @@
+# Agentuity — Build Configuration
+
+> Source: https://agentuity.dev/Reference/CLI/build-configuration
+
+Customize how your project is built by creating an `agentuity.config.ts` file in your project root. Add Vite plugins for frontend builds or define build-time constants.
+
+## Basic Configuration
+
+```typescript
+import type { AgentuityConfig } from '@agentuity/cli';
+
+export default {
+  // Configuration options here
+} satisfies AgentuityConfig;
+```
+
+---
+
+## Configuration Options
+
+### plugins
+
+Add Vite plugins for frontend builds (`src/web/`). Plugins run after built-in plugins (React, environment variables).
+
+```typescript
+import type { AgentuityConfig } from '@agentuity/cli';
+import tailwindcss from '@tailwindcss/vite';
+
+export default {
+  plugins: [tailwindcss()],
+} satisfies AgentuityConfig;
+```
+
+See the [Vite plugin documentation](https://vitejs.dev/plugins/) for available plugins.
+
+> **Frontend Only:** Vite plugins apply to frontend builds only. Server code is bundled separately with Bun.
+
+### define
+
+Replace identifiers with constant values at build time. Values must be JSON-stringified.
+
+```typescript
+import type { AgentuityConfig } from '@agentuity/cli';
+
+export default {
+  define: {
+    'API_VERSION': JSON.stringify('v2'),
+    '__DEV__': JSON.stringify(false),
+  },
+} satisfies AgentuityConfig;
+```
+
+> **Reserved Keys:** These keys are set by the build system and will override any user-defined values:
+> - `import.meta.env.AGENTUITY_PUBLIC_*` (Agentuity internal variables)
+> - `process.env.NODE_ENV`
+
+### workbench
+
+Configure the development Workbench UI. See [Testing with Workbench](https://agentuity.dev/Agents/workbench) for usage.
+
+```typescript
+import type { AgentuityConfig } from '@agentuity/cli';
+
+export default {
+  workbench: {
+    route: '/workbench',  // Access at http://localhost:3500/workbench
+    headers: {},          // Custom headers for requests
+  },
+} satisfies AgentuityConfig;
+```
+
+Omit the `workbench` section to disable Workbench.
+
+---
+
+## Environment Variables
+
+Environment variables with these prefixes are available in frontend code:
+
+| Prefix | Description |
+|--------|-------------|
+| `VITE_*` | Standard Vite convention |
+| `AGENTUITY_PUBLIC_*` | Agentuity convention |
+| `PUBLIC_*` | Short form |
+
+```typescript
+// .env.local
+AGENTUITY_PUBLIC_API_URL=https://api.example.com
+
+// src/web/App.tsx
+const apiUrl = import.meta.env.AGENTUITY_PUBLIC_API_URL;
+```
+
+> **Security:** Public environment variables are bundled into frontend code and visible in the browser. Never put secrets or API keys in public variables.
+
+---
+
+## Public Assets
+
+Static files like images, fonts, and documents go in `src/web/public/`. Reference them with `/public/` paths in your frontend code.
+
+```tsx
+// src/web/App.tsx
+export function App() {
+  return (
+    <div>
+      <img src="/public/logo.svg" alt="Logo" />
+      <link rel="icon" href="/public/favicon.ico" />
+    </div>
+  );
+}
+```
+
+**How it works:**
+
+- **Development:** Assets served via local proxy at `http://localhost:3500/public/*`
+- **Production:** Uploaded to CDN and paths rewritten to CDN URLs
+- **Build:** Vite plugin auto-corrects asset paths and warns about incorrect patterns
+
+### File Structure
+
+```
+src/web/public/
+├── logo.svg
+├── favicon.ico
+├── images/
+│   ├── hero.png
+│   └── thumbnail.jpg
+└── fonts/
+    └── custom.woff2
+```
+
+### Correct Path Patterns
+
+Use `/public/` prefix for all static assets:
+
+```tsx
+// Recommended — absolute path
+<img src="/public/logo.svg" />
+
+// Also works — relative path
+<img src="./public/logo.svg" />
+
+// Incorrect — references source path
+<img src="/src/web/public/logo.svg" />
+```
+
+The build system automatically rewrites `/public/` paths to CDN URLs in production:
+
+```tsx
+// Development
+<img src="/public/logo.svg" />
+
+// Production (after build)
+<img src="https://cdn.agentuity.com/{deployment}/client/logo.svg" />
+```
+
+### Using with CSS
+
+Public assets work in CSS files:
+
+```css
+/* src/web/styles.css */
+.hero {
+  background-image: url('/public/images/hero.png');
+}
+
+@font-face {
+  font-family: 'Custom';
+  src: url('/public/fonts/custom.woff2') format('woff2');
+}
+```
+
+### Fetch API and Dynamic Paths
+
+Reference public assets in JavaScript:
+
+```typescript
+// Fetch text file
+const response = await fetch('/public/data.json');
+const data = await response.json();
+
+// Dynamic image loading
+const theme = 'dark';
+const imagePath = `/public/images/logo-${theme}.png`;
+```
+
+### Development Warnings
+
+The build system warns about incorrect paths during development:
+
+```
+Found incorrect asset path(s):
+  - 'src/web/public/' should be '/public/'
+Use '/public/...' paths for static assets.
+```
+
+Fix these warnings by updating paths to use the `/public/` prefix.
+
+---
+
+## Build Architecture
+
+Agentuity uses a hybrid build system:
+
+| Component | Tool | Output |
+|-----------|------|--------|
+| Frontend (`src/web/`) | Vite | `.agentuity/client/` |
+| Workbench | Vite | `.agentuity/workbench/` |
+| Server (agents, routes) | Bun | `.agentuity/app.js` |
+
+This separation allows Vite's optimizations for frontend (HMR, tree-shaking, CSS processing) while using Bun's fast bundling for server code.
+
+For details on how these components interact during development, see [Dev Server Architecture](https://agentuity.dev/Reference/CLI/development#dev-server-architecture).
+
+---
+
+## Full Example
+
+```typescript
+import type { AgentuityConfig } from '@agentuity/cli';
+import tailwindcss from '@tailwindcss/vite';
+
+export default {
+  // Vite plugins for frontend
+  plugins: [tailwindcss()],
+
+  // Build-time constants
+  define: {
+    'APP_VERSION': JSON.stringify('1.0.0'),
+  },
+
+  // Development workbench
+  workbench: {
+    route: '/workbench',
+    headers: {},
+  },
+} satisfies AgentuityConfig;
+```

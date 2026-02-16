@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+bun.lockb
+
+# Build output
+dist/
+.agentuity/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Database
+src/db/migrations/meta/
+
+# Editor
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

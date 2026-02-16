@@ -1,0 +1,9 @@
+export * as productService from "./products";
+export * as categoryService from "./categories";
+export * as customerService from "./customers";
+export * as warehouseService from "./warehouses";
+export * as inventoryService from "./inventory";
+export * as orderService from "./orders";
+export * as invoiceService from "./invoices";
+export * as pricingService from "./pricing";
+export * as adminService from "./admin";

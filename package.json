@@ -1,0 +1,38 @@
+{
+  "name": "business-iq-enterprise",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "agentuity dev",
+    "build": "agentuity build",
+    "deploy": "agentuity deploy",
+    "db:generate": "bunx drizzle-kit generate",
+    "db:migrate": "bunx drizzle-kit migrate",
+    "db:push": "bunx drizzle-kit push",
+    "db:studio": "bunx drizzle-kit studio"
+  },
+  "dependencies": {
+    "@agentuity/runtime": "latest",
+    "@agentuity/schema": "latest",
+    "@agentuity/react": "latest",
+    "@agentuity/postgres": "latest",
+    "@agentuity/drizzle": "latest",
+    "drizzle-orm": "^0.38.0",
+    "ai": "^4.0.0",
+    "@ai-sdk/openai": "^1.0.0",
+    "@ai-sdk/anthropic": "^1.0.0",
+    "@ai-sdk/groq": "^1.0.0",
+    "zod": "^3.23.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.30.0",
+    "@agentuity/cli": "latest",
+    "typescript": "^5.7.0",
+    "@types/bun": "latest",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0"
+  }
+}

@@ -339,21 +339,213 @@ agentuity deploy
      cd ~/business-iq-enterprise && git pull && agentuity deploy
 ```
 
-### Per-Client Deployment
+---
 
-Each client gets their own isolated deployment:
+## New Client Installation Guide
+
+Every client gets their own fully isolated deployment — separate Agentuity project, separate database, separate configuration. The process below can be performed by the client themselves (self-service) or by the vendor on the client's behalf.
+
+### Prerequisites (One-Time)
+
+The person deploying needs:
+
+| Requirement | How to Install |
+|------------|---------------|
+| **Bun** (v1.3+) | `curl -fsSL https://bun.sh/install \| bash` |
+| **Agentuity CLI** (v1.0+) | `curl -sSL https://agentuity.sh \| sh` |
+| **Git** | Pre-installed on most systems, or `sudo apt install git` |
+| **Agentuity Account** | Sign up at [app.agentuity.com](https://app.agentuity.com) |
+| **Linux / macOS / WSL** | Windows users need WSL Ubuntu 24.04 for builds |
+
+### Step-by-Step Installation
+
+#### 1. Authenticate with Agentuity
 
 ```bash
-# 1. Create project for client
-agentuity project create --name "client-name" --database new
+agentuity login
+```
 
-# 2. Configure environment variables (branding, labels, API keys)
-# 3. Deploy
+This opens a browser for authentication. Follow the prompts to log in.
+
+#### 2. Clone the Repository
+
+```bash
+git clone https://github.com/buddha-maitreya/business-iq-enterprise.git
+cd business-iq-enterprise
+```
+
+#### 3. Install Dependencies
+
+```bash
+bun install
+```
+
+#### 4. Create Client Project & Database
+
+```bash
+agentuity project create --name "client-company-name" --database new --no-build
+```
+
+This command:
+- Registers the project with Agentuity cloud
+- Creates `agentuity.json` with the new `projectId` and `orgId`
+- Provisions a dedicated Neon Postgres database
+- Auto-injects `DATABASE_URL` and `AGENTUITY_SDK_KEY` into the environment
+
+> **`--no-build`** skips the initial build (we configure env vars first).
+
+#### 5. Pull Environment Secrets
+
+```bash
+agentuity cloud env pull
+```
+
+This writes `DATABASE_URL` and `AGENTUITY_SDK_KEY` into `.env`.
+
+#### 6. Configure Client Environment
+
+Edit `.env` (or set via Agentuity dashboard → Secrets) with client-specific values:
+
+```env
+# ── Branding ──────────────────────────────────
+COMPANY_NAME=Acme Corporation
+COMPANY_LOGO_URL=https://acme.com/logo.png
+
+# ── Localization ──────────────────────────────
+CURRENCY=USD
+TAX_RATE=0.08
+TIMEZONE=America/New_York
+
+# ── Industry Terminology ──────────────────────
+# Customize labels to match the client's industry.
+# These control what the UI displays — the code never changes.
+PRODUCT_LABEL=Product
+PRODUCT_LABEL_PLURAL=Products
+ORDER_LABEL=Order
+ORDER_LABEL_PLURAL=Orders
+CUSTOMER_LABEL=Customer
+CUSTOMER_LABEL_PLURAL=Customers
+WAREHOUSE_LABEL=Warehouse
+INVOICE_LABEL=Invoice
+UNIT_DEFAULT=piece
+
+# ── AI Provider ───────────────────────────────
+LLM_PROVIDER_KEY=sk-...    # OpenAI, Anthropic, or Groq API key
+```
+
+**Industry examples:**
+
+| Setting | Restaurant | Hardware Store | Medical Supplier |
+|---------|-----------|---------------|-----------------|
+| `PRODUCT_LABEL` | Menu Item | Product | Supply |
+| `ORDER_LABEL` | Ticket | Sales Order | Requisition |
+| `CUSTOMER_LABEL` | Guest | Customer | Facility |
+| `WAREHOUSE_LABEL` | Kitchen | Store | Distribution Center |
+| `UNIT_DEFAULT` | portion | piece | unit |
+
+#### 7. Push Environment to Cloud
+
+```bash
+agentuity cloud env push
+```
+
+This syncs your `.env` values to the Agentuity cloud so the deployed app can read them.
+
+#### 8. Deploy
+
+```bash
 agentuity deploy
+```
 
-# 4. Run migrations
+Expected output:
+```
+✓ Sync Env & Secrets
+✓ Build, Verify and Package
+  ✓ Typechecked in ~12s
+  ✓ Client built in ~2s
+  ✓ Server built in ~1s
+✓ Security Scan
+✓ Encrypt and Upload Deployment
+✓ Provision Deployment
+✓ Your project was deployed!
+
+→ Project: https://client-company-name-org-name.agentuity.run
+```
+
+#### 9. Run Database Migrations
+
+```bash
 bunx drizzle-kit migrate
 ```
+
+This creates all tables in the client's dedicated database.
+
+#### 10. (Optional) Seed Initial Data
+
+```bash
+bun scripts/seed-demo.ts
+```
+
+Populates the database with starter data: default order statuses, sample tax rules, and optionally sample products/customers for testing.
+
+### Post-Installation Checklist
+
+| Step | Verify |
+|------|--------|
+| App loads | Visit the project URL — dashboard should render |
+| Health check | `GET /api/health` returns `{"status":"ok"}` |
+| Branding correct | Company name and labels match `.env` config |
+| Database connected | Products/Customers pages load (empty is fine) |
+| AI working | AI Assistant page responds to messages |
+
+### Updating a Client Deployment
+
+When new features are released:
+
+```bash
+cd business-iq-enterprise
+git pull                    # Get latest code
+agentuity deploy            # Rebuild and deploy
+bunx drizzle-kit migrate    # Apply any new migrations (safe to re-run)
+```
+
+The client's data, configuration, and environment variables are preserved across deployments. Only the code is updated.
+
+### Architecture: What Each Client Gets
+
+```
+┌────────────────────────────────────────────────┐
+│  Client: Acme Corporation                      │
+│                                                │
+│  Agentuity Project: acme-corp-biq              │
+│  URL: acme-corp-biq-org.agentuity.run          │
+│                                                │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────┐ │
+│  │ Frontend │  │  Server  │  │  4 AI Agents │ │
+│  │ (React)  │  │  (Hono)  │  │              │ │
+│  └──────────┘  └──────────┘  └──────────────┘ │
+│                      │                         │
+│                      ▼                         │
+│            ┌──────────────────┐                │
+│            │  Neon Postgres   │                │
+│            │  (dedicated DB)  │                │
+│            └──────────────────┘                │
+│                                                │
+│  Config: COMPANY_NAME=Acme Corporation         │
+│          CURRENCY=USD                          │
+│          PRODUCT_LABEL=Product                 │
+│          ...                                   │
+└────────────────────────────────────────────────┘
+```
+
+Each client is completely isolated:
+- **Separate compute** — own Agentuity deployment
+- **Separate database** — own Neon Postgres instance
+- **Separate config** — own environment variables
+- **Separate URL** — own subdomain
+- **Separate AI context** — own knowledge base and conversation history
+
+No data crosses between clients. No shared infrastructure. No tenant ID columns.
 
 ---
 

@@ -43,4 +43,10 @@ router.post("/orders/:id/cancel", async (c) => {
   return c.json({ data: result });
 });
 
+router.put("/orders/:id/payment", async (c) => {
+  const body = await c.req.json();
+  const order = await svc.updateOrderPayment(c.req.param("id"), body);
+  return c.json({ data: order });
+});
+
 export default router;

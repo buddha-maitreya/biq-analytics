@@ -1,5 +1,5 @@
-import { db, orderStatuses, taxRules, users } from "@db/index";
-import { eq, sql } from "drizzle-orm";
+import { db, orderStatuses, taxRules, users, orders, invoices, payments, products, inventory, categories, customers, warehouses } from "@db/index";
+import { eq, sql, gte, and, inArray, ne, asc, desc } from "drizzle-orm";
 import { NotFoundError } from "@lib/errors";
 import { z } from "zod";
 
@@ -17,7 +17,7 @@ export const orderStatusSchema = z.object({
 
 export async function listOrderStatuses() {
   return db.query.orderStatuses.findMany({
-    orderBy: (s, { asc }) => [asc(s.sortOrder)],
+    orderBy: [asc(orderStatuses.sortOrder)],
   });
 }
 
@@ -83,7 +83,7 @@ export const taxRuleSchema = z.object({
 
 export async function listTaxRules() {
   return db.query.taxRules.findMany({
-    orderBy: (r, { asc }) => [asc(r.name)],
+    orderBy: [asc(taxRules.name)],
   });
 }
 
@@ -138,34 +138,117 @@ export async function deleteTaxRule(id: string) {
   return rule;
 }
 
-// ─── User Management ─────────────────────────────────────────
+// ─── RBAC Constants ──────────────────────────────────────────
+
+export const ROLES = ["super_admin", "admin", "manager", "staff", "viewer"] as const;
+export type Role = (typeof ROLES)[number];
+
+/** Role hierarchy — higher index = more privilege */
+const ROLE_RANK: Record<Role, number> = {
+  viewer: 0,
+  staff: 1,
+  manager: 2,
+  admin: 3,
+  super_admin: 4,
+};
+
+/** All available permission modules */
+export const ALL_PERMISSIONS = [
+  "dashboard",
+  "products",
+  "orders",
+  "customers",
+  "inventory",
+  "invoices",
+  "reports",
+  "pos",
+  "admin",
+  "settings",
+] as const;
+export type Permission = (typeof ALL_PERMISSIONS)[number];
+
+/** Default permissions per role (when no explicit permissions are set) */
+const DEFAULT_PERMS: Record<Role, Permission[]> = {
+  super_admin: [...ALL_PERMISSIONS],
+  admin: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "pos", "admin"],
+  manager: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "pos"],
+  staff: ["dashboard", "pos"],
+  viewer: ["dashboard"],
+};
+
+/** Check if actingRole can manage targetRole */
+export function canManageRole(actingRole: Role, targetRole: Role): boolean {
+  return ROLE_RANK[actingRole] > ROLE_RANK[targetRole];
+}
+
+/** Roles that a given role can assign to new users */
+export function assignableRoles(actingRole: Role): Role[] {
+  return ROLES.filter((r) => ROLE_RANK[r] < ROLE_RANK[actingRole]);
+}
+
+// ─── User Management (RBAC-enhanced) ─────────────────────────
 
 export const userSchema = z.object({
   email: z.string().email(),
   name: z.string().min(1).max(255),
-  role: z.enum(["admin", "manager", "staff"]).default("staff"),
+  role: z.enum(ROLES).default("staff"),
+  permissions: z.array(z.string()).optional(),
+  assignedWarehouses: z.array(z.string().uuid()).optional().nullable(),
+  isActive: z.boolean().optional(),
 });
 
-export async function listUsers() {
-  return db.query.users.findMany({
-    where: eq(users.isActive, true),
-    orderBy: (u, { asc }) => [asc(u.name)],
+export async function listAllUsers(includeInactive = false) {
+  const conditions = includeInactive ? undefined : eq(users.isActive, true);
+  const rows = await db.query.users.findMany({
+    where: conditions,
+    orderBy: [asc(users.name)],
     columns: { hashedPassword: false },
   });
+  return rows;
+}
+
+/** List users + their assigned warehouse names (for admin display) */
+export async function listUsersWithWarehouses() {
+  const allUsers = await db.query.users.findMany({
+    orderBy: [asc(users.name)],
+    columns: { hashedPassword: false },
+  });
+  const allWarehouses = await db.query.warehouses.findMany({
+    columns: { id: true, name: true, code: true },
+  });
+  const warehouseMap = new Map(allWarehouses.map((w: { id: string; name: string; code: string | null }) => [w.id, w]));
+
+  return allUsers.map((u: typeof allUsers[number]) => ({
+    ...u,
+    permissions: (u.permissions as string[] | null) ?? DEFAULT_PERMS[(u.role as Role) ?? "staff"],
+    warehouseDetails: ((u.assignedWarehouses as string[] | null) ?? [])
+      .map((wid) => warehouseMap.get(wid))
+      .filter(Boolean),
+    allAccess: !(u.assignedWarehouses as string[] | null) || (u.assignedWarehouses as string[]).length === 0,
+  }));
 }
 
 export async function createUser(data: unknown) {
   const parsed = userSchema.parse(data);
+  const perms = parsed.permissions ?? DEFAULT_PERMS[(parsed.role as Role) ?? "staff"];
 
   const [user] = await db
     .insert(users)
-    .values(parsed)
+    .values({
+      email: parsed.email,
+      name: parsed.name,
+      role: parsed.role,
+      permissions: perms,
+      assignedWarehouses: parsed.assignedWarehouses ?? null,
+    })
     .returning({
       id: users.id,
       email: users.email,
       name: users.name,
       role: users.role,
       isActive: users.isActive,
+      permissions: users.permissions,
+      assignedWarehouses: users.assignedWarehouses,
       createdAt: users.createdAt,
     });
 
@@ -175,9 +258,17 @@ export async function createUser(data: unknown) {
 export async function updateUser(id: string, data: unknown) {
   const parsed = userSchema.partial().parse(data);
 
+  const vals: Record<string, unknown> = {};
+  if (parsed.email != null) vals.email = parsed.email;
+  if (parsed.name != null) vals.name = parsed.name;
+  if (parsed.role != null) vals.role = parsed.role;
+  if (parsed.permissions !== undefined) vals.permissions = parsed.permissions;
+  if (parsed.assignedWarehouses !== undefined) vals.assignedWarehouses = parsed.assignedWarehouses;
+  if (parsed.isActive !== undefined) vals.isActive = parsed.isActive;
+
   const [user] = await db
     .update(users)
-    .set(parsed)
+    .set(vals)
     .where(eq(users.id, id))
     .returning({
       id: users.id,
@@ -185,6 +276,33 @@ export async function updateUser(id: string, data: unknown) {
       name: users.name,
       role: users.role,
       isActive: users.isActive,
+      permissions: users.permissions,
+      assignedWarehouses: users.assignedWarehouses,
+    });
+
+  if (!user) throw new NotFoundError("User", id);
+  return user;
+}
+
+export async function updateUserPermissions(
+  id: string,
+  permissions: string[],
+  assignedWarehouses?: string[] | null
+) {
+  const vals: Record<string, unknown> = { permissions };
+  if (assignedWarehouses !== undefined) vals.assignedWarehouses = assignedWarehouses;
+
+  const [user] = await db
+    .update(users)
+    .set(vals)
+    .where(eq(users.id, id))
+    .returning({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      role: users.role,
+      permissions: users.permissions,
+      assignedWarehouses: users.assignedWarehouses,
     });
 
   if (!user) throw new NotFoundError("User", id);
@@ -200,6 +318,27 @@ export async function deactivateUser(id: string) {
 
   if (!user) throw new NotFoundError("User", id);
   return user;
+}
+
+export async function activateUser(id: string) {
+  const [user] = await db
+    .update(users)
+    .set({ isActive: true })
+    .where(eq(users.id, id))
+    .returning({ id: users.id, email: users.email, name: users.name });
+
+  if (!user) throw new NotFoundError("User", id);
+  return user;
+}
+
+/** Get RBAC metadata for the frontend */
+export function getRBACConfig() {
+  return {
+    roles: ROLES,
+    roleRank: ROLE_RANK,
+    allPermissions: ALL_PERMISSIONS,
+    defaultPerms: DEFAULT_PERMS,
+  };
 }
 
 // ─── Dashboard Stats ─────────────────────────────────────────
@@ -223,5 +362,164 @@ export async function getDashboardStats() {
     orderCount: Number(orderCount),
     customerCount: Number(customerCount),
     totalRevenue: Number(totalRevenue),
+  };
+}
+
+// ─── Dashboard Chart Data ────────────────────────────────────
+
+export async function getDashboardChartData(startDate?: string, endDate?: string) {
+  const now = new Date();
+  const start = startDate ? new Date(startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = endDate ? new Date(endDate) : now;
+
+  // 1. Sales by day (line chart)
+  const salesByDay = await db.execute(
+    sql`SELECT
+          DATE(created_at) as date,
+          COUNT(*) as order_count,
+          COALESCE(SUM(total_amount), 0) as revenue
+        FROM orders
+        WHERE created_at >= ${start.toISOString()} AND created_at <= ${end.toISOString()}
+        GROUP BY DATE(created_at)
+        ORDER BY date ASC`
+  ) as any[];
+
+  // 2. Revenue by order status (pie chart)
+  const revenueByStatus = await db.execute(
+    sql`SELECT
+          os.name as status_name,
+          os.label as status_label,
+          os.color as status_color,
+          COUNT(o.id) as order_count,
+          COALESCE(SUM(o.total_amount), 0) as revenue
+        FROM orders o
+        LEFT JOIN order_statuses os ON o.status_id = os.id
+        WHERE o.created_at >= ${start.toISOString()} AND o.created_at <= ${end.toISOString()}
+        GROUP BY os.name, os.label, os.color
+        ORDER BY revenue DESC`
+  ) as any[];
+
+  // 3. Inventory by category (bar chart)
+  const inventoryByCategory = await db.execute(
+    sql`SELECT
+          c.name as category_name,
+          COUNT(DISTINCT i.product_id) as product_count,
+          COALESCE(SUM(i.quantity), 0) as total_qty,
+          COALESCE(SUM(i.quantity * CAST(p.price AS NUMERIC)), 0) as total_value
+        FROM inventory i
+        INNER JOIN products p ON i.product_id = p.id
+        LEFT JOIN categories c ON p.category_id = c.id
+        WHERE p.is_active = true
+        GROUP BY c.name
+        ORDER BY total_value DESC`
+  ) as any[];
+
+  // 4. Invoice receivables (bar chart - paid vs outstanding)
+  const invoiceStats = await db.execute(
+    sql`SELECT
+          status,
+          COUNT(*) as invoice_count,
+          COALESCE(SUM(total_amount), 0) as total_billed,
+          COALESCE(SUM(paid_amount), 0) as total_paid,
+          COALESCE(SUM(total_amount - paid_amount), 0) as outstanding
+        FROM invoices
+        WHERE created_at >= ${start.toISOString()} AND created_at <= ${end.toISOString()}
+        GROUP BY status
+        ORDER BY total_billed DESC`
+  ) as any[];
+
+  // 5. Top customers by revenue (bar chart)
+  const topCustomers = await db.execute(
+    sql`SELECT
+          cu.name as customer_name,
+          COUNT(o.id) as order_count,
+          COALESCE(SUM(o.total_amount), 0) as revenue
+        FROM orders o
+        INNER JOIN customers cu ON o.customer_id = cu.id
+        WHERE o.created_at >= ${start.toISOString()} AND o.created_at <= ${end.toISOString()}
+        GROUP BY cu.name
+        ORDER BY revenue DESC
+        LIMIT 10`
+  ) as any[];
+
+  // 6. Top selling products (bar chart)
+  const topProducts = await db.execute(
+    sql`SELECT
+          p.name as product_name,
+          p.sku,
+          COALESCE(SUM(oi.quantity), 0) as units_sold,
+          COALESCE(SUM(oi.total_amount), 0) as revenue
+        FROM order_items oi
+        INNER JOIN products p ON oi.product_id = p.id
+        INNER JOIN orders o ON oi.order_id = o.id
+        WHERE o.created_at >= ${start.toISOString()} AND o.created_at <= ${end.toISOString()}
+        GROUP BY p.name, p.sku
+        ORDER BY revenue DESC
+        LIMIT 10`
+  ) as any[];
+
+  // 7. Low stock count
+  const [{ lowStockCount }] = await db.execute(
+    sql`SELECT COUNT(*) as "lowStockCount"
+        FROM inventory i
+        INNER JOIN products p ON i.product_id = p.id
+        WHERE i.quantity <= COALESCE(p.reorder_point, p.min_stock_level, 0)
+          AND COALESCE(p.reorder_point, p.min_stock_level, 0) > 0`
+  ) as any;
+
+  // 8. Payment collection (for the period)
+  const paymentStats = await db.execute(
+    sql`SELECT
+          COALESCE(SUM(CASE WHEN i.status = 'paid' THEN i.total_amount ELSE 0 END), 0) as fully_paid,
+          COALESCE(SUM(CASE WHEN i.status = 'partial' THEN i.paid_amount ELSE 0 END), 0) as partially_paid,
+          COALESCE(SUM(CASE WHEN i.status IN ('sent', 'draft', 'overdue') THEN i.total_amount - i.paid_amount ELSE 0 END), 0) as unpaid
+        FROM invoices i
+        WHERE i.created_at >= ${start.toISOString()} AND i.created_at <= ${end.toISOString()}`
+  ) as any[];
+
+  return {
+    period: { start: start.toISOString(), end: end.toISOString() },
+    salesByDay: salesByDay.map((r: any) => ({
+      date: r.date,
+      orderCount: Number(r.order_count),
+      revenue: Number(r.revenue),
+    })),
+    revenueByStatus: revenueByStatus.map((r: any) => ({
+      name: r.status_name,
+      label: r.status_label ?? r.status_name,
+      color: r.status_color ?? "#888",
+      orderCount: Number(r.order_count),
+      revenue: Number(r.revenue),
+    })),
+    inventoryByCategory: inventoryByCategory.map((r: any) => ({
+      category: r.category_name ?? "Uncategorized",
+      productCount: Number(r.product_count),
+      totalQty: Number(r.total_qty),
+      totalValue: Number(r.total_value),
+    })),
+    invoiceStats: invoiceStats.map((r: any) => ({
+      status: r.status,
+      count: Number(r.invoice_count),
+      totalBilled: Number(r.total_billed),
+      totalPaid: Number(r.total_paid),
+      outstanding: Number(r.outstanding),
+    })),
+    topCustomers: topCustomers.map((r: any) => ({
+      name: r.customer_name,
+      orderCount: Number(r.order_count),
+      revenue: Number(r.revenue),
+    })),
+    topProducts: topProducts.map((r: any) => ({
+      name: r.product_name,
+      sku: r.sku,
+      unitsSold: Number(r.units_sold),
+      revenue: Number(r.revenue),
+    })),
+    lowStockCount: Number(lowStockCount),
+    paymentCollection: {
+      fullyPaid: Number(paymentStats[0]?.fully_paid ?? 0),
+      partiallyPaid: Number(paymentStats[0]?.partially_paid ?? 0),
+      unpaid: Number(paymentStats[0]?.unpaid ?? 0),
+    },
   };
 }

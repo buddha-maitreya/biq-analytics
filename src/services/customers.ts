@@ -1,5 +1,5 @@
 import { db, customers } from "@db/index";
-import { eq, ilike, sql } from "drizzle-orm";
+import { eq, ilike, sql, desc } from "drizzle-orm";
 import { config } from "@lib/config";
 import { createCustomerSchema, updateCustomerSchema } from "@lib/validation";
 import { NotFoundError } from "@lib/errors";
@@ -54,7 +54,7 @@ export async function listCustomers(params: PaginationParams) {
     where: eq(customers.isActive, true),
     limit: params.limit,
     offset: offset(params),
-    orderBy: (c, { desc }) => [desc(c.createdAt)],
+    orderBy: [desc(customers.createdAt)],
   });
 
   const [{ count }] = await db

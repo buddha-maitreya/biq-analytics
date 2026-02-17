@@ -211,6 +211,12 @@ export const orders = pgTable(
       .default("0"),
     notes: text("notes"),
     warehouseId: uuid("warehouse_id").references(() => warehouses.id),
+    /** Payment method used: cash, card, card_pdq, mpesa, bank_transfer, etc. */
+    paymentMethod: varchar("payment_method", { length: 50 }),
+    /** External reference: PDQ approval code, M-Pesa receipt, Paystack ref, etc. */
+    paymentReference: varchar("payment_reference", { length: 255 }),
+    /** Payment status: pending, paid, partial, refunded */
+    paymentStatus: varchar("payment_status", { length: 50 }).notNull().default("pending"),
     metadata: metadata(),
     ...timestamps(),
   },
@@ -318,7 +324,14 @@ export const payments = pgTable(
 // System Tables
 // ============================================================
 
-/** Users — authentication & RBAC */
+/** Users — authentication & RBAC
+ *  Role hierarchy: super_admin > admin > manager > staff > viewer
+ *  - super_admin: Business owner. Manages admins + warehouse access. Full system access.
+ *  - admin: Manages staff/managers/viewers. Assigns permissions & warehouse access.
+ *  - manager: Mid-level ops. Permissions assigned by admin.
+ *  - staff: POS + limited access. Permissions assigned by admin.
+ *  - viewer: Read-only access.
+ */
 export const users = pgTable(
   "users",
   {
@@ -329,10 +342,20 @@ export const users = pgTable(
     hashedPassword: text("hashed_password"),
     isActive: boolean("is_active").notNull().default(true),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+    /** Granular permissions: ["dashboard","products","orders","customers","inventory","invoices","reports","pos","admin","settings"] */
+    permissions: jsonb("permissions").$type<string[]>().default([]),
+    /** Warehouse/branch IDs this user can access. null = all warehouses. */
+    assignedWarehouses: jsonb("assigned_warehouses").$type<string[]>(),
+    /** UUID of the user who created/invited this user (for hierarchy enforcement) */
+    createdBy: uuid("created_by"),
     metadata: metadata(),
     ...timestamps(),
   },
-  (t) => [uniqueIndex("idx_users_email").on(t.email)]
+  (t) => [
+    uniqueIndex("idx_users_email").on(t.email),
+    index("idx_users_role").on(t.role),
+    index("idx_users_active").on(t.isActive),
+  ]
 );
 
 /** Audit Log — system-wide event tracking */
@@ -379,6 +402,14 @@ export const notifications = pgTable(
 // ============================================================
 // Config Tables
 // ============================================================
+
+/** Business Settings — editable from the UI (name, logo, labels, etc.) */
+export const businessSettings = pgTable("business_settings", {
+  id: id(),
+  key: varchar("key", { length: 100 }).notNull().unique(),
+  value: text("value").notNull().default(""),
+  ...timestamps(),
+});
 
 /** Tax Rules — configurable tax logic */
 export const taxRules = pgTable("tax_rules", {

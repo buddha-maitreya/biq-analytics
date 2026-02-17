@@ -1,5 +1,5 @@
 import { db, products, taxRules } from "@db/index";
-import { eq } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 import { config } from "@lib/config";
 import { NotFoundError } from "@lib/errors";
 
@@ -107,6 +107,6 @@ export async function bulkCalculate(items: PriceLineItem[]) {
 /** Get configured tax rules */
 export async function getTaxRules() {
   return db.query.taxRules.findMany({
-    orderBy: (r, { asc }) => [asc(r.name)],
+    orderBy: [asc(taxRules.name)],
   });
 }

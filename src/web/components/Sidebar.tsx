@@ -1,5 +1,5 @@
 import React from "react";
-import type { Page, AppConfig } from "../App";
+import type { Page, AppConfig } from "../types";
 
 interface SidebarProps {
   config: AppConfig;
@@ -16,18 +16,28 @@ const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"]
   { page: "invoices", icon: "📄", labelKey: "invoice", fallback: "Invoices" },
   { page: "assistant", icon: "🤖", labelKey: null, fallback: "AI Assistant" },
   { page: "reports", icon: "📈", labelKey: null, fallback: "Reports" },
+  { page: "pos", icon: "➕", labelKey: null, fallback: "New Order" },
+  { page: "invoice_checker", icon: "🔍", labelKey: null, fallback: "Invoice Checker" },
   { page: "admin", icon: "⚙️", labelKey: null, fallback: "Admin" },
+  { page: "settings", icon: "🎨", labelKey: null, fallback: "Settings" },
 ];
 
 export default function Sidebar({ config, currentPage, onNavigate }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
-        {config.companyLogoUrl ? (
-          <img src={config.companyLogoUrl} alt={config.companyName} className="sidebar-logo" />
-        ) : (
-          <h1 className="sidebar-title">{config.companyName}</h1>
+        {config.companyLogoUrl && (
+          <img src={config.companyLogoUrl} alt="" className="sidebar-logo" />
         )}
+        <div className="sidebar-brand">
+          <h1 className="sidebar-title">
+            {config.companyName || "Business IQ"}
+          </h1>
+          {config.companyTagline && (
+            <span className="sidebar-tagline">{config.companyTagline}</span>
+          )}
+        </div>
+        <span className="sidebar-powered">Powered by Business IQ</span>
       </div>
       <nav className="sidebar-nav">
         {navItems.map((item) => (

@@ -12,6 +12,13 @@ router.get("/admin/stats", async (c) => {
   return c.json({ data: stats });
 });
 
+router.get("/admin/chart-data", async (c) => {
+  const startDate = c.req.query("startDate");
+  const endDate = c.req.query("endDate");
+  const data = await adminSvc.getDashboardChartData(startDate, endDate);
+  return c.json({ data });
+});
+
 // ─── Order Status Management ─────────────────────────────────
 
 router.get("/admin/order-statuses", async (c) => {
@@ -60,10 +67,17 @@ router.delete("/admin/tax-rules/:id", async (c) => {
   return c.json({ deleted: true });
 });
 
-// ─── User Management ─────────────────────────────────────────
+// ─── User Management (RBAC-enhanced) ─────────────────────────
 
+/** RBAC config — roles, permissions, defaults */
+router.get("/admin/rbac-config", async (c) => {
+  const config = adminSvc.getRBACConfig();
+  return c.json({ data: config });
+});
+
+/** List users with warehouse assignments */
 router.get("/admin/users", async (c) => {
-  const result = await adminSvc.listUsers();
+  const result = await adminSvc.listUsersWithWarehouses();
   return c.json({ data: result });
 });
 
@@ -77,6 +91,24 @@ router.put("/admin/users/:id", async (c) => {
   const body = await c.req.json();
   const user = await adminSvc.updateUser(c.req.param("id"), body);
   return c.json({ data: user });
+});
+
+/** Update permissions + warehouse access */
+router.put("/admin/users/:id/permissions", async (c) => {
+  const body = await c.req.json();
+  const { permissions, assignedWarehouses } = body;
+  const user = await adminSvc.updateUserPermissions(c.req.param("id"), permissions, assignedWarehouses);
+  return c.json({ data: user });
+});
+
+router.post("/admin/users/:id/deactivate", async (c) => {
+  await adminSvc.deactivateUser(c.req.param("id"));
+  return c.json({ ok: true });
+});
+
+router.post("/admin/users/:id/activate", async (c) => {
+  await adminSvc.activateUser(c.req.param("id"));
+  return c.json({ ok: true });
 });
 
 router.delete("/admin/users/:id", async (c) => {

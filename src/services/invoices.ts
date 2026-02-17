@@ -1,5 +1,5 @@
 import { db, invoices, payments, orders } from "@db/index";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, desc } from "drizzle-orm";
 import { config } from "@lib/config";
 import { createInvoiceSchema, recordPaymentSchema } from "@lib/validation";
 import { NotFoundError } from "@lib/errors";
@@ -103,7 +103,7 @@ export async function listInvoices(
     with: { customer: true },
     limit: params.limit,
     offset: offset(params),
-    orderBy: (i, { desc }) => [desc(i.createdAt)],
+    orderBy: [desc(invoices.createdAt)],
   });
 
   const [{ count }] = await db

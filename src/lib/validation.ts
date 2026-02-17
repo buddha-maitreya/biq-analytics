@@ -74,6 +74,12 @@ export const createOrderSchema = z.object({
   warehouseId: uuidParam.optional(),
   items: z.array(createOrderItemSchema).min(1),
   notes: z.string().optional(),
+  /** Payment method: cash, card, card_pdq, mpesa, bank_transfer */
+  paymentMethod: z.string().max(50).optional(),
+  /** External reference: PDQ approval code, M-Pesa receipt, Paystack ref */
+  paymentReference: z.string().max(255).optional(),
+  /** Payment status: pending, paid, partial, refunded */
+  paymentStatus: z.enum(["pending", "paid", "partial", "refunded"]).optional(),
   metadata: metadataSchema,
 });
 

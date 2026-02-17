@@ -1,5 +1,5 @@
 import { db, categories } from "@db/index";
-import { eq, isNull } from "drizzle-orm";
+import { eq, isNull, asc } from "drizzle-orm";
 import { config } from "@lib/config";
 import { createCategorySchema, updateCategorySchema } from "@lib/validation";
 import { NotFoundError } from "@lib/errors";
@@ -51,7 +51,7 @@ export async function getCategory(id: string) {
 export async function listCategories() {
   return db.query.categories.findMany({
     where: eq(categories.isActive, true),
-    orderBy: (c, { asc }) => [asc(c.sortOrder), asc(c.name)],
+    orderBy: [asc(categories.sortOrder), asc(categories.name)],
   });
 }
 
@@ -60,9 +60,9 @@ export async function getCategoryTree() {
   const all = await db.query.categories.findMany({
     where: eq(categories.isActive, true),
     with: { children: true },
-    orderBy: (c, { asc }) => [asc(c.sortOrder), asc(c.name)],
+    orderBy: [asc(categories.sortOrder), asc(categories.name)],
   });
 
   // Filter to roots only — children are attached via relations
-  return all.filter((c) => !c.parentId);
+  return all.filter((c: typeof all[number]) => !c.parentId);
 }

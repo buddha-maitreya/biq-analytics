@@ -1,5 +1,5 @@
 import { db, products } from "@db/index";
-import { eq, ilike, and, sql } from "drizzle-orm";
+import { eq, ilike, and, sql, desc } from "drizzle-orm";
 import { config } from "@lib/config";
 import {
   createProductSchema,
@@ -78,7 +78,7 @@ export async function listProducts(params: PaginationParams) {
     with: { category: true },
     limit: params.limit,
     offset: offset(params),
-    orderBy: (p, { desc }) => [desc(p.createdAt)],
+    orderBy: [desc(products.createdAt)],
   });
 
   const [{ count }] = await db

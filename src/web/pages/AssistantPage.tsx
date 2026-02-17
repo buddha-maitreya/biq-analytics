@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useAPI } from "@agentuity/react";
-import type { AppConfig } from "../App";
+import type { AppConfig } from "../types";
 
 interface AssistantPageProps {
   config: AppConfig;

@@ -30,6 +30,7 @@ export { default as orderRoutes } from "./orders";
 export { default as invoiceRoutes } from "./invoices";
 export { default as pricingRoutes } from "./pricing";
 export { default as adminRoutes } from "./admin";
+export { default as settingsRoutes } from "./settings";
 export { default as documentRoutes } from "./documents";
 export { default as chatRoutes } from "./chat";
 export { default as reportRoutes } from "./reports";

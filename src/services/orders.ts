@@ -6,8 +6,9 @@ import {
   products,
   inventory,
   inventoryTransactions,
+  warehouses,
 } from "@db/index";
-import { eq, sql, and } from "drizzle-orm";
+import { eq, sql, and, asc, desc } from "drizzle-orm";
 import { config } from "@lib/config";
 import {
   createOrderSchema,
@@ -31,7 +32,7 @@ export async function createOrder(data: unknown) {
   let warehouseId = parsed.warehouseId;
   if (!warehouseId) {
     const defaultWh = await db.query.warehouses.findFirst({
-      where: (w, { eq }) => eq(w.isDefault, true),
+      where: eq(warehouses.isDefault, true),
     });
     warehouseId = defaultWh?.id;
   }
@@ -120,6 +121,9 @@ export async function createOrder(data: unknown) {
       discountAmount: String(totalDiscount),
       totalAmount: String(totalAmount),
       notes: parsed.notes,
+      paymentMethod: parsed.paymentMethod ?? null,
+      paymentReference: parsed.paymentReference ?? null,
+      paymentStatus: parsed.paymentStatus ?? (parsed.paymentMethod ? "paid" : "pending"),
       metadata: parsed.metadata,
     })
     .returning();
@@ -197,7 +201,7 @@ export async function listOrders(
     with: { customer: true, status: true },
     limit: params.limit,
     offset: offset(params),
-    orderBy: (o, { desc }) => [desc(o.createdAt)],
+    orderBy: [desc(orders.createdAt)],
   });
 
   const countWhere = customerId
@@ -248,6 +252,27 @@ export async function cancelOrder(id: string) {
 /** List available order statuses */
 export async function listOrderStatuses() {
   return db.query.orderStatuses.findMany({
-    orderBy: (s, { asc }) => [asc(s.sortOrder)],
+    orderBy: [asc(orderStatuses.sortOrder)],
   });
+}
+
+/** Update payment info on an existing order (e.g., PDQ approval code) */
+export async function updateOrderPayment(
+  id: string,
+  data: { paymentMethod?: string; paymentReference?: string; paymentStatus?: string }
+) {
+  const existing = await db.query.orders.findFirst({ where: eq(orders.id, id) });
+  if (!existing) throw new NotFoundError(config.labels.order, id);
+
+  const [updated] = await db
+    .update(orders)
+    .set({
+      paymentMethod: data.paymentMethod ?? existing.paymentMethod,
+      paymentReference: data.paymentReference ?? existing.paymentReference,
+      paymentStatus: data.paymentStatus ?? existing.paymentStatus,
+    })
+    .where(eq(orders.id, id))
+    .returning();
+
+  return updated;
 }

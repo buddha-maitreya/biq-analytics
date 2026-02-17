@@ -10,6 +10,11 @@ router.get("/warehouses", async (c) => {
   return c.json({ data: result });
 });
 
+router.get("/warehouses/summary", async (c) => {
+  const result = await svc.listWarehousesWithInventory();
+  return c.json({ data: result });
+});
+
 router.get("/warehouses/:id", async (c) => {
   const warehouse = await svc.getWarehouse(c.req.param("id"));
   return c.json({ data: warehouse });

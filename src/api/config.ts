@@ -1,13 +1,18 @@
 import { createRouter } from "@agentuity/runtime";
 import { config } from "@lib/config";
+import * as settingsSvc from "@services/settings";
 
 const router = createRouter();
 
-/** Return deployment config for frontend consumption */
-router.get("/config", (c) => {
+/** Return deployment config for frontend consumption, merged with DB settings */
+router.get("/config", async (c) => {
+  const dbSettings = await settingsSvc.getAllSettings();
+
   return c.json({
-    companyName: config.companyName,
-    companyLogoUrl: config.companyLogoUrl,
+    companyName: dbSettings.businessName || config.companyName,
+    companyLogoUrl: dbSettings.businessLogoUrl || config.companyLogoUrl,
+    companyTagline: dbSettings.businessTagline || "",
+    primaryColor: dbSettings.primaryColor || "#3b82f6",
     currency: config.currency,
     timezone: config.timezone,
     labels: config.labels,

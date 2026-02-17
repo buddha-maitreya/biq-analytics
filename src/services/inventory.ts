@@ -1,5 +1,5 @@
 import { db, inventory, inventoryTransactions, products } from "@db/index";
-import { eq, and, sql, lt } from "drizzle-orm";
+import { eq, and, sql, lt, desc } from "drizzle-orm";
 import { config } from "@lib/config";
 import {
   adjustInventorySchema,
@@ -197,6 +197,6 @@ export async function getTransactionHistory(
     where: eq(inventoryTransactions.productId, productId),
     with: { warehouse: true },
     limit,
-    orderBy: (t, { desc }) => [desc(t.createdAt)],
+    orderBy: [desc(inventoryTransactions.createdAt)],
   });
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useAPI } from "@agentuity/react";
 import Sidebar from "./components/Sidebar";
 import Dashboard from "./pages/Dashboard";
@@ -10,45 +10,30 @@ import InvoicesPage from "./pages/InvoicesPage";
 import AssistantPage from "./pages/AssistantPage";
 import ReportsPage from "./pages/ReportsPage";
 import AdminPage from "./pages/AdminPage";
+import POSPage from "./pages/POSPage";
+import InvoiceCheckerPage from "./pages/InvoiceCheckerPage";
+import SettingsPage from "./pages/SettingsPage";
 import "./styles/global.css";
+import type { Page, AppConfig } from "./types";
 
-export type Page =
-  | "dashboard"
-  | "products"
-  | "orders"
-  | "customers"
-  | "inventory"
-  | "invoices"
-  | "assistant"
-  | "reports"
-  | "admin";
-
-export interface AppConfig {
-  companyName: string;
-  companyLogoUrl: string;
-  currency: string;
-  timezone: string;
-  labels: {
-    product: string;
-    productPlural: string;
-    order: string;
-    orderPlural: string;
-    customer: string;
-    customerPlural: string;
-    warehouse: string;
-    invoice: string;
-    unitDefault: string;
-  };
-}
+export type { Page, AppConfig };
 
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
-  const { data: appConfig } = useAPI<AppConfig>("GET /api/config");
+  const [configVersion, setConfigVersion] = useState(0);
+  const { data: appConfig, refetch } = useAPI<AppConfig>("GET /api/config");
+
+  const refreshConfig = useCallback(() => {
+    setConfigVersion((v) => v + 1);
+    refetch?.();
+  }, [refetch]);
 
   // Fallback config while loading
   const cfg: AppConfig = appConfig ?? {
     companyName: "Business IQ",
     companyLogoUrl: "",
+    companyTagline: "",
+    primaryColor: "#3b82f6",
     currency: "USD",
     timezone: "UTC",
     labels: {
@@ -82,8 +67,14 @@ export default function App() {
         return <AssistantPage config={cfg} />;
       case "reports":
         return <ReportsPage config={cfg} />;
+      case "pos":
+        return <POSPage config={cfg} />;
+      case "invoice_checker":
+        return <InvoiceCheckerPage config={cfg} />;
       case "admin":
         return <AdminPage config={cfg} />;
+      case "settings":
+        return <SettingsPage config={cfg} onSaved={refreshConfig} />;
     }
   };
 

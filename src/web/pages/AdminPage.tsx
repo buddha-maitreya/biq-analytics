@@ -1,13 +1,40 @@
-import React, { useState, useEffect } from "react";
-import type { AppConfig } from "../App";
+import React, { useState, useEffect, useMemo } from "react";
+import type { AppConfig } from "../types";
 
 interface AdminPageProps {
   config: AppConfig;
 }
 
-type AdminTab = "statuses" | "tax" | "users" | "documents";
+type AdminTab = "users" | "statuses" | "tax" | "documents";
 
 /* ---------- Sub-types ---------- */
+interface RBACConfig {
+  roles: string[];
+  roleRank: Record<string, number>;
+  allPermissions: string[];
+  defaultPerms: Record<string, string[]>;
+}
+
+interface Warehouse {
+  id: string;
+  name: string;
+  code: string;
+}
+
+interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  isActive: boolean;
+  permissions: string[];
+  assignedWarehouses: string[] | null;
+  warehouseDetails: Warehouse[];
+  allAccess: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+}
+
 interface OrderStatus {
   id: string;
   name: string;
@@ -26,14 +53,6 @@ interface TaxRule {
   isDefault: boolean;
 }
 
-interface User {
-  id: string;
-  email: string;
-  name: string;
-  role: string;
-  isActive: boolean;
-}
-
 interface KBDocument {
   filename: string;
   title: string;
@@ -42,14 +61,43 @@ interface KBDocument {
   chunkCount: number;
 }
 
+const ROLE_COLORS: Record<string, string> = {
+  super_admin: "#7c3aed",
+  admin: "#2563eb",
+  manager: "#059669",
+  staff: "#d97706",
+  viewer: "#6b7280",
+};
+
+const ROLE_LABELS: Record<string, string> = {
+  super_admin: "Super Admin",
+  admin: "Admin",
+  manager: "Manager",
+  staff: "Staff",
+  viewer: "Viewer",
+};
+
+const PERM_LABELS: Record<string, { icon: string; label: string; desc: string }> = {
+  dashboard: { icon: "📊", label: "Dashboard", desc: "View business overview & charts" },
+  products: { icon: "📦", label: "Products", desc: "Manage product catalog" },
+  orders: { icon: "🛒", label: "Orders", desc: "Create & manage orders" },
+  customers: { icon: "👥", label: "Customers", desc: "View & manage customers" },
+  inventory: { icon: "🏭", label: "Inventory", desc: "Stock levels & warehouse ops" },
+  invoices: { icon: "📄", label: "Invoices", desc: "Billing & payment tracking" },
+  reports: { icon: "📈", label: "Reports", desc: "Generate & download reports" },
+  pos: { icon: "💳", label: "POS", desc: "Point-of-Sale interface" },
+  admin: { icon: "⚙️", label: "Admin", desc: "Admin console access" },
+  settings: { icon: "🎨", label: "Settings", desc: "System configuration" },
+};
+
 /* =============================== */
 export default function AdminPage({ config }: AdminPageProps) {
-  const [tab, setTab] = useState<AdminTab>("statuses");
+  const [tab, setTab] = useState<AdminTab>("users");
 
   const tabs: { key: AdminTab; label: string; icon: string }[] = [
+    { key: "users", label: "Users & Access", icon: "🔐" },
     { key: "statuses", label: `${config.labels.order} Statuses`, icon: "🏷️" },
     { key: "tax", label: "Tax Rules", icon: "💲" },
-    { key: "users", label: "Users", icon: "👤" },
     { key: "documents", label: "Knowledge Base", icon: "📄" },
   ];
 
@@ -57,7 +105,7 @@ export default function AdminPage({ config }: AdminPageProps) {
     <div className="page admin-page">
       <div className="page-header">
         <h2>⚙️ Admin Console</h2>
-        <span className="text-muted">Manage business configuration</span>
+        <span className="text-muted">Role-based access control, configuration & documents</span>
       </div>
 
       <div className="admin-tabs">
@@ -73,10 +121,351 @@ export default function AdminPage({ config }: AdminPageProps) {
       </div>
 
       <div className="admin-content">
+        {tab === "users" && <UsersAccessTab />}
         {tab === "statuses" && <OrderStatusesTab config={config} />}
         {tab === "tax" && <TaxRulesTab />}
-        {tab === "users" && <UsersTab />}
         {tab === "documents" && <DocumentsTab />}
+      </div>
+    </div>
+  );
+}
+
+/* ===== USERS & ACCESS TAB (RBAC) ===== */
+function UsersAccessTab() {
+  const [users, setUsers] = useState<User[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [rbac, setRbac] = useState<RBACConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [editUser, setEditUser] = useState<User | null>(null);
+  const [permUser, setPermUser] = useState<User | null>(null);
+
+  const [form, setForm] = useState({
+    email: "",
+    name: "",
+    role: "staff" as string,
+    permissions: [] as string[],
+    assignedWarehouses: null as string[] | null,
+  });
+
+  const load = async () => {
+    setLoading(true);
+    const [usersRes, rbacRes, whRes] = await Promise.all([
+      fetch("/api/admin/users"),
+      fetch("/api/admin/rbac-config"),
+      fetch("/api/warehouses"),
+    ]);
+    const usersData = await usersRes.json();
+    const rbacData = await rbacRes.json();
+    const whData = await whRes.json();
+    setUsers(usersData.data ?? []);
+    setRbac(rbacData.data ?? null);
+    setWarehouses(whData.data ?? []);
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const roleCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const u of users) counts[u.role] = (counts[u.role] || 0) + 1;
+    return counts;
+  }, [users]);
+
+  const filtered = useMemo(() => {
+    let list = users;
+    if (roleFilter) list = list.filter((u) => u.role === roleFilter);
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter((u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
+    }
+    return list;
+  }, [users, roleFilter, search]);
+
+  const resetForm = () => {
+    setForm({ email: "", name: "", role: "staff", permissions: [], assignedWarehouses: null });
+    setEditUser(null);
+    setShowForm(false);
+  };
+
+  const openEdit = (u: User) => {
+    setForm({ email: u.email, name: u.name, role: u.role, permissions: u.permissions ?? [], assignedWarehouses: u.assignedWarehouses });
+    setEditUser(u);
+    setShowForm(true);
+  };
+
+  const save = async () => {
+    const method = editUser ? "PUT" : "POST";
+    const url = editUser ? `/api/admin/users/${editUser.id}` : "/api/admin/users";
+    await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+    resetForm();
+    load();
+  };
+
+  const toggleActive = async (u: User) => {
+    const action = u.isActive ? "deactivate" : "activate";
+    if (u.isActive && !confirm(`Deactivate ${u.name}?`)) return;
+    await fetch(`/api/admin/users/${u.id}/${action}`, { method: "POST" });
+    load();
+  };
+
+  const savePermissions = async () => {
+    if (!permUser) return;
+    await fetch(`/api/admin/users/${permUser.id}/permissions`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ permissions: form.permissions, assignedWarehouses: form.assignedWarehouses }),
+    });
+    setPermUser(null);
+    load();
+  };
+
+  const openPermissions = (u: User) => {
+    setForm((f) => ({ ...f, permissions: u.permissions ?? [], assignedWarehouses: u.assignedWarehouses }));
+    setPermUser(u);
+  };
+
+  const togglePermission = (perm: string) => {
+    setForm((f) => ({
+      ...f,
+      permissions: f.permissions.includes(perm) ? f.permissions.filter((p) => p !== perm) : [...f.permissions, perm],
+    }));
+  };
+
+  const toggleWarehouse = (whId: string) => {
+    setForm((f) => {
+      const current = f.assignedWarehouses ?? [];
+      const next = current.includes(whId) ? current.filter((id) => id !== whId) : [...current, whId];
+      return { ...f, assignedWarehouses: next.length > 0 ? next : null };
+    });
+  };
+
+  const setAllAccess = (all: boolean) => {
+    setForm((f) => ({ ...f, assignedWarehouses: all ? null : [] }));
+  };
+
+  if (loading) return <div className="loading-state"><div className="spinner" />Loading users…</div>;
+
+  /* ── Permission Editor Modal ── */
+  if (permUser) {
+    return (
+      <div className="rbac-modal-backdrop">
+        <div className="rbac-modal">
+          <div className="rbac-modal-header">
+            <div>
+              <h3>🔑 Manage Access — {permUser.name}</h3>
+              <p className="text-muted" style={{ margin: "4px 0 0" }}>
+                <span className="role-pill" style={{ background: ROLE_COLORS[permUser.role] }}>{ROLE_LABELS[permUser.role]}</span>
+                &nbsp;&nbsp;{permUser.email}
+              </p>
+            </div>
+            <button className="btn btn-secondary btn-xs" onClick={() => setPermUser(null)}>✕</button>
+          </div>
+
+          <div className="rbac-section">
+            <h4>Module Permissions</h4>
+            <p className="text-muted" style={{ fontSize: "0.8rem", margin: "0 0 12px" }}>Select which modules this user can access</p>
+            <div className="perm-grid">
+              {(rbac?.allPermissions ?? []).map((perm) => {
+                const info = PERM_LABELS[perm] ?? { icon: "•", label: perm, desc: "" };
+                const checked = form.permissions.includes(perm);
+                return (
+                  <label key={perm} className={`perm-card ${checked ? "perm-card-active" : ""}`}>
+                    <input type="checkbox" checked={checked} onChange={() => togglePermission(perm)} />
+                    <span className="perm-card-icon">{info.icon}</span>
+                    <span className="perm-card-label">{info.label}</span>
+                    <span className="perm-card-desc">{info.desc}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="rbac-section">
+            <h4>Warehouse / Branch Access</h4>
+            <p className="text-muted" style={{ fontSize: "0.8rem", margin: "0 0 12px" }}>Control which locations this user can work with</p>
+            <label className="perm-card perm-card-wide" style={{ marginBottom: 8 }}>
+              <input type="checkbox" checked={!form.assignedWarehouses || form.assignedWarehouses.length === 0} onChange={(e) => setAllAccess(e.target.checked)} />
+              <span className="perm-card-icon">🌐</span>
+              <span className="perm-card-label">All Warehouses</span>
+              <span className="perm-card-desc">Full access to every location</span>
+            </label>
+            {form.assignedWarehouses !== null && (
+              <div className="wh-grid">
+                {warehouses.map((wh) => {
+                  const checked = (form.assignedWarehouses ?? []).includes(wh.id);
+                  return (
+                    <label key={wh.id} className={`perm-card ${checked ? "perm-card-active" : ""}`}>
+                      <input type="checkbox" checked={checked} onChange={() => toggleWarehouse(wh.id)} />
+                      <span className="perm-card-icon">🏭</span>
+                      <span className="perm-card-label">{wh.name}</span>
+                      <span className="perm-card-desc">{wh.code}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="rbac-modal-footer">
+            <button className="btn btn-secondary" onClick={() => setPermUser(null)}>Cancel</button>
+            <button className="btn btn-primary" onClick={savePermissions}>Save Permissions</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Role summary strip */}
+      <div className="summary-strip">
+        <button className={`summary-chip ${!roleFilter ? "active" : ""}`} onClick={() => setRoleFilter(null)}>
+          <span className="chip-count">{users.length}</span>
+          <span className="chip-label">All Users</span>
+        </button>
+        {(rbac?.roles ?? []).map((role) => (
+          <button key={role} className={`summary-chip ${roleFilter === role ? "active" : ""}`} onClick={() => setRoleFilter(roleFilter === role ? null : role)}>
+            <span className="chip-dot" style={{ background: ROLE_COLORS[role] }} />
+            <span className="chip-count">{roleCounts[role] || 0}</span>
+            <span className="chip-label">{ROLE_LABELS[role] ?? role}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Toolbar */}
+      <div className="toolbar">
+        <div className="search-box">
+          <span className="search-icon">🔍</span>
+          <input placeholder="Search users…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          {search && <button className="search-clear" onClick={() => setSearch("")}>✕</button>}
+        </div>
+        <span className="toolbar-count">{filtered.length} user{filtered.length !== 1 ? "s" : ""}</span>
+        <button className="btn btn-primary btn-sm" onClick={() => { resetForm(); setShowForm(true); }}>+ Invite User</button>
+      </div>
+
+      {/* Create/Edit Form */}
+      {showForm && (
+        <div className="card user-form-card" style={{ marginBottom: 16 }}>
+          <h4 style={{ marginBottom: 12 }}>{editUser ? `Edit — ${editUser.name}` : "Invite New User"}</h4>
+          <div className="form-grid cols-4">
+            <label>
+              <span className="form-label">Email</span>
+              <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="user@company.com" />
+            </label>
+            <label>
+              <span className="form-label">Full Name</span>
+              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Jane Doe" />
+            </label>
+            <label>
+              <span className="form-label">Role</span>
+              <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+                {(rbac?.roles ?? []).map((r) => (
+                  <option key={r} value={r}>{ROLE_LABELS[r] ?? r}</option>
+                ))}
+              </select>
+            </label>
+            <div className="form-actions" style={{ alignSelf: "end" }}>
+              <button className="btn btn-primary" onClick={save}>{editUser ? "Update" : "Create"}</button>
+              <button className="btn btn-secondary" onClick={resetForm}>Cancel</button>
+            </div>
+          </div>
+          {!editUser && (
+            <p className="form-hint" style={{ marginTop: 8 }}>Default permissions for the selected role will be applied. Customize after creation.</p>
+          )}
+        </div>
+      )}
+
+      {/* Users Table */}
+      <div className="card table-card">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Role</th>
+              <th>Permissions</th>
+              <th>Warehouses</th>
+              <th>Status</th>
+              <th style={{ textAlign: "right" }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((u) => (
+              <tr key={u.id} className={u.isActive ? "" : "row-inactive"}>
+                <td>
+                  <div className="cell-main">{u.name}</div>
+                  <div className="cell-sub">{u.email}</div>
+                </td>
+                <td>
+                  <span className="role-pill" style={{ background: ROLE_COLORS[u.role] }}>{ROLE_LABELS[u.role] ?? u.role}</span>
+                </td>
+                <td>
+                  <div className="perm-tags">
+                    {(u.permissions ?? []).slice(0, 4).map((p) => (
+                      <span key={p} className="perm-tag">{PERM_LABELS[p]?.icon ?? "•"} {PERM_LABELS[p]?.label ?? p}</span>
+                    ))}
+                    {(u.permissions ?? []).length > 4 && (
+                      <span className="perm-tag perm-tag-more">+{(u.permissions ?? []).length - 4}</span>
+                    )}
+                  </div>
+                </td>
+                <td>
+                  {u.allAccess ? (
+                    <span className="wh-badge wh-badge-all">🌐 All</span>
+                  ) : (
+                    <div className="wh-tags">
+                      {(u.warehouseDetails ?? []).slice(0, 2).map((w) => (
+                        <span key={w.id} className="wh-badge">{w.name}</span>
+                      ))}
+                      {(u.warehouseDetails ?? []).length > 2 && (
+                        <span className="wh-badge">+{(u.warehouseDetails ?? []).length - 2}</span>
+                      )}
+                    </div>
+                  )}
+                </td>
+                <td>
+                  <span className={`status-badge ${u.isActive ? "status-active" : "status-inactive"}`}>
+                    {u.isActive ? "Active" : "Inactive"}
+                  </span>
+                </td>
+                <td>
+                  <div className="action-cell">
+                    <button className="btn btn-xs btn-secondary" onClick={() => openPermissions(u)}>🔑 Permissions</button>
+                    <button className="btn btn-xs btn-secondary" onClick={() => openEdit(u)}>Edit</button>
+                    <button className={`btn btn-xs ${u.isActive ? "btn-warning" : "btn-primary"}`} onClick={() => toggleActive(u)}>
+                      {u.isActive ? "Deactivate" : "Activate"}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {filtered.length === 0 && (
+              <tr><td colSpan={6} className="text-center text-muted">No users match</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* RBAC Legend */}
+      <div className="rbac-legend">
+        <h4>Role Hierarchy</h4>
+        <div className="rbac-hierarchy">
+          {(rbac?.roles ?? []).slice().reverse().map((role, i, arr) => (
+            <div key={role} className="rbac-rank">
+              <span className="rbac-rank-badge" style={{ background: ROLE_COLORS[role] }}>{ROLE_LABELS[role]}</span>
+              <span className="rbac-rank-desc">
+                {role === "super_admin" && "Full control. Manages admins & all warehouse access."}
+                {role === "admin" && "Manages staff permissions & warehouse assignments."}
+                {role === "manager" && "Operational access with assigned permissions."}
+                {role === "staff" && "POS & limited access. Permissions set by admin."}
+                {role === "viewer" && "Read-only dashboard access."}
+              </span>
+              {i < arr.length - 1 && <span className="rbac-rank-arrow">↑ manages ↓</span>}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -353,139 +742,6 @@ function TaxRulesTab() {
             ))}
             {rules.length === 0 && (
               <tr><td colSpan={5} className="text-center text-muted">No tax rules configured</td></tr>
-            )}
-          </tbody>
-        </table>
-      )}
-    </div>
-  );
-}
-
-/* ===== USERS TAB ===== */
-function UsersTab() {
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editId, setEditId] = useState<string | null>(null);
-  const [form, setForm] = useState({ email: "", name: "", role: "staff" });
-
-  const load = async () => {
-    setLoading(true);
-    const res = await fetch("/api/admin/users");
-    const data = await res.json();
-    setUsers(data.data ?? []);
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  const resetForm = () => {
-    setForm({ email: "", name: "", role: "staff" });
-    setEditId(null);
-    setShowForm(false);
-  };
-
-  const save = async () => {
-    const method = editId ? "PUT" : "POST";
-    const url = editId ? `/api/admin/users/${editId}` : "/api/admin/users";
-    await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
-    resetForm();
-    load();
-  };
-
-  const toggleActive = async (u: User) => {
-    if (u.isActive) {
-      if (!confirm(`Deactivate ${u.name}?`)) return;
-      await fetch(`/api/admin/users/${u.id}/deactivate`, { method: "POST" });
-    } else {
-      await fetch(`/api/admin/users/${u.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isActive: true }),
-      });
-    }
-    load();
-  };
-
-  const startEdit = (u: User) => {
-    setForm({ email: u.email, name: u.name, role: u.role });
-    setEditId(u.id);
-    setShowForm(true);
-  };
-
-  return (
-    <div>
-      <div className="section-header">
-        <h3>User Management</h3>
-        <button className="btn btn-primary btn-sm" onClick={() => { resetForm(); setShowForm(true); }}>
-          + New User
-        </button>
-      </div>
-
-      {showForm && (
-        <div className="card inline-form">
-          <div className="form-grid cols-3">
-            <label>
-              Email
-              <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="user@example.com" />
-            </label>
-            <label>
-              Name
-              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Full name" />
-            </label>
-            <label>
-              Role
-              <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-                <option value="admin">Admin</option>
-                <option value="manager">Manager</option>
-                <option value="staff">Staff</option>
-                <option value="viewer">Viewer</option>
-              </select>
-            </label>
-          </div>
-          <div className="form-actions">
-            <button className="btn btn-primary" onClick={save}>{editId ? "Update" : "Create"}</button>
-            <button className="btn btn-secondary" onClick={resetForm}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {loading ? (
-        <p>Loading…</p>
-      ) : (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Role</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id} className={u.isActive ? "" : "row-inactive"}>
-                <td>{u.name}</td>
-                <td>{u.email}</td>
-                <td><span className={`role-badge role-${u.role}`}>{u.role}</span></td>
-                <td>
-                  <span className={`status-badge ${u.isActive ? "status-active" : "status-inactive"}`}>
-                    {u.isActive ? "Active" : "Inactive"}
-                  </span>
-                </td>
-                <td>
-                  <button className="btn btn-xs btn-secondary" onClick={() => startEdit(u)}>Edit</button>
-                  <button className="btn btn-xs btn-warning" onClick={() => toggleActive(u)}>
-                    {u.isActive ? "Deactivate" : "Activate"}
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {users.length === 0 && (
-              <tr><td colSpan={5} className="text-center text-muted">No users</td></tr>
             )}
           </tbody>
         </table>

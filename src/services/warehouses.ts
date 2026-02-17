@@ -1,5 +1,5 @@
 import { db, warehouses } from "@db/index";
-import { eq } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 import { config } from "@lib/config";
 import { createWarehouseSchema, updateWarehouseSchema } from "@lib/validation";
 import { NotFoundError } from "@lib/errors";
@@ -66,12 +66,29 @@ export async function getWarehouse(id: string) {
 export async function listWarehouses() {
   return db.query.warehouses.findMany({
     where: eq(warehouses.isActive, true),
-    orderBy: (w, { asc }) => [asc(w.name)],
+    orderBy: [asc(warehouses.name)],
   });
 }
 
 export async function getDefaultWarehouse() {
   return db.query.warehouses.findFirst({
     where: eq(warehouses.isDefault, true),
+  });
+}
+
+/** List all active warehouses with inventory, product, and category data */
+export async function listWarehousesWithInventory() {
+  return db.query.warehouses.findMany({
+    where: eq(warehouses.isActive, true),
+    orderBy: [asc(warehouses.name)],
+    with: {
+      inventory: {
+        with: {
+          product: {
+            with: { category: true },
+          },
+        },
+      },
+    },
   });
 }

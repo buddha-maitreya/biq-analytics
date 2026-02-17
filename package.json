@@ -8,6 +8,7 @@
     "build": "bun scripts/build.ts",
     "build:raw": "agentuity build",
     "build:fix-paths": "bun scripts/fix-generated-paths.ts",
+    "validate": "bun scripts/pre-deploy.ts",
     "deploy": "bun scripts/build.ts --deploy",
     "db:generate": "bunx drizzle-kit generate",
     "db:migrate": "bunx drizzle-kit migrate",

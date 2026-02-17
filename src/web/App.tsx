@@ -43,7 +43,7 @@ export interface AppConfig {
 
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
-  const { data: appConfig } = useAPI<AppConfig>("/api/config");
+  const { data: appConfig } = useAPI<AppConfig>("GET /api/config");
 
   // Fallback config while loading
   const cfg: AppConfig = appConfig ?? {

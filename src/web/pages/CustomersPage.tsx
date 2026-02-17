@@ -8,7 +8,7 @@ interface CustomersPageProps {
 
 export default function CustomersPage({ config }: CustomersPageProps) {
   const [page, setPage] = useState(1);
-  const { data, isLoading, refetch } = useAPI<any>(`/api/customers?page=${page}&limit=20`);
+  const { data, isLoading, refetch } = useAPI<any>(`GET /api/customers?page=${page}&limit=20`);
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({
     name: "",

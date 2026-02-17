@@ -7,8 +7,8 @@ interface InventoryPageProps {
 }
 
 export default function InventoryPage({ config }: InventoryPageProps) {
-  const { data: lowStock, isLoading: lowLoading } = useAPI<any>("/api/inventory/low-stock");
-  const { data: warehouses, isLoading: whLoading } = useAPI<any>("/api/warehouses");
+  const { data: lowStock, isLoading: lowLoading } = useAPI<any>("GET /api/inventory/low-stock");
+  const { data: warehouses, isLoading: whLoading } = useAPI<any>("GET /api/warehouses");
 
   return (
     <div className="page">

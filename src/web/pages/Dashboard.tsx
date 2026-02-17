@@ -7,8 +7,8 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ config }: DashboardProps) {
-  const { data: health } = useAPI<{ status: string }>("/api/health");
-  const { data: lowStock } = useAPI<{ data: any[] }>("/api/inventory/low-stock");
+  const { data: health } = useAPI<{ status: string }>("GET /api/health");
+  const { data: lowStock } = useAPI<{ data: any[] }>("GET /api/inventory/low-stock");
 
   return (
     <div className="page">

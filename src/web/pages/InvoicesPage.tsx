@@ -10,7 +10,7 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState("");
   const url = `/api/invoices?page=${page}&limit=20${statusFilter ? `&status=${statusFilter}` : ""}`;
-  const { data, loading, refetch } = useAPI<any>(url);
+  const { data, isLoading, refetch } = useAPI<any>(url);
 
   const handleAction = async (id: string, action: "send" | "void") => {
     await fetch(`/api/invoices/${id}/${action}`, { method: "POST" });
@@ -39,7 +39,7 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
         </div>
       </div>
 
-      {loading ? (
+      {isLoading ? (
         <p className="loading">Loading...</p>
       ) : (
         <>

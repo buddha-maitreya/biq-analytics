@@ -1,70 +1,41 @@
 import { createRouter } from "@agentuity/runtime";
-import { toAppError } from "@lib/errors";
+import { errorMiddleware } from "@lib/errors";
 import * as svc from "@services/categories";
 
 const router = createRouter();
+router.use(errorMiddleware());
 
 router.get("/categories", async (c) => {
-  try {
-    const result = await svc.listCategories();
-    return c.json({ data: result });
-  } catch (err) {
-    const e = toAppError(err);
-    return c.json({ error: e.message, code: e.code }, e.statusCode as any);
-  }
+  const result = await svc.listCategories();
+  return c.json({ data: result });
 });
 
 router.get("/categories/tree", async (c) => {
-  try {
-    const result = await svc.getCategoryTree();
-    return c.json({ data: result });
-  } catch (err) {
-    const e = toAppError(err);
-    return c.json({ error: e.message, code: e.code }, e.statusCode as any);
-  }
+  const result = await svc.getCategoryTree();
+  return c.json({ data: result });
 });
 
 router.get("/categories/:id", async (c) => {
-  try {
-    const category = await svc.getCategory(c.req.param("id"));
-    return c.json({ data: category });
-  } catch (err) {
-    const e = toAppError(err);
-    return c.json({ error: e.message, code: e.code }, e.statusCode as any);
-  }
+  const category = await svc.getCategory(c.req.param("id"));
+  return c.json({ data: category });
 });
 
 router.post("/categories", async (c) => {
-  try {
-    const body = await c.req.json();
-    const category = await svc.createCategory(body);
-    return c.json({ data: category }, 201);
-  } catch (err) {
-    const e = toAppError(err);
-    return c.json({ error: e.message, code: e.code }, e.statusCode as any);
-  }
+  const body = await c.req.json();
+  const category = await svc.createCategory(body);
+  return c.json({ data: category }, 201);
 });
 
 router.put("/categories/:id", async (c) => {
-  try {
-    const id = c.req.param("id");
-    const body = await c.req.json();
-    const category = await svc.updateCategory(id, body);
-    return c.json({ data: category });
-  } catch (err) {
-    const e = toAppError(err);
-    return c.json({ error: e.message, code: e.code }, e.statusCode as any);
-  }
+  const id = c.req.param("id");
+  const body = await c.req.json();
+  const category = await svc.updateCategory(id, body);
+  return c.json({ data: category });
 });
 
 router.delete("/categories/:id", async (c) => {
-  try {
-    await svc.deleteCategory(c.req.param("id"));
-    return c.json({ deleted: true });
-  } catch (err) {
-    const e = toAppError(err);
-    return c.json({ error: e.message, code: e.code }, e.statusCode as any);
-  }
+  await svc.deleteCategory(c.req.param("id"));
+  return c.json({ deleted: true });
 });
 
 export default router;

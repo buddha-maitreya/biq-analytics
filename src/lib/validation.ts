@@ -50,7 +50,11 @@ export const createCustomerSchema = z.object({
   phone: z.string().max(50).optional(),
   address: z.string().optional(),
   taxId: z.string().max(100).optional(),
-  creditLimit: z.number().min(0).optional(),
+  creditLimit: z
+    .number()
+    .min(0)
+    .optional()
+    .transform((v) => v?.toString()),
   metadata: metadataSchema,
 });
 

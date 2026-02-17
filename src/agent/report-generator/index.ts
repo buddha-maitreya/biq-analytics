@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db, products, orders, orderItems, customers, inventory, invoices, payments } from "@db/index";
 import { sql, eq, gte, lte, and, desc } from "drizzle-orm";
 import { config } from "@lib/config";
+import { getModel } from "@lib/ai";
 
 /**
  * Report Generator Agent — AI-powered business report creation.
@@ -142,7 +143,7 @@ async function getFinancialData(start: Date, end: Date) {
   return { invoiceSummary, paymentSummary };
 }
 
-export default createAgent({
+export default createAgent("report-generator", {
   schema: { input: inputSchema, output: outputSchema },
   handler: async (ctx, input) => {
     // Default to last 30 days
@@ -187,7 +188,7 @@ export default createAgent({
         : "Format the report in plain text, well-structured with clear sections.";
 
     const { text } = await generateText({
-      model: ctx.model ?? "openai:gpt-4o-mini",
+      model: getModel(),
       system: `You are a professional business report writer for ${config.companyName}.
 Generate a clear, actionable business report based on the data provided.
 

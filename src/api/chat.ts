@@ -1,30 +1,34 @@
 import { createRouter } from "@agentuity/runtime";
 import businessAssistant from "@agent/business-assistant";
+import { errorMiddleware, ValidationError } from "@lib/errors";
 
 const chat = createRouter();
+chat.use(errorMiddleware());
 
-// POST /chat — Send a message to the business assistant
+/**
+ * POST /chat — Send a message to the business assistant agent.
+ *
+ * agent.run() takes the input schema directly and returns the output
+ * schema directly (not wrapped in `{ data }`).
+ */
 chat.post("/", async (c) => {
-  try {
-    const { message } = await c.req.json();
-    if (!message || typeof message !== "string") {
-      return c.json({ error: "Message is required" }, 400);
-    }
+  const { message } = await c.req.json();
 
-    const result = await businessAssistant.run({
-      data: { message },
-    });
-
-    const output = result?.data as { reply?: string } | undefined;
-
-    return c.json({
-      data: {
-        reply: output?.reply ?? "I wasn't able to generate a response.",
-      },
-    });
-  } catch (err: any) {
-    return c.json({ error: err.message ?? "Chat error" }, 500);
+  if (!message || typeof message !== "string") {
+    throw new ValidationError("message is required and must be a string");
   }
+
+  // run() input matches business-assistant inputSchema: { message, context? }
+  // run() output matches outputSchema: { reply, data?, suggestedActions? }
+  const result = await businessAssistant.run({ message });
+
+  return c.json({
+    data: {
+      reply: result.reply ?? "I wasn't able to generate a response.",
+      data: result.data,
+      suggestedActions: result.suggestedActions,
+    },
+  });
 });
 
 export default chat;

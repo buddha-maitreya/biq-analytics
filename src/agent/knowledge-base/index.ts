@@ -2,6 +2,7 @@ import { createAgent } from "@agentuity/runtime";
 import { generateText } from "ai";
 import { z } from "zod";
 import { config } from "@lib/config";
+import { getModel } from "@lib/ai";
 
 /**
  * Knowledge Base Agent — RAG (Retrieval-Augmented Generation)
@@ -21,6 +22,7 @@ import { config } from "@lib/config";
  */
 
 interface DocMetadata {
+  [key: string]: unknown;
   title: string;
   filename: string;
   category: string;
@@ -60,7 +62,7 @@ const outputSchema = z.object({
   success: z.boolean(),
 });
 
-export default createAgent({
+export default createAgent("knowledge-base", {
   schema: { input: inputSchema, output: outputSchema },
   handler: async (ctx, input) => {
     switch (input.action) {
@@ -88,12 +90,22 @@ export default createAgent({
           };
         }
 
-        // Build context from retrieved chunks
+        // Build context from retrieved chunks.
+        // search() returns VectorSearchResult (no document field).
+        // Use getMany() to fetch full documents with their content.
+        const keys = results.map((r) => r.key);
+        const fullDocs = await ctx.vector.getMany<DocMetadata>(
+          VECTOR_NAMESPACE,
+          ...keys,
+        );
+
         const contextChunks = results.map((r, i) => {
+          const fullDoc = fullDocs.get(r.key);
           const meta = r.metadata;
           const title = meta?.title ?? "Unknown";
           const filename = meta?.filename ?? "";
-          return `[Source ${i + 1}: ${title} (${filename})]\n${r.document ?? ""}`;
+          const content = fullDoc?.document ?? "";
+          return `[Source ${i + 1}: ${title} (${filename})]\n${content}`;
         });
         const context = contextChunks.join("\n\n---\n\n");
 
@@ -102,7 +114,7 @@ export default createAgent({
           .filter((v, i, a) => a.indexOf(v) === i); // dedupe
 
         const { text } = await generateText({
-          model: ctx.model ?? "openai:gpt-4o-mini",
+          model: getModel(),
           system: `You are ${config.companyName}'s knowledge base assistant.
 Answer the question using ONLY the provided context from uploaded documents.
 If the context doesn't contain enough information, say so — never make things up.

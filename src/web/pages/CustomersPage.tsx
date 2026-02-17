@@ -8,7 +8,7 @@ interface CustomersPageProps {
 
 export default function CustomersPage({ config }: CustomersPageProps) {
   const [page, setPage] = useState(1);
-  const { data, loading, refetch } = useAPI<any>(`/api/customers?page=${page}&limit=20`);
+  const { data, isLoading, refetch } = useAPI<any>(`/api/customers?page=${page}&limit=20`);
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
@@ -74,7 +74,7 @@ export default function CustomersPage({ config }: CustomersPageProps) {
         </div>
       )}
 
-      {loading ? (
+      {isLoading ? (
         <p className="loading">Loading {config.labels.customerPlural.toLowerCase()}...</p>
       ) : (
         <>

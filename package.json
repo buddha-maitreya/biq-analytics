@@ -5,27 +5,32 @@
   "type": "module",
   "scripts": {
     "dev": "agentuity dev",
-    "build": "agentuity build",
-    "deploy": "agentuity deploy",
+    "build": "bun scripts/build.ts",
+    "build:raw": "agentuity build",
+    "build:fix-paths": "bun scripts/fix-generated-paths.ts",
+    "deploy": "bun scripts/build.ts --deploy",
     "db:generate": "bunx drizzle-kit generate",
     "db:migrate": "bunx drizzle-kit migrate",
     "db:push": "bunx drizzle-kit push",
     "db:studio": "bunx drizzle-kit studio"
   },
   "dependencies": {
+    "@agentuity/drizzle": "latest",
+    "@agentuity/postgres": "latest",
+    "@agentuity/react": "latest",
     "@agentuity/runtime": "latest",
     "@agentuity/schema": "latest",
-    "@agentuity/react": "latest",
-    "@agentuity/postgres": "latest",
-    "@agentuity/drizzle": "latest",
-    "drizzle-orm": "^0.38.0",
-    "ai": "^4.0.0",
-    "@ai-sdk/openai": "^1.0.0",
     "@ai-sdk/anthropic": "^1.0.0",
     "@ai-sdk/groq": "^1.0.0",
-    "zod": "^3.23.0",
+    "@ai-sdk/openai": "^1.0.0",
+    "ai": "^4.0.0",
+    "drizzle-orm": "^0.45.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "zod": "^3.23.0"
+  },
+  "overrides": {
+    "drizzle-orm": "$drizzle-orm"
   },
   "devDependencies": {
     "drizzle-kit": "^0.30.0",

@@ -1,51 +1,62 @@
 import { createRouter } from "@agentuity/runtime";
 import reportGenerator from "@agent/report-generator";
+import { errorMiddleware, ValidationError } from "@lib/errors";
 
 const reports = createRouter();
+reports.use(errorMiddleware());
 
-// POST /reports/generate — Generate an AI-powered report
+/**
+ * POST /reports/generate — Generate an AI-powered business report.
+ *
+ * The report-generator agent input schema:
+ *   { reportType, startDate?, endDate?, format? }
+ * Output schema:
+ *   { title, reportType, period: { start, end }, content, generatedAt }
+ */
 reports.post("/generate", async (c) => {
-  try {
-    const { type, periodDays } = await c.req.json();
+  const { type, periodDays } = await c.req.json();
 
-    if (!type) {
-      return c.json({ error: "Report type is required" }, 400);
-    }
-
-    const validTypes = [
-      "sales-summary",
-      "inventory-health",
-      "customer-activity",
-      "financial-overview",
-    ];
-
-    if (!validTypes.includes(type)) {
-      return c.json(
-        { error: `Invalid report type. Must be one of: ${validTypes.join(", ")}` },
-        400
-      );
-    }
-
-    const result = await reportGenerator.run({
-      data: {
-        type,
-        periodDays: periodDays ?? 30,
-      },
-    });
-
-    const output = result?.data as { report?: string } | undefined;
-
-    return c.json({
-      data: {
-        report: output?.report ?? "Unable to generate report.",
-        type,
-        periodDays: periodDays ?? 30,
-        generatedAt: new Date().toISOString(),
-      },
-    });
-  } catch (err: any) {
-    return c.json({ error: err.message ?? "Report generation error" }, 500);
+  if (!type) {
+    throw new ValidationError("Report type is required");
   }
+
+  const validTypes = [
+    "sales-summary",
+    "inventory-health",
+    "customer-activity",
+    "financial-overview",
+  ];
+
+  if (!validTypes.includes(type)) {
+    throw new ValidationError(
+      `Invalid report type. Must be one of: ${validTypes.join(", ")}`,
+    );
+  }
+
+  // Calculate date range from periodDays (default 30)
+  const days = periodDays ?? 30;
+  const endDate = new Date().toISOString();
+  const startDate = new Date(
+    Date.now() - days * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  // Agent input uses `reportType` (not `type`) and date strings
+  const result = await reportGenerator.run({
+    reportType: type,
+    startDate,
+    endDate,
+    format: "markdown" as const,
+  });
+
+  return c.json({
+    data: {
+      title: result.title,
+      reportType: result.reportType,
+      period: result.period,
+      content: result.content,
+      generatedAt: result.generatedAt,
+    },
+  });
 });
 
 export default reports;

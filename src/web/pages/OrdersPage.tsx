@@ -8,7 +8,7 @@ interface OrdersPageProps {
 
 export default function OrdersPage({ config }: OrdersPageProps) {
   const [page, setPage] = useState(1);
-  const { data, loading, refetch } = useAPI<any>(`/api/orders?page=${page}&limit=20`);
+  const { data, isLoading, refetch } = useAPI<any>(`/api/orders?page=${page}&limit=20`);
 
   return (
     <div className="page">
@@ -16,7 +16,7 @@ export default function OrdersPage({ config }: OrdersPageProps) {
         <h2>{config.labels.orderPlural}</h2>
       </div>
 
-      {loading ? (
+      {isLoading ? (
         <p className="loading">Loading {config.labels.orderPlural.toLowerCase()}...</p>
       ) : (
         <>

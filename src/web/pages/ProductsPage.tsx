@@ -8,7 +8,7 @@ interface ProductsPageProps {
 
 export default function ProductsPage({ config }: ProductsPageProps) {
   const [page, setPage] = useState(1);
-  const { data, loading, refetch } = useAPI<any>(`/api/products?page=${page}&limit=20`);
+  const { data, isLoading, refetch } = useAPI<any>(`/api/products?page=${page}&limit=20`);
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({
     sku: "",
@@ -57,7 +57,7 @@ export default function ProductsPage({ config }: ProductsPageProps) {
         </div>
       )}
 
-      {loading ? (
+      {isLoading ? (
         <p className="loading">Loading {config.labels.productPlural.toLowerCase()}...</p>
       ) : (
         <>

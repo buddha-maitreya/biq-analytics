@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db, products, orders, orderItems, inventory, inventoryTransactions } from "@db/index";
 import { sql, eq, desc, gte } from "drizzle-orm";
 import { config } from "@lib/config";
+import { getModel } from "@lib/ai";
 
 /**
  * Insights Analyzer Agent — uses AI to detect patterns humans would miss.
@@ -112,7 +113,7 @@ async function getRecentMovements(days: number) {
     .limit(50);
 }
 
-export default createAgent({
+export default createAgent("insights-analyzer", {
   schema: { input: inputSchema, output: outputSchema },
   handler: async (ctx, input) => {
     // Gather data
@@ -144,7 +145,7 @@ export default createAgent({
     };
 
     const { object } = await generateObject({
-      model: ctx.model ?? "openai:gpt-4o-mini",
+      model: getModel(),
       schema: z.object({
         insights: z.array(insightSchema),
         summary: z.string(),

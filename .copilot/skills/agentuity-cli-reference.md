@@ -28,6 +28,35 @@ agentuity upgrade --force   # Force re-install
 # Login (browser-based)
 agentuity auth login        # or: agentuity login
 
+# Login with setup token (non-interactive, from install URL)
+agentuity auth login --setup-token "<token>"
+```
+
+### Login from Copilot / Automated Terminal (Windows)
+
+The `agentuity auth login` command uses a browser-based flow with a spinner that
+scrolls rapidly. In automated terminals (e.g. VS Code Copilot agent mode) the
+output moves too fast for the user to grab the URL. **Working approach:**
+
+1. Run the login command in a **background terminal** so output is captured:
+   ```powershell
+   # Run in background — output is stored and can be retrieved later
+   agentuity auth login 2>&1 | Tee-Object -Variable loginOutput
+   ```
+2. **Retrieve the output** with `get_terminal_output` to extract the login URL
+   and code (look for lines matching `Login URL` / `login code`).
+3. **Show the URL and code to the user** in the chat so they can open it in
+   their browser at their own pace.
+4. Once the user confirms they approved in the browser, run `agentuity auth login`
+   again in a **foreground terminal with a long timeout (~120s)** so the CLI
+   can complete the handshake.
+5. Verify with `agentuity auth whoami`.
+
+> **Key detail:** On Windows PowerShell, `agentuity` writes spinner output to
+> stderr which triggers `NativeCommandError` — this is cosmetic and can be
+> ignored. The actual login URL still appears in the captured output.
+
+```bash
 # Check status
 agentuity auth whoami
 

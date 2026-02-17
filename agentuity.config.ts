@@ -1,9 +1,6 @@
-import { defineConfig } from "@agentuity/runtime";
+import type { AgentuityConfig } from "@agentuity/cli";
 
-export default defineConfig({
-  build: {
-    // Vite handles frontend (src/web/), Bun handles server (agents + routes)
-  },
+export default {
   define: {
     // Expose safe env vars to frontend at build time
     "process.env.COMPANY_NAME": JSON.stringify(
@@ -41,4 +38,4 @@ export default defineConfig({
       process.env.UNIT_DEFAULT || "piece"
     ),
   },
-});
+} satisfies AgentuityConfig;

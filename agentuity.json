@@ -1,24 +1,14 @@
 {
-  "$schema": "https://agentuity.dev/schema.json",
-  "name": "business-iq-enterprise",
-  "description": "Enterprise-grade, industry-agnostic Inventory & Sales Management platform",
-  "version": "0.1.0",
-  "agents": [
-    {
-      "name": "business-assistant",
-      "description": "Natural language business queries — answers questions about products, orders, customers, and performance using AI"
-    },
-    {
-      "name": "insights-analyzer",
-      "description": "AI-powered demand forecasting, anomaly detection, and restock recommendations"
-    },
-    {
-      "name": "report-generator",
-      "description": "Generates formatted business reports (sales, inventory, financial) with AI-driven analysis"
-    },
-    {
-      "name": "knowledge-base",
-      "description": "RAG-powered knowledge base — ingests documents and answers questions using vector search + AI"
+  "$schema": "https://agentuity.dev/schema/cli/v1/agentuity.json",
+  "projectId": "proj_613c24fc78f3fe3afda8b8c40bf3656e",
+  "orgId": "org_39hottyMau3fIKUOChR1QIZJtPF",
+  "deployment": {
+    "domains": [],
+    "resources": {
+      "memory": "500Mi",
+      "cpu": "500m",
+      "disk": "500Mi"
     }
-  ]
+  },
+  "region": "usw"
 }

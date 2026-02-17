@@ -3,10 +3,17 @@ import * as schema from "./schema";
 
 /**
  * Drizzle ORM database instance.
- * Uses @agentuity/drizzle which wraps @agentuity/postgres.
- * DATABASE_URL is auto-injected by Agentuity.
+ *
+ * `createPostgresDrizzle({ schema })` returns `{ db, client, close }`.
+ * We destructure and export `db` directly so all service/agent code
+ * uses the standard Drizzle API: `db.select()`, `db.insert()`, `db.query`, etc.
+ *
+ * DATABASE_URL is auto-injected by Agentuity via `agentuity cloud db create`.
  */
-export const db = createPostgresDrizzle({ schema });
+const postgres = createPostgresDrizzle({ schema });
+
+export const db = postgres.db;
+export const closeDb = postgres.close;
 
 export type Database = typeof db;
 export * from "./schema";

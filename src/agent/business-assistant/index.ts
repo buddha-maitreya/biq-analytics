@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db, products, orders, orderItems, customers, inventory, invoices } from "@db/index";
 import { sql, eq, desc, and, gte, lte } from "drizzle-orm";
 import { config } from "@lib/config";
+import { getModel } from "@lib/ai";
 
 /**
  * Business Assistant Agent — the ONLY place an LLM is needed.
@@ -101,7 +102,7 @@ async function getBusinessSnapshot() {
   };
 }
 
-export default createAgent({
+export default createAgent("business-assistant", {
   schema: { input: inputSchema, output: outputSchema },
   handler: async (ctx, input) => {
     const snapshot = await getBusinessSnapshot();
@@ -125,14 +126,16 @@ Rules:
 - When suggesting actions, be specific (e.g., "Reorder SKU-123").
 - Never invent data that isn't in the snapshot.`;
 
-    // Use conversation history if available
-    const history = ctx.thread?.state?.messages ?? [];
+    // Use conversation history if available (ThreadState uses get/set/push API)
+    type ChatMessage = { role: string; content: string };
+    const history: ChatMessage[] =
+      (await ctx.thread?.state?.get<ChatMessage[]>("messages")) ?? [];
 
     const { text } = await generateText({
-      model: ctx.model ?? "openai:gpt-4o-mini",
+      model: getModel(),
       system: systemPrompt,
       messages: [
-        ...history.map((m: any) => ({
+        ...history.map((m) => ({
           role: m.role as "user" | "assistant",
           content: m.content,
         })),
@@ -142,12 +145,14 @@ Rules:
 
     // Persist to thread for conversation continuity
     if (ctx.thread) {
-      const updated = [
-        ...history,
-        { role: "user", content: input.message },
-        { role: "assistant", content: text },
-      ];
-      await ctx.thread.setState({ messages: updated });
+      await ctx.thread.state.push("messages", {
+        role: "user",
+        content: input.message,
+      } satisfies ChatMessage);
+      await ctx.thread.state.push("messages", {
+        role: "assistant",
+        content: text,
+      } satisfies ChatMessage);
     }
 
     // Extract suggested actions from the response

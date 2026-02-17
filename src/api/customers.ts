@@ -12,7 +12,7 @@ router.get("/customers", async (c) => {
     limit: c.req.query("limit"),
     search: c.req.query("search"),
   });
-  const result = await svc.listCustomers(params);
+  const result = await svc.listCustomersEnriched(params);
   return c.json(result);
 });
 

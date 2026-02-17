@@ -7,7 +7,7 @@ interface ReportsPageProps {
 }
 
 type ReportType = "sales-summary" | "inventory-health" | "customer-activity" | "financial-overview";
-type ExportFormat = "markdown" | "csv" | "json";
+type ExportFormat = "xlsx" | "csv" | "pdf";
 
 const REPORT_TYPES = [
   { value: "sales-summary" as const, label: "Sales Summary", icon: "📊", desc: "Revenue, orders, top products, and sales trends" },
@@ -16,27 +16,66 @@ const REPORT_TYPES = [
   { value: "financial-overview" as const, label: "Financial Overview", icon: "💰", desc: "Invoices, payments, receivables, and aging" },
 ];
 
-const PERIODS = [
-  { value: "7", label: "Last 7 days" },
-  { value: "14", label: "Last 14 days" },
-  { value: "30", label: "Last 30 days" },
-  { value: "60", label: "Last 60 days" },
-  { value: "90", label: "Last 90 days" },
-  { value: "365", label: "Last 12 months" },
+const FORMAT_OPTIONS: { value: ExportFormat; label: string; icon: string; desc: string }[] = [
+  { value: "xlsx", label: "Excel (.xlsx)", icon: "📗", desc: "Spreadsheet with formatted tables" },
+  { value: "csv", label: "CSV (.csv)", icon: "📄", desc: "Comma-separated for any tool" },
+  { value: "pdf", label: "PDF (.pdf)", icon: "📕", desc: "Print-ready formatted report" },
+];
+
+function getPresetRange(preset: string): { start: string; end: string } {
+  const now = new Date();
+  const end = now.toISOString().slice(0, 10);
+  const ms = (days: number) => new Date(now.getTime() - days * 86400000).toISOString().slice(0, 10);
+
+  switch (preset) {
+    case "today": return { start: end, end };
+    case "yesterday": { const y = ms(1); return { start: y, end: y }; }
+    case "last7": return { start: ms(7), end };
+    case "last14": return { start: ms(14), end };
+    case "last30": return { start: ms(30), end };
+    case "last60": return { start: ms(60), end };
+    case "last90": return { start: ms(90), end };
+    case "mtd": return { start: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`, end };
+    case "qtd": {
+      const q = Math.floor(now.getMonth() / 3) * 3;
+      return { start: `${now.getFullYear()}-${String(q + 1).padStart(2, "0")}-01`, end };
+    }
+    case "ytd": return { start: `${now.getFullYear()}-01-01`, end };
+    case "last12m": return { start: ms(365), end };
+    default: return { start: ms(30), end };
+  }
+}
+
+const DATE_PRESETS = [
+  { value: "today", label: "Today" },
+  { value: "yesterday", label: "Yesterday" },
+  { value: "last7", label: "Last 7 days" },
+  { value: "last14", label: "Last 14 days" },
+  { value: "last30", label: "Last 30 days" },
+  { value: "last60", label: "Last 60 days" },
+  { value: "last90", label: "Last 90 days" },
+  { value: "mtd", label: "Month to date" },
+  { value: "qtd", label: "Quarter to date" },
+  { value: "ytd", label: "Year to date" },
+  { value: "last12m", label: "Last 12 months" },
   { value: "custom", label: "Custom range" },
 ];
 
 export default function ReportsPage({ config }: ReportsPageProps) {
   const [reportType, setReportType] = useState<ReportType>("sales-summary");
-  const [period, setPeriod] = useState("30");
+  const [datePreset, setDatePreset] = useState("last30");
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
-  const [exportFormat, setExportFormat] = useState<ExportFormat>("markdown");
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("xlsx");
   const [reportContent, setReportContent] = useState<string | null>(null);
   const [reportTitle, setReportTitle] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
+
+  const effectiveRange = datePreset === "custom"
+    ? { start: customStart, end: customEnd }
+    : getPresetRange(datePreset);
 
   const generateReport = async () => {
     setLoading(true);
@@ -44,11 +83,20 @@ export default function ReportsPage({ config }: ReportsPageProps) {
     setReportContent(null);
 
     try {
-      const body: any = { type: reportType, periodDays: Number(period) };
-      if (period === "custom") {
-        body.periodDays = undefined;
-        body.startDate = customStart;
-        body.endDate = customEnd;
+      const body: any = {
+        type: reportType,
+        startDate: effectiveRange.start,
+        endDate: effectiveRange.end,
+        format: exportFormat,
+      };
+
+      // For backward compat with existing API that uses periodDays
+      if (datePreset !== "custom") {
+        const presetMap: Record<string, number> = {
+          today: 0, yesterday: 1, last7: 7, last14: 14, last30: 30,
+          last60: 60, last90: 90, mtd: 30, qtd: 90, ytd: 365, last12m: 365,
+        };
+        body.periodDays = presetMap[datePreset] ?? 30;
       }
 
       const res = await fetch("/api/reports/generate", {
@@ -81,61 +129,153 @@ export default function ReportsPage({ config }: ReportsPageProps) {
     URL.revokeObjectURL(url);
   };
 
-  const handleDownload = (format: string) => {
+  const handleDownload = () => {
     if (!reportContent) return;
     const ts = new Date().toISOString().slice(0, 10);
     const baseName = `${reportType}-${ts}`;
 
-    switch (format) {
-      case "markdown":
-        downloadFile(reportContent, `${baseName}.md`, "text/markdown");
-        break;
-      case "txt":
-        downloadFile(reportContent, `${baseName}.txt`, "text/plain");
-        break;
+    switch (exportFormat) {
       case "csv": {
-        // Convert markdown tables to CSV-ish format
+        // Extract tables from markdown content into CSV
         const lines = reportContent.split("\n");
         const csvLines: string[] = [];
         for (const line of lines) {
           if (line.startsWith("|") && !line.match(/^\|[\s-|]+$/)) {
-            const cells = line.split("|").filter(Boolean).map(c => c.trim());
+            const cells = line.split("|").filter(Boolean).map(c => {
+              const trimmed = c.trim();
+              // Escape commas and quotes in CSV
+              return trimmed.includes(",") || trimmed.includes('"')
+                ? `"${trimmed.replace(/"/g, '""')}"` : trimmed;
+            });
             csvLines.push(cells.join(","));
           } else if (line.trim() && !line.startsWith("#") && !line.startsWith("-") && !line.startsWith("*")) {
             csvLines.push(line.trim());
           }
         }
-        downloadFile(csvLines.join("\n"), `${baseName}.csv`, "text/csv");
+        downloadFile(csvLines.join("\n"), `${baseName}.csv`, "text/csv;charset=utf-8;");
         break;
       }
-      case "json": {
-        const jsonData = {
-          reportType,
-          title: reportTitle,
-          generatedAt,
-          period: period === "custom" ? `${customStart} to ${customEnd}` : `Last ${period} days`,
-          content: reportContent,
-        };
-        downloadFile(JSON.stringify(jsonData, null, 2), `${baseName}.json`, "application/json");
+      case "xlsx": {
+        // Generate a simple XML spreadsheet (opens in Excel)
+        const lines = reportContent.split("\n");
+        const rows: string[][] = [];
+        // Title row
+        rows.push([reportTitle, `Generated: ${generatedAt}`, `Period: ${effectiveRange.start} to ${effectiveRange.end}`]);
+        rows.push([]);
+
+        for (const line of lines) {
+          if (line.startsWith("|") && !line.match(/^\|[\s-|]+$/)) {
+            const cells = line.split("|").filter(Boolean).map(c => c.trim());
+            rows.push(cells);
+          } else if (line.startsWith("# ") || line.startsWith("## ") || line.startsWith("### ")) {
+            rows.push([]);
+            rows.push([line.replace(/^#+\s*/, "")]);
+          } else if (line.trim() && !line.startsWith("-") && !line.startsWith("*")) {
+            rows.push([line.trim()]);
+          }
+        }
+
+        const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const xmlRows = rows.map(row => {
+          const cells = row.map(cell => {
+            const isNum = /^\d[\d,.]*$/.test(cell.replace(/[,$%]/g, ""));
+            return isNum
+              ? `<Cell><Data ss:Type="Number">${cell.replace(/[,$%]/g, "")}</Data></Cell>`
+              : `<Cell><Data ss:Type="String">${escXml(cell)}</Data></Cell>`;
+          }).join("");
+          return `<Row>${cells}</Row>`;
+        }).join("\n");
+
+        const xml = `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+<Styles>
+  <Style ss:ID="Header"><Font ss:Bold="1" ss:Size="11"/></Style>
+  <Style ss:ID="Title"><Font ss:Bold="1" ss:Size="14"/></Style>
+</Styles>
+<Worksheet ss:Name="${escXml(reportTitle.slice(0, 31))}">
+<Table>
+${xmlRows}
+</Table>
+</Worksheet>
+</Workbook>`;
+
+        downloadFile(xml, `${baseName}.xlsx`, "application/vnd.ms-excel");
         break;
       }
-      case "html": {
-        // Simple Markdown-to-HTML conversion
+      case "pdf": {
+        // Generate a printable HTML and trigger print dialog
         let html = reportContent
           .replace(/^### (.*$)/gm, "<h3>$1</h3>")
           .replace(/^## (.*$)/gm, "<h2>$1</h2>")
           .replace(/^# (.*$)/gm, "<h1>$1</h1>")
           .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-          .replace(/\*(.*?)\*/g, "<em>$1</em>")
-          .replace(/\n/g, "<br>");
-        html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${reportTitle}</title><style>body{font-family:sans-serif;max-width:800px;margin:40px auto;padding:0 20px;color:#333}h1,h2,h3{color:#1a202c}table{border-collapse:collapse;width:100%}th,td{border:1px solid #e2e8f0;padding:8px;text-align:left}th{background:#f7fafc}</style></head><body>${html}</body></html>`;
-        downloadFile(html, `${baseName}.html`, "text/html");
+          .replace(/\*(.*?)\*/g, "<em>$1</em>");
+
+        // Convert markdown tables to HTML tables
+        const tableRegex = /(\|.+\|[\r\n]+\|[-|\s:]+\|[\r\n]+((\|.+\|[\r\n]*)+))/g;
+        html = html.replace(tableRegex, (match) => {
+          const rows = match.trim().split("\n").filter(r => !r.match(/^\|[\s-|:]+$/));
+          let table = "<table><thead>";
+          rows.forEach((row, idx) => {
+            const cells = row.split("|").filter(Boolean).map(c => c.trim());
+            const tag = idx === 0 ? "th" : "td";
+            const rowHtml = cells.map(c => `<${tag}>${c}</${tag}>`).join("");
+            if (idx === 0) {
+              table += `<tr>${rowHtml}</tr></thead><tbody>`;
+            } else {
+              table += `<tr>${rowHtml}</tr>`;
+            }
+          });
+          table += "</tbody></table>";
+          return table;
+        });
+
+        html = html.replace(/\n/g, "<br>");
+
+        const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>${reportTitle}</title>
+<style>
+  @media print { @page { margin: 1cm; } }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; color: #1a202c; font-size: 12px; }
+  h1 { font-size: 20px; border-bottom: 2px solid #3b82f6; padding-bottom: 8px; }
+  h2 { font-size: 16px; margin-top: 24px; color: #2563eb; }
+  h3 { font-size: 14px; margin-top: 16px; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  th, td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; font-size: 11px; }
+  th { background: #f1f5f9; font-weight: 600; }
+  tr:nth-child(even) { background: #fafbfc; }
+  .header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; }
+  .meta { color: #64748b; font-size: 11px; }
+</style></head><body>
+<div class="header">
+  <h1>${reportTitle}</h1>
+  <div class="meta">
+    <div>${config.companyName}</div>
+    <div>${effectiveRange.start} — ${effectiveRange.end}</div>
+    <div>Generated: ${generatedAt}</div>
+  </div>
+</div>
+${html}
+</body></html>`;
+
+        // Open in new window and trigger print (which allows Save as PDF)
+        const printWindow = window.open("", "_blank");
+        if (printWindow) {
+          printWindow.document.write(fullHtml);
+          printWindow.document.close();
+          setTimeout(() => printWindow.print(), 300);
+        } else {
+          // Fallback: download as HTML
+          downloadFile(fullHtml, `${baseName}.html`, "text/html");
+        }
         break;
       }
     }
   };
 
   const selectedReport = REPORT_TYPES.find(r => r.value === reportType);
+  const canGenerate = datePreset !== "custom" || (customStart && customEnd);
 
   return (
     <div className="page reports-page">
@@ -143,7 +283,7 @@ export default function ReportsPage({ config }: ReportsPageProps) {
         <div>
           <h2>📈 Reports</h2>
           <span className="text-muted">
-            Generate and download AI-powered business reports
+            Generate and download business reports
           </span>
         </div>
       </div>
@@ -163,40 +303,62 @@ export default function ReportsPage({ config }: ReportsPageProps) {
         ))}
       </div>
 
-      {/* Configuration */}
+      {/* Configuration Panel */}
       <div className="card report-config-card">
-        <div className="report-config-grid">
+        <div className="report-config-grid-v2">
+          {/* Date Range */}
           <div className="report-config-section">
-            <label className="form-label">Time Period</label>
-            <select value={period} onChange={(e) => setPeriod(e.target.value)} className="form-select">
-              {PERIODS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+            <label className="form-label">Date Range</label>
+            <select value={datePreset} onChange={(e) => setDatePreset(e.target.value)} className="form-select">
+              {DATE_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
-            {period === "custom" && (
+            {datePreset === "custom" ? (
               <div className="custom-date-range">
                 <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className="date-input" />
                 <span className="text-muted">to</span>
                 <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} className="date-input" />
               </div>
+            ) : (
+              <div className="date-range-preview">
+                <span className="text-muted" style={{ fontSize: "0.75rem" }}>
+                  {effectiveRange.start} → {effectiveRange.end}
+                </span>
+              </div>
             )}
           </div>
 
+          {/* Export Format */}
+          <div className="report-config-section">
+            <label className="form-label">Export Format</label>
+            <div className="format-selector">
+              {FORMAT_OPTIONS.map(f => (
+                <button
+                  key={f.value}
+                  className={`format-option ${exportFormat === f.value ? "active" : ""}`}
+                  onClick={() => setExportFormat(f.value)}
+                >
+                  <span className="format-icon">{f.icon}</span>
+                  <span className="format-label">{f.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Selected Report + Generate */}
           <div className="report-config-section">
             <label className="form-label">Selected Report</label>
             <div className="selected-report-preview">
               <span className="report-icon-lg">{selectedReport?.icon}</span>
               <div>
                 <strong>{selectedReport?.label}</strong>
-                <p className="text-muted" style={{ fontSize: "0.8rem", margin: 0 }}>{selectedReport?.desc}</p>
+                <p className="text-muted" style={{ fontSize: "0.75rem", margin: 0 }}>{selectedReport?.desc}</p>
               </div>
             </div>
-          </div>
-
-          <div className="report-config-section">
             <button
-              className="btn btn-primary btn-lg"
+              className="btn btn-primary"
               onClick={generateReport}
-              disabled={loading || (period === "custom" && (!customStart || !customEnd))}
-              style={{ width: "100%" }}
+              disabled={loading || !canGenerate}
+              style={{ width: "100%", marginTop: 8 }}
             >
               {loading ? (
                 <><span className="spinner-inline" /> Generating...</>
@@ -220,25 +382,15 @@ export default function ReportsPage({ config }: ReportsPageProps) {
           <div className="report-output-header">
             <div>
               <h3>{selectedReport?.icon} {reportTitle}</h3>
-              <span className="text-muted" style={{ fontSize: "0.8rem" }}>Generated {generatedAt}</span>
+              <span className="text-muted" style={{ fontSize: "0.75rem" }}>
+                Generated {generatedAt} · {effectiveRange.start} — {effectiveRange.end}
+              </span>
             </div>
             <div className="report-download-btns">
-              <button className="btn btn-sm btn-secondary" onClick={() => handleDownload("markdown")} title="Download as Markdown">
-                📝 .MD
+              <button className="btn btn-sm btn-primary" onClick={handleDownload} title={`Download as ${exportFormat.toUpperCase()}`}>
+                {FORMAT_OPTIONS.find(f => f.value === exportFormat)?.icon} Download .{exportFormat.toUpperCase()}
               </button>
-              <button className="btn btn-sm btn-secondary" onClick={() => handleDownload("txt")} title="Download as Plain Text">
-                📄 .TXT
-              </button>
-              <button className="btn btn-sm btn-secondary" onClick={() => handleDownload("csv")} title="Download as CSV (Excel-compatible)">
-                📊 .CSV
-              </button>
-              <button className="btn btn-sm btn-secondary" onClick={() => handleDownload("json")} title="Download as JSON">
-                🗂 .JSON
-              </button>
-              <button className="btn btn-sm btn-secondary" onClick={() => handleDownload("html")} title="Download as HTML (printable)">
-                🌐 .HTML
-              </button>
-              <button className="btn btn-sm btn-secondary" onClick={() => navigator.clipboard.writeText(reportContent)} title="Copy to clipboard">
+              <button className="btn btn-sm btn-secondary" onClick={() => navigator.clipboard.writeText(reportContent)} title="Copy raw content">
                 📋 Copy
               </button>
             </div>

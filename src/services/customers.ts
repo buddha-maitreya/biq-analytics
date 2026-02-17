@@ -65,6 +65,42 @@ export async function listCustomers(params: PaginationParams) {
   return paginate(items, Number(count), params);
 }
 
+/**
+ * List customers with enriched order stats:
+ * totalSpent, orderCount, firstOrderDate, lastOrderDate
+ */
+export async function listCustomersEnriched(params: PaginationParams) {
+  const rows = await db.execute(
+    sql`SELECT
+          c.*,
+          COALESCE(s.total_spent, 0)  AS total_spent,
+          COALESCE(s.order_count, 0)  AS order_count,
+          s.first_order_date,
+          s.last_order_date
+        FROM customers c
+        LEFT JOIN LATERAL (
+          SELECT
+            SUM(o.total_amount::numeric) AS total_spent,
+            COUNT(*)                     AS order_count,
+            MIN(o.created_at)            AS first_order_date,
+            MAX(o.created_at)            AS last_order_date
+          FROM orders o
+          WHERE o.customer_id = c.id
+        ) s ON true
+        WHERE c.is_active = true
+        ORDER BY c.created_at DESC
+        LIMIT ${params.limit}
+        OFFSET ${offset(params)}`
+  ) as any[];
+
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(customers)
+    .where(eq(customers.isActive, true));
+
+  return paginate(rows, Number(count), params);
+}
+
 export async function searchCustomers(term: string, limit = 20) {
   return db.query.customers.findMany({
     where: ilike(customers.name, `%${term}%`),

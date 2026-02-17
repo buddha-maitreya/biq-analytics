@@ -6,7 +6,7 @@ interface InvoicesPageProps {
   config: AppConfig;
 }
 
-type SortKey = "invoiceNumber" | "customer" | "status" | "totalAmount" | "paidAmount" | "balance" | "dueDate";
+type SortKey = "invoiceNumber" | "customer" | "status" | "totalAmount" | "paidAmount" | "balance" | "dueDate" | "kraVerified";
 type SortDir = "asc" | "desc";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
@@ -98,6 +98,7 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
         case "paidAmount": aVal = a._paid; bVal = b._paid; break;
         case "balance": aVal = a._balance; bVal = b._balance; break;
         case "dueDate": aVal = a.dueDate ?? ""; bVal = b.dueDate ?? ""; break;
+        case "kraVerified": aVal = a.kraVerified ? 1 : 0; bVal = b.kraVerified ? 1 : 0; break;
       }
       if (typeof aVal === "string") {
         const cmp = aVal.localeCompare(bVal as string);
@@ -237,6 +238,7 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
                 <th className="sortable" onClick={() => handleSort("totalAmount")}>Total ({config.currency}){sortIcon("totalAmount")}</th>
                 <th className="sortable" onClick={() => handleSort("paidAmount")}>Paid ({config.currency}){sortIcon("paidAmount")}</th>
                 <th className="sortable" onClick={() => handleSort("balance")}>Balance{sortIcon("balance")}</th>
+                <th className="sortable" onClick={() => handleSort("kraVerified")}>KRA{sortIcon("kraVerified")}</th>
                 <th className="sortable" onClick={() => handleSort("dueDate")}>Due Date{sortIcon("dueDate")}</th>
                 <th>Actions</th>
               </tr>
@@ -266,6 +268,20 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
                       {inv._balance > 0 ? fmt(inv._balance) : "0.00"}
                     </td>
                     <td>
+                      {inv.kraVerified ? (
+                        <span className="status-pill" style={{ backgroundColor: "#22c55e", fontSize: "0.7rem" }} title={inv.kraVerifiedAt ? `Verified ${new Date(inv.kraVerifiedAt).toLocaleDateString()}` : "Verified"}>
+                          ✅ Verified
+                        </span>
+                      ) : (
+                        <span className="status-pill" style={{ backgroundColor: "#94a3b8", fontSize: "0.7rem" }}>
+                          ⏳ Unverified
+                        </span>
+                      )}
+                      {inv.kraInvoiceNumber && (
+                        <div className="cell-sub" style={{ fontSize: "0.65rem", marginTop: 2 }}>{inv.kraInvoiceNumber}</div>
+                      )}
+                    </td>
+                    <td>
                       {inv.dueDate ? (
                         <span style={{ color: isOverdue ? "#ef4444" : undefined, fontWeight: isOverdue ? 600 : undefined }}>
                           {new Date(inv.dueDate).toLocaleDateString()}
@@ -293,7 +309,7 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="text-center text-muted" style={{ padding: 32 }}>
+                  <td colSpan={10} className="text-center text-muted" style={{ padding: 32 }}>
                     {search || statusFilter !== "all"
                       ? "No invoices match your filters"
                       : `No ${config.labels.invoice.toLowerCase()}s found`}

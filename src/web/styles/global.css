@@ -1367,6 +1367,11 @@ textarea {
 .date-presets {
   display: flex;
   gap: 4px;
+  flex-wrap: wrap;
+}
+.date-presets .btn {
+  min-width: 38px;
+  text-align: center;
 }
 .date-input {
   padding: 6px 10px;
@@ -1375,10 +1380,39 @@ textarea {
   font-size: 0.8rem;
   background: var(--color-surface);
   color: var(--color-text);
+  max-width: 150px;
 }
 .date-input:focus {
   outline: none;
   border-color: var(--color-primary);
+}
+
+@media (max-width: 1024px) {
+  .dashboard-date-filter {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .dashboard-page .page-header-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .dashboard-date-filter {
+    width: 100%;
+  }
+  .date-presets {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .date-input {
+    flex: 1;
+    min-width: 0;
+    max-width: none;
+  }
+  .summary-cards {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .chart-row {
@@ -1512,10 +1546,56 @@ textarea {
   gap: 20px;
   align-items: end;
 }
+.report-config-grid-v2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
 .report-config-section {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* Format Selector */
+.format-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.format-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+}
+.format-option:hover {
+  border-color: var(--color-primary);
+}
+.format-option.active {
+  border-color: var(--color-primary);
+  background: #eff6ff;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+.format-icon {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+.format-label {
+  font-weight: 500;
+}
+.date-range-preview {
+  padding: 4px 0;
 }
 .selected-report-preview {
   display: flex;
@@ -1671,6 +1751,13 @@ textarea {
   }
   .report-config-grid {
     grid-template-columns: 1fr;
+  }
+  .report-config-grid-v2 {
+    grid-template-columns: 1fr;
+  }
+  .format-selector {
+    flex-direction: row;
+    flex-wrap: wrap;
   }
   .settings-grid {
     grid-template-columns: 1fr;

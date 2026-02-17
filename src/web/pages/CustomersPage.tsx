@@ -12,18 +12,21 @@ interface Customer {
   email: string | null;
   phone: string | null;
   address: string | null;
-  taxId: string | null;
-  creditLimit: string | null;
-  balance: string;
-  isActive: boolean;
-  createdAt: string;
+  tax_id: string | null;
+  is_active: boolean;
+  created_at: string;
   metadata: Record<string, unknown> | null;
+  // Enriched fields from orders join
+  total_spent: string | number;
+  order_count: string | number;
+  first_order_date: string | null;
+  last_order_date: string | null;
 }
 
-type SortKey = "name" | "email" | "phone" | "balance" | "creditLimit" | "createdAt";
+type SortKey = "name" | "email" | "phone" | "totalSpent" | "lastServed" | "createdAt";
 type SortDir = "asc" | "desc";
 
-const emptyForm = { name: "", email: "", phone: "", address: "", taxId: "", creditLimit: "" };
+const emptyForm = { name: "", email: "", phone: "", address: "", taxId: "", notes: "" };
 
 export default function CustomersPage({ config }: CustomersPageProps) {
   const [page, setPage] = useState(1);
@@ -42,23 +45,41 @@ export default function CustomersPage({ config }: CustomersPageProps) {
   const labelPlural = config.labels.customerPlural;
   const curr = config.currency;
 
+  const fmt = (n: string | number) =>
+    Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const fmtDate = (d: string | null) => {
+    if (!d) return "—";
+    try {
+      return new Date(d).toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+    } catch {
+      return "—";
+    }
+  };
+
   // ── Summary stats ───────────────────────────────────────────
   const summary = useMemo(() => {
     let total = 0;
-    let withBalance = 0;
-    let totalBalance = 0;
-    let totalCreditLimit = 0;
+    let totalSpent = 0;
+    let withOrders = 0;
     let withEmail = 0;
+    let repeatCustomers = 0;
 
     for (const c of customers) {
       total++;
-      const bal = Number(c.balance) || 0;
-      if (bal > 0) { withBalance++; totalBalance += bal; }
-      totalCreditLimit += Number(c.creditLimit) || 0;
+      const spent = Number(c.total_spent) || 0;
+      const orders = Number(c.order_count) || 0;
+      totalSpent += spent;
+      if (orders > 0) withOrders++;
+      if (orders > 1) repeatCustomers++;
       if (c.email) withEmail++;
     }
 
-    return { total, withBalance, totalBalance, totalCreditLimit, withEmail };
+    return { total, totalSpent, withOrders, withEmail, repeatCustomers };
   }, [customers]);
 
   // ── Filter + sort ───────────────────────────────────────────
@@ -72,7 +93,7 @@ export default function CustomersPage({ config }: CustomersPageProps) {
           c.name.toLowerCase().includes(q) ||
           (c.email && c.email.toLowerCase().includes(q)) ||
           (c.phone && c.phone.includes(q)) ||
-          (c.taxId && c.taxId.toLowerCase().includes(q))
+          (c.tax_id && c.tax_id.toLowerCase().includes(q))
       );
     }
 
@@ -80,12 +101,12 @@ export default function CustomersPage({ config }: CustomersPageProps) {
       let av: string | number = "";
       let bv: string | number = "";
       switch (sortKey) {
-        case "name":        av = a.name.toLowerCase(); bv = b.name.toLowerCase(); break;
-        case "email":       av = (a.email ?? "").toLowerCase(); bv = (b.email ?? "").toLowerCase(); break;
-        case "phone":       av = a.phone ?? ""; bv = b.phone ?? ""; break;
-        case "balance":     av = Number(a.balance) || 0; bv = Number(b.balance) || 0; break;
-        case "creditLimit": av = Number(a.creditLimit) || 0; bv = Number(b.creditLimit) || 0; break;
-        case "createdAt":   av = a.createdAt; bv = b.createdAt; break;
+        case "name":       av = a.name.toLowerCase(); bv = b.name.toLowerCase(); break;
+        case "email":      av = (a.email ?? "").toLowerCase(); bv = (b.email ?? "").toLowerCase(); break;
+        case "phone":      av = a.phone ?? ""; bv = b.phone ?? ""; break;
+        case "totalSpent": av = Number(a.total_spent) || 0; bv = Number(b.total_spent) || 0; break;
+        case "lastServed": av = a.last_order_date ?? ""; bv = b.last_order_date ?? ""; break;
+        case "createdAt":  av = a.created_at; bv = b.created_at; break;
       }
       if (av < bv) return sortDir === "asc" ? -1 : 1;
       if (av > bv) return sortDir === "asc" ? 1 : -1;
@@ -123,8 +144,8 @@ export default function CustomersPage({ config }: CustomersPageProps) {
       email: c.email ?? "",
       phone: c.phone ?? "",
       address: c.address ?? "",
-      taxId: c.taxId ?? "",
-      creditLimit: c.creditLimit ?? "",
+      taxId: c.tax_id ?? "",
+      notes: (c.metadata as any)?.notes ?? "",
     });
     setShowForm(true);
     setMessage(null);
@@ -138,9 +159,14 @@ export default function CustomersPage({ config }: CustomersPageProps) {
     setSaving(true);
     setMessage(null);
     try {
-      const body: Record<string, unknown> = { ...formData };
-      if (body.creditLimit) body.creditLimit = Number(body.creditLimit);
-      else delete body.creditLimit;
+      const body: Record<string, unknown> = {
+        name: formData.name,
+        email: formData.email || undefined,
+        phone: formData.phone || undefined,
+        address: formData.address || undefined,
+        taxId: formData.taxId || undefined,
+        metadata: formData.notes ? { notes: formData.notes } : undefined,
+      };
 
       const url = editingId ? `/api/customers/${editingId}` : "/api/customers";
       const method = editingId ? "PUT" : "POST";
@@ -177,8 +203,6 @@ export default function CustomersPage({ config }: CustomersPageProps) {
     }
   };
 
-  const fmt = (n: string | number) => Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
   // ── Render ──────────────────────────────────────────────────
   return (
     <div className="page">
@@ -186,7 +210,7 @@ export default function CustomersPage({ config }: CustomersPageProps) {
       <div className="page-header-row">
         <div>
           <h2>{labelPlural}</h2>
-          <p className="text-muted">Manage your {labelPlural.toLowerCase()} and track balances</p>
+          <p className="text-muted">Manage your {labelPlural.toLowerCase()} and track engagement</p>
         </div>
         <button className="btn btn-primary" onClick={openCreate}>
           + New {label}
@@ -203,17 +227,17 @@ export default function CustomersPage({ config }: CustomersPageProps) {
           </div>
         </div>
         <div className="summary-card">
-          <span className="summary-chip" style={{ background: "#f59e0b" }}>💰</span>
+          <span className="summary-chip" style={{ background: "#10b981" }}>💰</span>
           <div>
-            <div className="summary-value">{curr} {fmt(summary.totalBalance)}</div>
-            <div className="summary-label">Outstanding Balances</div>
+            <div className="summary-value">{curr} {fmt(summary.totalSpent)}</div>
+            <div className="summary-label">Total Revenue</div>
           </div>
         </div>
         <div className="summary-card">
-          <span className="summary-chip" style={{ background: "#10b981" }}>🏦</span>
+          <span className="summary-chip" style={{ background: "#f59e0b" }}>🔁</span>
           <div>
-            <div className="summary-value">{curr} {fmt(summary.totalCreditLimit)}</div>
-            <div className="summary-label">Total Credit Limit</div>
+            <div className="summary-value">{summary.repeatCustomers} / {summary.withOrders}</div>
+            <div className="summary-label">Repeat {labelPlural}</div>
           </div>
         </div>
         <div className="summary-card">
@@ -239,7 +263,7 @@ export default function CustomersPage({ config }: CustomersPageProps) {
           <div className="form-grid">
             <div className="form-field">
               <label>Name *</label>
-              <input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="Full name" />
+              <input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="Full name or company" />
             </div>
             <div className="form-field">
               <label>Email</label>
@@ -250,16 +274,16 @@ export default function CustomersPage({ config }: CustomersPageProps) {
               <input value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} placeholder="+254 700 000 000" />
             </div>
             <div className="form-field">
-              <label>Tax ID</label>
+              <label>Tax ID / KRA PIN</label>
               <input value={formData.taxId} onChange={(e) => setFormData({ ...formData, taxId: e.target.value })} placeholder="KRA PIN / VAT No." />
-            </div>
-            <div className="form-field">
-              <label>Credit Limit ({curr})</label>
-              <input type="number" min={0} step="0.01" value={formData.creditLimit} onChange={(e) => setFormData({ ...formData, creditLimit: e.target.value })} placeholder="0.00" />
             </div>
             <div className="form-field" style={{ gridColumn: "1 / -1" }}>
               <label>Address</label>
               <input value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} placeholder="Street, City, Country" />
+            </div>
+            <div className="form-field" style={{ gridColumn: "1 / -1" }}>
+              <label>Notes / Feedback</label>
+              <input value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} placeholder="Special requirements, preferences, feedback..." />
             </div>
           </div>
           <div className="form-actions">
@@ -301,34 +325,48 @@ export default function CustomersPage({ config }: CustomersPageProps) {
                 <th className="sortable" onClick={() => handleSort("name")}>Name{sortIcon("name")}</th>
                 <th className="sortable" onClick={() => handleSort("email")}>Email{sortIcon("email")}</th>
                 <th className="sortable" onClick={() => handleSort("phone")}>Phone{sortIcon("phone")}</th>
-                <th className="sortable" onClick={() => handleSort("balance")}>Balance ({curr}){sortIcon("balance")}</th>
-                <th className="sortable" onClick={() => handleSort("creditLimit")}>Credit Limit{sortIcon("creditLimit")}</th>
-                <th className="sortable" onClick={() => handleSort("createdAt")}>Since{sortIcon("createdAt")}</th>
+                <th className="sortable" onClick={() => handleSort("totalSpent")}>Total Spent ({curr}){sortIcon("totalSpent")}</th>
+                <th>First Served</th>
+                <th className="sortable" onClick={() => handleSort("lastServed")}>Last Served{sortIcon("lastServed")}</th>
+                <th>Notes</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {filteredCustomers.map((c) => {
-                const bal = Number(c.balance) || 0;
-                const limit = Number(c.creditLimit) || 0;
-                const overLimit = limit > 0 && bal > limit;
+                const spent = Number(c.total_spent) || 0;
+                const orderCount = Number(c.order_count) || 0;
+                const notes = (c.metadata as any)?.notes;
                 return (
                   <tr key={c.id}>
                     <td>
                       <div className="cell-main">{c.name}</div>
-                      {c.taxId && <div className="cell-sub">Tax: {c.taxId}</div>}
+                      {c.tax_id && <div className="cell-sub">Tax: {c.tax_id}</div>}
                     </td>
                     <td>{c.email ?? <span className="text-muted">—</span>}</td>
                     <td>{c.phone ?? <span className="text-muted">—</span>}</td>
                     <td>
-                      <span className={overLimit ? "text-danger" : bal > 0 ? "text-warning" : ""}>
-                        {fmt(bal)}
+                      <span style={{ fontWeight: spent > 0 ? 600 : 400, color: spent > 0 ? "#059669" : undefined }}>
+                        {spent > 0 ? fmt(spent) : "—"}
                       </span>
-                      {overLimit && <span className="badge-warning" style={{ marginLeft: 6, fontSize: "0.7rem" }}>OVER LIMIT</span>}
+                      {orderCount > 0 && (
+                        <div className="cell-sub">{orderCount} order{orderCount !== 1 ? "s" : ""}</div>
+                      )}
                     </td>
-                    <td>{limit > 0 ? fmt(limit) : <span className="text-muted">—</span>}</td>
                     <td className="text-muted" style={{ fontSize: "0.85rem" }}>
-                      {new Date(c.createdAt).toLocaleDateString()}
+                      {fmtDate(c.first_order_date)}
+                    </td>
+                    <td className="text-muted" style={{ fontSize: "0.85rem" }}>
+                      {fmtDate(c.last_order_date)}
+                    </td>
+                    <td style={{ maxWidth: 180, fontSize: "0.8rem" }}>
+                      {notes ? (
+                        <span className="text-muted" title={notes}>
+                          {notes.length > 40 ? notes.slice(0, 40) + "…" : notes}
+                        </span>
+                      ) : (
+                        <span className="text-muted">—</span>
+                      )}
                     </td>
                     <td className="action-cell">
                       <button className="btn btn-sm btn-secondary" onClick={() => openEdit(c)} title="Edit">✏️</button>
@@ -339,7 +377,7 @@ export default function CustomersPage({ config }: CustomersPageProps) {
               })}
               {filteredCustomers.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="text-center text-muted" style={{ padding: "2rem" }}>
+                  <td colSpan={8} className="text-center text-muted" style={{ padding: "2rem" }}>
                     {search ? `No ${labelPlural.toLowerCase()} matching "${search}"` : `No ${labelPlural.toLowerCase()} found`}
                   </td>
                 </tr>

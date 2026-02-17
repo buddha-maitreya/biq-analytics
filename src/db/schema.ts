@@ -286,6 +286,10 @@ export const invoices = pgTable(
       .default("0"),
     dueDate: timestamp("due_date", { withTimezone: true }),
     paidAt: timestamp("paid_at", { withTimezone: true }),
+    /** KRA eTIMS compliance fields */
+    kraVerified: boolean("kra_verified").notNull().default(false),
+    kraVerifiedAt: timestamp("kra_verified_at", { withTimezone: true }),
+    kraInvoiceNumber: varchar("kra_invoice_number", { length: 100 }),
     notes: text("notes"),
     metadata: metadata(),
     ...timestamps(),

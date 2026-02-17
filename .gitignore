@@ -6,6 +6,9 @@ bun.lockb
 dist/
 .agentuity/
 
+# Prevent Windows path issues in cloud build
+src/generated/*.ts
+
 # Environment
 .env
 .env.local

@@ -7,6 +7,53 @@ const DEFAULTS: Record<string, string> = {
   businessLogoUrl: "",
   businessTagline: "",
   primaryColor: "#3b82f6",
+
+  // ── Localization ──────────────────────────────────────────
+  /** Currency code (e.g. USD, KES, EUR). Falls back to env CURRENCY. */
+  currency: "",
+  /** IANA timezone (e.g. Africa/Nairobi, America/New_York). Falls back to env TIMEZONE. */
+  timezone: "",
+
+  // ── AI Configuration ──────────────────────────────────────
+  // These control how the AI assistant behaves for this deployment.
+  // All are optional — sensible defaults are used when empty.
+  // Modeled after ElevenLabs-style agent configuration for maximum flexibility.
+
+  /** Personality — who the AI is, its role, expertise, and character traits. */
+  aiPersonality: "",
+
+  /** Environment — where/how the AI operates (interface type, user context, available capabilities). */
+  aiEnvironment: "",
+
+  /** Tone — voice and communication style (enthusiastic, professional, casual, etc.) */
+  aiTone: "",
+
+  /** Goal — the AI's primary objective and what it should help users achieve. */
+  aiGoal: "",
+
+  /** Business Context — domain knowledge (products, policies, specialties, seasonality, etc.) */
+  aiBusinessContext: "",
+
+  /** Response Formatting — how to format output (markdown, currency, lists, bold, etc.) */
+  aiResponseFormatting: "",
+
+  /** Query Reasoning — instructions for how the AI should reason before calling tools. */
+  aiQueryReasoning: "",
+
+  /** Tool Usage Guidelines — when to use which tool, priority rules. */
+  aiToolGuidelines: "",
+
+  /** Guardrails — safety rules, boundaries, escalation policies, data constraints. */
+  aiGuardrails: "",
+
+  /** Custom instructions for the insights/trends analyzer */
+  aiInsightsInstructions: "",
+
+  /** Custom instructions for report generation */
+  aiReportInstructions: "",
+
+  /** Custom greeting/welcome message for new chat sessions */
+  aiWelcomeMessage: "",
 };
 
 /** Get a single setting by key */
@@ -46,4 +93,32 @@ export async function updateSettings(
     }
   }
   return getAllSettings();
+}
+
+/** AI setting keys */
+const AI_KEYS = [
+  "aiPersonality",
+  "aiEnvironment",
+  "aiTone",
+  "aiGoal",
+  "aiBusinessContext",
+  "aiResponseFormatting",
+  "aiQueryReasoning",
+  "aiToolGuidelines",
+  "aiGuardrails",
+  "aiInsightsInstructions",
+  "aiReportInstructions",
+  "aiWelcomeMessage",
+] as const;
+
+export type AISettings = Record<(typeof AI_KEYS)[number], string>;
+
+/** Get only AI-related settings (used by agents at request time) */
+export async function getAISettings(): Promise<AISettings> {
+  const all = await getAllSettings();
+  const ai: Record<string, string> = {};
+  for (const key of AI_KEYS) {
+    ai[key] = all[key] ?? "";
+  }
+  return ai as AISettings;
 }

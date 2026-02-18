@@ -5,6 +5,7 @@ import { db, products, orders, orderItems, customers, inventory, invoices, payme
 import { sql, eq, gte, lte, and, desc } from "drizzle-orm";
 import { config } from "@lib/config";
 import { getModel } from "@lib/ai";
+import { getAISettings } from "@services/settings";
 
 /**
  * Report Generator Agent — AI-powered business report creation.
@@ -187,22 +188,33 @@ export default createAgent("report-generator", {
         ? "Format the report in clean Markdown with headers, bullet points, and tables where appropriate."
         : "Format the report in plain text, well-structured with clear sections.";
 
+    // Load client-customizable AI settings
+    const aiSettings = await getAISettings();
+
+    // Build system prompt with optional custom report instructions
+    const defaultReportSystem = `Report structure:
+1. Executive Summary (2-3 sentences, key highlights)
+2. Key Metrics (the important numbers)
+3. Details & Analysis (interpretation of the data)
+4. Recommendations (actionable next steps)`;
+
+    const reportInstructions = aiSettings.aiReportInstructions?.trim() || defaultReportSystem;
+    const businessContext = aiSettings.aiBusinessContext?.trim()
+      ? `\nBusiness context:\n${aiSettings.aiBusinessContext.trim()}`
+      : "";
+
     const { text } = await generateText({
       model: getModel(),
       system: `You are a professional business report writer for ${config.companyName}.
 Generate a clear, actionable business report based on the data provided.
 
-Report structure:
-1. Executive Summary (2-3 sentences, key highlights)
-2. Key Metrics (the important numbers)
-3. Details & Analysis (interpretation of the data)
-4. Recommendations (actionable next steps)
+${reportInstructions}
 
 ${formatInstruction}
 
 Use the deployment's terminology: "${config.labels.product}" for products, "${config.labels.order}" for orders, "${config.labels.customer}" for customers.
 Currency: ${config.currency}
-Period: ${periodStr}`,
+Period: ${periodStr}${businessContext}`,
       prompt: `Generate the "${title}" report for ${config.companyName}.
 
 Period: ${periodStr}

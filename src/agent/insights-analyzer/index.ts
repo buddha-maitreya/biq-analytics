@@ -5,6 +5,7 @@ import { db, products, orders, orderItems, inventory, inventoryTransactions } fr
 import { sql, eq, desc, gte } from "drizzle-orm";
 import { config } from "@lib/config";
 import { getModel } from "@lib/ai";
+import { getAISettings } from "@services/settings";
 
 /**
  * Insights Analyzer Agent — uses AI to detect patterns humans would miss.
@@ -116,6 +117,9 @@ async function getRecentMovements(days: number) {
 export default createAgent("insights-analyzer", {
   schema: { input: inputSchema, output: outputSchema },
   handler: async (ctx, input) => {
+    // Load client-customizable AI settings
+    const aiSettings = await getAISettings();
+
     // Gather data
     const [salesVelocity, stockLevels, movements] = await Promise.all([
       getSalesVelocity(input.timeframeDays),
@@ -137,12 +141,29 @@ export default createAgent("insights-analyzer", {
       2
     );
 
-    const prompts: Record<string, string> = {
+    const defaultPrompts: Record<string, string> = {
       "demand-forecast": `Analyze the sales velocity data and predict which products will need restocking in the next 7-14 days. Consider sales trends, current stock levels, and movement patterns. Flag products at risk of stockout.`,
       "anomaly-detection": `Look for anomalies in the data: unusual spikes or drops in sales volume, products with erratic ordering patterns, pricing inconsistencies, or inventory discrepancies. Flag anything that seems suspicious or unusual.`,
       "restock-recommendations": `Based on sales velocity, current stock levels, and reorder points, recommend specific restock quantities for products that need attention. Prioritize by urgency (days until stockout). Consider lead times and safety stock.`,
       "sales-trends": `Analyze overall sales patterns: which products are trending up or down, seasonal patterns, customer ordering behavior changes, and revenue trajectory. Highlight opportunities and risks.`,
     };
+
+    // Use custom insights instructions if provided, otherwise use defaults
+    const analysisPrompt = aiSettings.aiInsightsInstructions?.trim()
+      ? `${aiSettings.aiInsightsInstructions.trim()}\n\nAnalysis type requested: ${input.analysis}\nTimeframe: last ${input.timeframeDays} days`
+      : defaultPrompts[input.analysis];
+
+    // Build system prompt with optional business context
+    let systemPrompt = `You are an expert business intelligence analyst for ${config.companyName}.
+Analyze the provided data and generate actionable insights.
+Be specific — reference product names, SKUs, and numbers.
+Each insight must have a clear, actionable recommendation.
+Rate your confidence honestly (0.0 to 1.0).
+Use the deployment's terminology: products are called "${config.labels.product}", orders are "${config.labels.order}".`;
+
+    if (aiSettings.aiBusinessContext?.trim()) {
+      systemPrompt += `\n\nBusiness context:\n${aiSettings.aiBusinessContext.trim()}`;
+    }
 
     const { object } = await generateObject({
       model: getModel(),
@@ -150,13 +171,8 @@ export default createAgent("insights-analyzer", {
         insights: z.array(insightSchema),
         summary: z.string(),
       }),
-      system: `You are an expert business intelligence analyst for ${config.companyName}.
-Analyze the provided data and generate actionable insights.
-Be specific — reference product names, SKUs, and numbers.
-Each insight must have a clear, actionable recommendation.
-Rate your confidence honestly (0.0 to 1.0).
-Use the deployment's terminology: products are called "${config.labels.product}", orders are "${config.labels.order}".`,
-      prompt: `${prompts[input.analysis]}
+      system: systemPrompt,
+      prompt: `${analysisPrompt}
 
 Data:
 ${dataContext}`,

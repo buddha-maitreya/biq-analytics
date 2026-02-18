@@ -17,6 +17,10 @@ import {
 import { sql, eq, gte, lte, and, desc } from "drizzle-orm";
 import { config } from "@lib/config";
 import { getModel } from "@lib/ai";
+import { getAISettings } from "@services/settings";
+import type { AISettings } from "@services/settings";
+import { listActiveTools, executeTool } from "@services/custom-tools";
+import type { CustomToolRow } from "@services/custom-tools";
 import insightsAnalyzer from "@agent/insights-analyzer";
 import reportGenerator from "@agent/report-generator";
 import knowledgeBase from "@agent/knowledge-base";
@@ -314,52 +318,97 @@ const getBusinessSnapshotTool = tool({
 // System prompt
 // ────────────────────────────────────────────────────────────
 
-function buildSystemPrompt(conversationSummary?: string): string {
-  const base = `You are the Data Science Assistant for ${config.companyName} — a highly intelligent business AI that acts as the "brain of the business."
+function buildSystemPrompt(conversationSummary?: string, ai?: AISettings, customToolsSection?: string): string {
+  // ── Personality — who the AI is ───────────────────────────
+  const personality = ai?.aiPersonality?.trim()
+    || `You are the intelligent business assistant for ${config.companyName} — you act as the "brain of the business."`;
 
-Your role:
+  // ── Environment — where/how the AI operates ───────────────
+  const environment = ai?.aiEnvironment?.trim()
+    ? `\nEnvironment:\n${ai.aiEnvironment.trim()}`
+    : `\nEnvironment:\nYou operate inside the ${config.companyName} management platform. Users interact with you via a chat interface. You have access to the live business database, analytics agents, a knowledge base of uploaded documents, and custom business tools.`;
+
+  // ── Tone — communication style ────────────────────────────
+  const tone = ai?.aiTone?.trim()
+    ? `\nTone:\n${ai.aiTone.trim()}`
+    : "";
+
+  // ── Goal — primary objective ──────────────────────────────
+  const goal = ai?.aiGoal?.trim()
+    ? `\nGoal:\n${ai.aiGoal.trim()}`
+    : `\nGoal:\nHelp users understand their business data, surface actionable insights, and answer operational questions quickly and accurately.`;
+
+  // ── Core role (always present, not customizable) ──────────
+  const coreRole = `Your role:
 - Answer questions about the business using the available tools
 - Query the database directly for precise data answers
 - Delegate to specialized agents (insights, reports, knowledge base) for complex analysis
 - Synthesize results and provide clear, actionable responses
-- After answering the user's question, check if your tool results revealed anything noteworthy beyond what was asked. If so, add a brief "💡 Also noticed:" section.
+- After answering the user's question, check if your tool results revealed anything noteworthy beyond what was asked. If so, add a brief "💡 Also noticed:" section.`;
 
-Terminology for this deployment:
+  // ── Terminology (auto-generated from config labels) ───────
+  const terminology = `Terminology for this deployment:
 - Products are called "${config.labels.product}" / "${config.labels.productPlural}"
 - Orders are called "${config.labels.order}" / "${config.labels.orderPlural}"
 - Customers are called "${config.labels.customer}" / "${config.labels.customerPlural}"
 - Currency: ${config.currency}
-- Default unit: ${config.labels.unitDefault}
+- Default unit: ${config.labels.unitDefault}`;
 
-Tool usage guidelines:
-- Use query_database for specific data lookups (counts, totals, lists, aggregations)
+  // ── Business context (client-customizable) ────────────────
+  const businessContext = ai?.aiBusinessContext?.trim()
+    ? `\nBusiness context:\n${ai.aiBusinessContext.trim()}`
+    : "";
+
+  // ── Tool guidelines (client-customizable with defaults) ───
+  const toolGuidelines = ai?.aiToolGuidelines?.trim()
+    || `- Use query_database for specific data lookups (counts, totals, lists, aggregations)
 - Use analyze_trends when users ask about forecasting, anomalies, restocking, or sales patterns
 - Use generate_report for comprehensive report requests
 - Use search_knowledge when users ask about policies, procedures, or uploaded documents
 - Use get_business_snapshot for broad "how is the business?" questions
-- You can use multiple tools in one turn — use as many as needed to build a thorough answer
+- You can use multiple tools in one turn — use as many as needed to build a thorough answer`;
 
-CRITICAL — SQL dialect:
+  // ── Query reasoning (how to think before acting) ──────────
+  const queryReasoning = ai?.aiQueryReasoning?.trim()
+    ? `\nQuery reasoning:\n${ai.aiQueryReasoning.trim()}`
+    : "";
+
+  // ── SQL dialect (always present, not customizable) ────────
+  const sqlDialect = `CRITICAL — SQL dialect:
 - The database is PostgreSQL. NEVER use MySQL syntax.
 - Date intervals: NOW() - INTERVAL '30 days' (NOT DATE_SUB/DATE_ADD)
 - String aggregation: STRING_AGG() (NOT GROUP_CONCAT)
 - Case-insensitive match: ILIKE (NOT LOWER() + LIKE)
-- Boolean literals: TRUE/FALSE (NOT 1/0)
+- Boolean literals: TRUE/FALSE (NOT 1/0)`;
 
-Response style:
+  // ── Response formatting (client-customizable with defaults)
+  const responseFormatting = ai?.aiResponseFormatting?.trim()
+    ? `\nResponse formatting:\n${ai.aiResponseFormatting.trim()}`
+    : `\nResponse formatting:
 - Be concise but thorough
 - Format with Markdown: headers, bullet points, tables, bold numbers
 - Always cite your data source (which tool/query produced the numbers)
 - When showing financial figures, use the correct currency (${config.currency})
 - If a question is ambiguous, make a reasonable assumption and state it`;
 
+  // ── Guardrails (safety rules, boundaries) ─────────────────
+  const guardrails = ai?.aiGuardrails?.trim()
+    ? `\nGuardrails:\n${ai.aiGuardrails.trim()}`
+    : "";
+
+  const base = `${personality}${environment}${tone}${goal}
+
+${coreRole}
+
+${terminology}${businessContext}
+
+Tool usage guidelines:
+${toolGuidelines}${queryReasoning}
+
+${sqlDialect}${responseFormatting}${guardrails}${customToolsSection || ""}`;
+
   if (conversationSummary) {
-    return `${base}
-
-CONVERSATION CONTEXT (rolling summary of earlier messages):
-${conversationSummary}
-
-Use this summary to maintain continuity. Do not ask the user to repeat information already discussed.`;
+    return `${base}\n\nCONVERSATION CONTEXT (rolling summary of earlier messages):\n${conversationSummary}\n\nUse this summary to maintain continuity. Do not ask the user to repeat information already discussed.`;
   }
 
   return base;
@@ -378,6 +427,145 @@ const tools = {
 };
 
 export type DataScienceTools = typeof tools;
+
+// ────────────────────────────────────────────────────────────
+// Dynamic Custom Tools — loaded from DB at request time
+//
+// Businesses define custom tools via the Settings UI. Three types:
+// - sandbox: code runs in isolated bun:1 container
+// - webhook: HTTP call to external URL
+// - client: structured action sent to frontend via SSE
+// ────────────────────────────────────────────────────────────
+
+/** Sandbox interface — subset of ctx.sandbox / c.var.sandbox */
+type SandboxAPI = {
+  run: (opts: Record<string, unknown>) => Promise<{
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+  }>;
+};
+
+/**
+ * Convert a JSON parameter schema to a Zod schema.
+ * Supports basic types: string, number, boolean, with descriptions.
+ */
+function jsonSchemaToZod(
+  paramSchema: Record<string, unknown>
+): z.ZodObject<Record<string, z.ZodTypeAny>> {
+  const shape: Record<string, z.ZodTypeAny> = {};
+
+  for (const [key, def] of Object.entries(paramSchema)) {
+    const fieldDef = def as Record<string, unknown>;
+    const fieldType = (fieldDef.type as string) || "string";
+    const description = (fieldDef.description as string) || "";
+    const required = fieldDef.required !== false;
+
+    let zodType: z.ZodTypeAny;
+    switch (fieldType) {
+      case "number":
+        zodType = z.number().describe(description);
+        break;
+      case "boolean":
+        zodType = z.boolean().describe(description);
+        break;
+      default:
+        zodType = z.string().describe(description);
+    }
+
+    shape[key] = required ? zodType : zodType.optional();
+  }
+
+  // Always allow additional string params for flexibility
+  return z.object(shape).passthrough();
+}
+
+/**
+ * Build dynamic Vercel AI SDK tools from active custom tool definitions.
+ * Returns a tools map that can be merged with the static tools.
+ *
+ * All three tool types are supported:
+ * - sandbox: requires sandbox API, executes code in isolated container
+ * - webhook: makes HTTP request to configured endpoint
+ * - client: returns structured action payload for the frontend
+ */
+async function buildDynamicTools(
+  sandbox: SandboxAPI | null
+): Promise<Record<string, any>> {
+  let activeTools: CustomToolRow[];
+  try {
+    activeTools = await listActiveTools();
+  } catch {
+    return {};
+  }
+
+  if (activeTools.length === 0) return {};
+
+  const dynamicTools: Record<string, any> = {};
+
+  for (const customTool of activeTools) {
+    // Skip sandbox tools if no sandbox available
+    if (customTool.toolType === "sandbox" && !sandbox) continue;
+
+    const parameterSchema = jsonSchemaToZod(
+      (customTool.parameterSchema as Record<string, unknown>) || {}
+    );
+
+    dynamicTools[customTool.name] = tool({
+      description: customTool.description,
+      parameters: parameterSchema,
+      execute: async (params: Record<string, unknown>) => {
+        try {
+          return await executeTool(customTool, params, sandbox);
+        } catch (err: any) {
+          return {
+            error: `Custom tool "${customTool.label}" failed: ${err.message || String(err)}`,
+          };
+        }
+      },
+    });
+  }
+
+  return dynamicTools;
+}
+
+/**
+ * Build a complete tools map: static built-in tools + dynamic custom tools.
+ */
+async function getAllTools(
+  sandbox: SandboxAPI | null
+): Promise<Record<string, any>> {
+  const dynamic = await buildDynamicTools(sandbox);
+  return { ...tools, ...dynamic };
+}
+
+/**
+ * Build the custom tools section for the system prompt.
+ * Informs the LLM about available custom tools so it knows when to use them.
+ */
+async function buildCustomToolsPromptSection(): Promise<string> {
+  let activeTools: CustomToolRow[];
+  try {
+    activeTools = await listActiveTools();
+  } catch {
+    return "";
+  }
+  if (activeTools.length === 0) return "";
+
+  const typeLabel: Record<string, string> = {
+    sandbox: "code execution",
+    webhook: "external API",
+    client: "UI action",
+  };
+
+  const toolDescriptions = activeTools
+    .map((t) => `- **${t.name}** (${typeLabel[t.toolType] || t.toolType}): ${t.description}`)
+    .join("\n");
+
+  return `\n\nCustom business tools (defined by this business):
+${toolDescriptions}
+Use these tools when relevant to the user's question. They extend your capabilities beyond the built-in tools.`;
+}
 
 // ────────────────────────────────────────────────────────────
 // Conversation Context — rolling summary + recent messages
@@ -505,6 +693,14 @@ export async function maybeCompressSummary(
 export default createAgent("data-science", {
   schema: { input: inputSchema, output: outputSchema },
   handler: async (ctx, input) => {
+    // Load client-customizable AI settings at request time
+    const aiSettings = await getAISettings();
+
+    // Build complete tool set: static + dynamic custom tools
+    const sandbox = (ctx as any).sandbox as SandboxAPI | null;
+    const allTools = await getAllTools(sandbox);
+    const customToolsSection = await buildCustomToolsPromptSection();
+
     const messages: Array<{
       role: "user" | "assistant" | "system";
       content: string;
@@ -517,9 +713,9 @@ export default createAgent("data-science", {
 
     const result = await generateText({
       model: getModel("gpt-4o"),
-      system: buildSystemPrompt(),
+      system: buildSystemPrompt(undefined, aiSettings, customToolsSection),
       messages,
-      tools,
+      tools: allTools,
       maxSteps: 8,
     });
 
@@ -541,7 +737,7 @@ export default createAgent("data-science", {
             id: tc.toolCallId,
             name: tc.toolName,
             input: tc.args as Record<string, unknown>,
-            output: toolResult?.result,
+            output: (toolResult as any)?.result,
             status: "completed" as const,
           });
         }
@@ -595,8 +791,16 @@ export async function streamChat(
   message: string,
   sessionId: string,
   history?: Array<{ role: "user" | "assistant" | "system"; content: string }>,
-  conversationSummary?: string
+  conversationSummary?: string,
+  sandbox?: SandboxAPI | null
 ) {
+  // Load client-customizable AI settings at request time
+  const aiSettings = await getAISettings();
+
+  // Build complete tool set: static + dynamic custom tools from DB
+  const allTools = await getAllTools(sandbox ?? null);
+  const customToolsSection = await buildCustomToolsPromptSection();
+
   const messages: Array<{
     role: "user" | "assistant" | "system";
     content: string;
@@ -609,9 +813,9 @@ export async function streamChat(
 
   return streamText({
     model: getModel("gpt-4o"),
-    system: buildSystemPrompt(conversationSummary),
+    system: buildSystemPrompt(conversationSummary, aiSettings, customToolsSection),
     messages,
-    tools,
+    tools: allTools,
     maxSteps: 8,
   });
 }

@@ -13,8 +13,8 @@ router.get("/config", async (c) => {
     companyLogoUrl: dbSettings.businessLogoUrl || config.companyLogoUrl,
     companyTagline: dbSettings.businessTagline || "",
     primaryColor: dbSettings.primaryColor || "#3b82f6",
-    currency: config.currency,
-    timezone: config.timezone,
+    currency: dbSettings.currency || config.currency,
+    timezone: dbSettings.timezone || config.timezone,
     labels: config.labels,
   });
 });

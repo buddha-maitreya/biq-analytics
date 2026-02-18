@@ -3155,9 +3155,10 @@ textarea {
   margin-top: 4px;
 }
 .sidebar-powered {
-  font-size: 0.65rem;
-  color: #475569;
+  font-size: 0.7rem;
+  color: #94a3b8;
   margin-top: 12px;
+  letter-spacing: 0.025em;
 }
 .config-table {
   width: 100%;

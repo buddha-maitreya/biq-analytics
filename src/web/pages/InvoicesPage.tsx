@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from "react";
 import { useAPI } from "@agentuity/react";
-import type { AppConfig } from "../types";
+import type { AppConfig, Page } from "../types";
 
 interface InvoicesPageProps {
   config: AppConfig;
+  onNavigate?: (page: Page) => void;
 }
 
 type SortKey = "invoiceNumber" | "customer" | "status" | "totalAmount" | "paidAmount" | "balance" | "dueDate" | "kraVerified";
@@ -18,7 +19,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   cancelled: { label: "Cancelled", color: "#6b7280" },
 };
 
-export default function InvoicesPage({ config }: InvoicesPageProps) {
+export default function InvoicesPage({ config, onNavigate }: InvoicesPageProps) {
   const [page, setPage] = useState(1);
   const { data, isLoading, refetch } = useAPI<any>(`GET /api/invoices?page=${page}&limit=200`);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -150,6 +151,11 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
             {summary.count} invoice{summary.count !== 1 ? "s" : ""} · {config.currency} {fmt(summary.grandTotal)} billed
           </span>
         </div>
+        {onNavigate && (
+          <button className="btn btn-primary" onClick={() => onNavigate("invoice_checker")}>
+            🔍 {config.labels.invoice} Checker
+          </button>
+        )}
       </div>
 
       {/* Summary Cards */}

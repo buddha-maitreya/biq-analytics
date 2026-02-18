@@ -124,8 +124,6 @@ export default function AdminPage({ config, onSaved }: AdminPageProps) {
 
   const tabs: { key: AdminTab; label: string; icon: string }[] = [
     { key: "users", label: "Users & Access", icon: "🔐" },
-    { key: "statuses", label: `${config.labels.order} Statuses`, icon: "🏷️" },
-    { key: "tax", label: "Tax Rules", icon: "💲" },
     { key: "knowledge", label: "Knowledge Base", icon: "🧠" },
     { key: "settings", label: "Settings", icon: "🎨" },
   ];
@@ -151,8 +149,6 @@ export default function AdminPage({ config, onSaved }: AdminPageProps) {
 
       <div className="admin-content">
         {tab === "users" && <UsersAccessTab />}
-        {tab === "statuses" && <OrderStatusesTab config={config} />}
-        {tab === "tax" && <TaxRulesTab />}
         {tab === "knowledge" && <KnowledgeBaseTab />}
         {tab === "settings" && <SettingsTab config={config} onSaved={onSaved} />}
       </div>
@@ -1132,70 +1128,6 @@ function KnowledgeBaseTab() {
         )}
       </div>
 
-      {/* ── KB Settings ── */}
-      <div className="card" style={{ marginTop: 16 }}>
-        <h4 style={{ marginBottom: 16 }}>⚙️ Knowledge Base Settings</h4>
-        <div className="kb-settings-grid">
-          {/* ElevenLabs Integration */}
-          <div className="kb-settings-group">
-            <h5>🎙️ ElevenLabs Integration</h5>
-            <p className="text-muted" style={{ fontSize: "0.8rem", marginBottom: 12 }}>Connect your ElevenLabs conversational AI agent</p>
-            <label>
-              <span className="form-label">Agent ID</span>
-              <input
-                type="text"
-                value={kbSettings.elevenLabsAgentId}
-                onChange={(e) => setKbSettings({ ...kbSettings, elevenLabsAgentId: e.target.value })}
-                placeholder="agent_xxxxxxxx"
-              />
-            </label>
-            <label style={{ marginTop: 8 }}>
-              <span className="form-label">API Key</span>
-              <input
-                type="password"
-                value={kbSettings.elevenLabsApiKey}
-                onChange={(e) => setKbSettings({ ...kbSettings, elevenLabsApiKey: e.target.value })}
-                placeholder="xi-api-key-xxxxxxxx"
-              />
-            </label>
-          </div>
-
-          {/* Retrieval Settings */}
-          <div className="kb-settings-group">
-            <h5>🔍 Retrieval Settings</h5>
-            <p className="text-muted" style={{ fontSize: "0.8rem", marginBottom: 12 }}>Fine-tune how documents are chunked and retrieved</p>
-            <label>
-              <span className="form-label">Chunk Size (tokens)</span>
-              <input
-                type="number"
-                value={kbSettings.chunkSize}
-                onChange={(e) => setKbSettings({ ...kbSettings, chunkSize: e.target.value })}
-                min={128}
-                max={4096}
-                step={128}
-              />
-              <span className="form-hint">Recommended: 512. Larger chunks = more context, smaller = more precise.</span>
-            </label>
-            <label style={{ marginTop: 8 }}>
-              <span className="form-label">Top K Results</span>
-              <input
-                type="number"
-                value={kbSettings.topKResults}
-                onChange={(e) => setKbSettings({ ...kbSettings, topKResults: e.target.value })}
-                min={1}
-                max={20}
-              />
-              <span className="form-hint">Number of document chunks retrieved per query (default: 5).</span>
-            </label>
-          </div>
-        </div>
-        <div className="form-actions" style={{ marginTop: 16 }}>
-          <button className="btn btn-primary" onClick={saveKbSettings} disabled={savingKb}>
-            {savingKb ? "Saving…" : "💾 Save KB Settings"}
-          </button>
-        </div>
-      </div>
-
       {/* ── Query Test ── */}
       <div className="card" style={{ marginTop: 16 }}>
         <h4>🔍 Test Knowledge Base</h4>
@@ -1348,18 +1280,7 @@ function SettingsTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
             </div>
           </div>
 
-          <div className="card settings-card">
-            <h4>📋 Environment Configuration</h4>
-            <p className="text-muted" style={{ marginBottom: 16, fontSize: "0.8rem" }}>Set by your administrator via environment variables.</p>
-            <div className="config-table">
-              <div className="config-row"><span className="config-key">Currency</span><span className="config-value">{config.currency}</span></div>
-              <div className="config-row"><span className="config-key">Timezone</span><span className="config-value">{config.timezone}</span></div>
-              <div className="config-row"><span className="config-key">{config.labels.product} Label</span><span className="config-value">{config.labels.product} / {config.labels.productPlural}</span></div>
-              <div className="config-row"><span className="config-key">{config.labels.order} Label</span><span className="config-value">{config.labels.order} / {config.labels.orderPlural}</span></div>
-              <div className="config-row"><span className="config-key">{config.labels.customer} Label</span><span className="config-value">{config.labels.customer} / {config.labels.customerPlural}</span></div>
-              <div className="config-row"><span className="config-key">Default Unit</span><span className="config-value">{config.labels.unitDefault}</span></div>
-            </div>
-          </div>
+
         </div>
       )}
 

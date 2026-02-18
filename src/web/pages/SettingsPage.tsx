@@ -35,22 +35,127 @@ const PAYMENT_DEFAULTS = {
   kraBranchId: "00",
 };
 
+// Default AI config keys (must match settings.ts AI_KEYS)
+const AI_DEFAULTS = {
+  aiPersonality: "",
+  aiEnvironment: "",
+  aiTone: "",
+  aiGoal: "",
+  aiBusinessContext: "",
+  aiResponseFormatting: "",
+  aiQueryReasoning: "",
+  aiToolGuidelines: "",
+  aiGuardrails: "",
+  aiInsightsInstructions: "",
+  aiReportInstructions: "",
+  aiWelcomeMessage: "",
+};
+
 export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
   const [settings, setSettings] = useState({
     businessName: "",
     businessLogoUrl: "",
     businessTagline: "",
     primaryColor: "#3b82f6",
+    currency: "",
+    timezone: "",
     ...PAYMENT_DEFAULTS,
+    ...AI_DEFAULTS,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [activeSection, setActiveSection] = useState<"business" | "payments" | "tax">("business");
+  const [activeSection, setActiveSection] = useState<"business" | "payments" | "tax" | "ai" | "tools">("business");
+
+  // Custom tools state
+  type ToolType = "sandbox" | "webhook" | "client";
+  interface CustomTool {
+    id?: string;
+    toolType: ToolType;
+    name: string;
+    label: string;
+    description: string;
+    parameterSchema: Record<string, unknown>;
+    // Sandbox
+    code: string;
+    runtime: string;
+    timeoutMs: number;
+    networkEnabled: boolean;
+    // Webhook
+    webhookUrl: string;
+    webhookMethod: string;
+    webhookHeaders: Record<string, string>;
+    webhookTimeoutSecs: number;
+    authType: string;
+    authConfig: Record<string, string>;
+    pathParamsSchema: Array<Record<string, unknown>>;
+    queryParamsSchema: Array<Record<string, unknown>>;
+    requestBodySchema: Record<string, unknown>;
+    // Client
+    expectsResponse: boolean;
+    // Shared behaviour (webhook + client)
+    disableInterruptions: boolean;
+    preToolSpeech: string;
+    preToolSpeechText: string;
+    executionMode: string;
+    toolCallSound: string;
+    dynamicVariables: Record<string, unknown>;
+    dynamicVariableAssignments: Array<Record<string, unknown>>;
+    // Common
+    isActive: boolean;
+    sortOrder: number;
+  }
+  const [customTools, setCustomTools] = useState<CustomTool[]>([]);
+  const [editingTool, setEditingTool] = useState<CustomTool | null>(null);
+  const [testParams, setTestParams] = useState("{}");
+  const [testResult, setTestResult] = useState<string | null>(null);
+  const [testingToolId, setTestingToolId] = useState<string | null>(null);
+
+  const newTool = (): CustomTool => ({
+    toolType: "sandbox",
+    name: "",
+    label: "",
+    description: "",
+    parameterSchema: {},
+    code: "",
+    runtime: "bun:1",
+    timeoutMs: 30000,
+    networkEnabled: false,
+    webhookUrl: "",
+    webhookMethod: "GET",
+    webhookHeaders: {},
+    webhookTimeoutSecs: 20,
+    authType: "none",
+    authConfig: {},
+    pathParamsSchema: [],
+    queryParamsSchema: [],
+    requestBodySchema: {},
+    expectsResponse: false,
+    disableInterruptions: false,
+    preToolSpeech: "auto",
+    preToolSpeechText: "",
+    executionMode: "immediate",
+    toolCallSound: "none",
+    dynamicVariables: {},
+    dynamicVariableAssignments: [],
+    isActive: true,
+    sortOrder: 0,
+  });
 
   useEffect(() => {
     loadSettings();
+    loadCustomTools();
   }, []);
+
+  const loadCustomTools = async () => {
+    try {
+      const res = await fetch("/api/custom-tools");
+      const json = await res.json();
+      if (json.data) setCustomTools(json.data);
+    } catch {
+      // ignore
+    }
+  };
 
   const loadSettings = async () => {
     try {
@@ -63,9 +168,15 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
           businessLogoUrl: json.data.businessLogoUrl || "",
           businessTagline: json.data.businessTagline || "",
           primaryColor: json.data.primaryColor || "#3b82f6",
+          currency: json.data.currency || "",
+          timezone: json.data.timezone || "",
           // Payment settings
           ...Object.fromEntries(
             Object.keys(PAYMENT_DEFAULTS).map((k) => [k, json.data[k] ?? (PAYMENT_DEFAULTS as Record<string, string>)[k]])
+          ),
+          // AI settings
+          ...Object.fromEntries(
+            Object.keys(AI_DEFAULTS).map((k) => [k, json.data[k] ?? (AI_DEFAULTS as Record<string, string>)[k]])
           ),
         }));
       }
@@ -142,6 +253,18 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
         >
           🏛️ Tax &amp; Compliance
         </button>
+        <button
+          className={`settings-tab ${activeSection === "ai" ? "active" : ""}`}
+          onClick={() => setActiveSection("ai")}
+        >
+          🤖 AI Configuration
+        </button>
+        <button
+          className={`settings-tab ${activeSection === "tools" ? "active" : ""}`}
+          onClick={() => setActiveSection("tools")}
+        >
+          🧩 Custom Tools
+        </button>
       </div>
 
       {/* ═══ BUSINESS IDENTITY SECTION ═══ */}
@@ -186,6 +309,30 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
                   onChange={(e) => upd("businessLogoUrl", e.target.value)}
                 />
                 <span className="form-hint">Direct URL to your logo image (PNG, SVG, or JPG)</span>
+              </label>
+
+              <label>
+                <span className="form-label">Currency</span>
+                <input
+                  type="text"
+                  placeholder="e.g. USD, KES, EUR, GBP"
+                  value={settings.currency}
+                  onChange={(e) => upd("currency", e.target.value.toUpperCase())}
+                  maxLength={5}
+                  style={{ width: 120 }}
+                />
+                <span className="form-hint">ISO currency code used for all financial displays. Leave empty for environment default ({config.currency}).</span>
+              </label>
+
+              <label>
+                <span className="form-label">Timezone</span>
+                <input
+                  type="text"
+                  placeholder="e.g. Africa/Nairobi, America/New_York"
+                  value={settings.timezone}
+                  onChange={(e) => upd("timezone", e.target.value)}
+                />
+                <span className="form-hint">IANA timezone for date/time displays. Leave empty for environment default ({config.timezone}).</span>
               </label>
             </div>
 
@@ -243,44 +390,7 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
             </div>
           </div>
 
-          {/* Current Config (Read-Only) */}
-          <div className="card settings-card">
-            <h3>📋 Environment Configuration</h3>
-            <p className="text-muted" style={{ marginBottom: 16 }}>
-              Set by your deployment administrator via environment variables.
-            </p>
 
-            <div className="config-table">
-              <div className="config-row">
-                <span className="config-key">Currency</span>
-                <span className="config-value">{config.currency}</span>
-              </div>
-              <div className="config-row">
-                <span className="config-key">Timezone</span>
-                <span className="config-value">{config.timezone}</span>
-              </div>
-              <div className="config-row">
-                <span className="config-key">{config.labels.product} Label</span>
-                <span className="config-value">{config.labels.product} / {config.labels.productPlural}</span>
-              </div>
-              <div className="config-row">
-                <span className="config-key">{config.labels.order} Label</span>
-                <span className="config-value">{config.labels.order} / {config.labels.orderPlural}</span>
-              </div>
-              <div className="config-row">
-                <span className="config-key">{config.labels.customer} Label</span>
-                <span className="config-value">{config.labels.customer} / {config.labels.customerPlural}</span>
-              </div>
-              <div className="config-row">
-                <span className="config-key">{config.labels.warehouse} Label</span>
-                <span className="config-value">{config.labels.warehouse}</span>
-              </div>
-              <div className="config-row">
-                <span className="config-key">Default Unit</span>
-                <span className="config-value">{config.labels.unitDefault}</span>
-              </div>
-            </div>
-          </div>
         </div>
       )}
 
@@ -665,6 +775,819 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ AI CONFIGURATION SECTION ═══ */}
+      {activeSection === "ai" && (
+        <div className="settings-grid">
+          {/* Identity & Role */}
+          <div className="card settings-card">
+            <h3>🧠 Identity & Role</h3>
+            <p className="text-muted" style={{ marginBottom: 16 }}>
+              Define who the AI is, its operating environment, and what it should achieve.
+            </p>
+
+            <div className="form-grid" style={{ gap: 16 }}>
+              <label>
+                <span className="form-label">Personality</span>
+                <textarea
+                  rows={3}
+                  placeholder="e.g. You are a knowledgeable business advisor who speaks like a trusted CFO — data-driven, strategic, and action-oriented."
+                  value={settings.aiPersonality}
+                  onChange={(e) => upd("aiPersonality", e.target.value)}
+                  style={{ resize: "vertical" }}
+                />
+                <span className="form-hint">Who the AI is — its role, expertise, and character traits. Replaces the default "intelligent business assistant."</span>
+              </label>
+
+              <label>
+                <span className="form-label">Environment</span>
+                <textarea
+                  rows={3}
+                  placeholder="e.g. You operate inside our company ERP. Users are managers and staff who need quick data answers. You have access to the live database, analytics, and uploaded documents."
+                  value={settings.aiEnvironment}
+                  onChange={(e) => upd("aiEnvironment", e.target.value)}
+                  style={{ resize: "vertical" }}
+                />
+                <span className="form-hint">Where/how the AI operates — interface context, user types, available capabilities.</span>
+              </label>
+
+              <label>
+                <span className="form-label">Goal</span>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Help users make data-driven decisions quickly. Surface actionable insights proactively. Reduce the time it takes to get answers from hours to seconds."
+                  value={settings.aiGoal}
+                  onChange={(e) => upd("aiGoal", e.target.value)}
+                  style={{ resize: "vertical" }}
+                />
+                <span className="form-hint">The AI's primary objective — what it should help users achieve.</span>
+              </label>
+
+              <label>
+                <span className="form-label">Welcome Message</span>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Hello! I'm your Business Assistant. Ask me about sales, inventory, customers, or financial reports."
+                  value={settings.aiWelcomeMessage}
+                  onChange={(e) => upd("aiWelcomeMessage", e.target.value)}
+                  style={{ resize: "vertical" }}
+                />
+                <span className="form-hint">Greeting shown when a user starts a new chat session.</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Communication Style */}
+          <div className="card settings-card">
+            <h3>🎨 Communication Style</h3>
+            <p className="text-muted" style={{ marginBottom: 16 }}>
+              Control tone, formatting, and how responses are structured.
+            </p>
+
+            <div className="form-grid" style={{ gap: 16 }}>
+              <label>
+                <span className="form-label">Tone</span>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Professional but approachable. Use clear, direct language. Avoid jargon unless the user uses it first."
+                  value={settings.aiTone}
+                  onChange={(e) => upd("aiTone", e.target.value)}
+                  style={{ resize: "vertical" }}
+                />
+                <span className="form-hint">Voice and communication style — enthusiastic, professional, casual, formal, etc.</span>
+              </label>
+
+              <label>
+                <span className="form-label">Response Formatting</span>
+                <textarea
+                  rows={4}
+                  placeholder={"e.g.\n- Use Markdown headers, bullet points, and tables\n- Always show currency amounts with proper symbols\n- Bold key numbers and totals\n- End with a recommended next step when relevant"}
+                  value={settings.aiResponseFormatting}
+                  onChange={(e) => upd("aiResponseFormatting", e.target.value)}
+                  style={{ resize: "vertical" }}
+                />
+                <span className="form-hint">How to format output — markdown rules, currency display, table usage, section structure.</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Business Knowledge */}
+          <div className="card settings-card">
+            <h3>🏢 Business Knowledge</h3>
+            <p className="text-muted" style={{ marginBottom: 16 }}>
+              Give the AI context about your business so it can provide more relevant answers.
+            </p>
+
+            <div className="form-grid" style={{ gap: 16 }}>
+              <label>
+                <span className="form-label">Business Context</span>
+                <textarea
+                  rows={4}
+                  placeholder="e.g. We are a B2B wholesale distributor. Our peak season is Q4. We serve 200+ retail clients across 3 regions. Key product lines: electronics, home appliances, and outdoor equipment."
+                  value={settings.aiBusinessContext}
+                  onChange={(e) => upd("aiBusinessContext", e.target.value)}
+                  style={{ resize: "vertical" }}
+                />
+                <span className="form-hint">Domain knowledge — products, policies, specialties, seasonality, customer segments. Shared across all AI agents.</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Tool & Query Behavior */}
+          <div className="card settings-card">
+            <h3>🔧 Tool & Query Behavior</h3>
+            <p className="text-muted" style={{ marginBottom: 16 }}>
+              Guide how the AI reasons about questions and selects tools.
+            </p>
+
+            <div className="form-grid" style={{ gap: 16 }}>
+              <label>
+                <span className="form-label">Query Reasoning</span>
+                <textarea
+                  rows={3}
+                  placeholder={"e.g.\n- Before querying, consider which date range makes sense for the question\n- For financial questions, always cross-check against the payments table\n- When comparing periods, use percentage change, not just absolute numbers"}
+                  value={settings.aiQueryReasoning}
+                  onChange={(e) => upd("aiQueryReasoning", e.target.value)}
+                  style={{ resize: "vertical" }}
+                />
+                <span className="form-hint">Instructions for how the AI should think and reason before calling tools.</span>
+              </label>
+
+              <label>
+                <span className="form-label">Tool Usage Guidelines</span>
+                <textarea
+                  rows={4}
+                  placeholder={"e.g.\n- For inventory questions, query inventory + inventory_transactions tables\n- For customer insights, check orders + payments together\n- Always check low stock before recommending purchasing actions\n- Use reports for overview questions, database for specific queries"}
+                  value={settings.aiToolGuidelines}
+                  onChange={(e) => upd("aiToolGuidelines", e.target.value)}
+                  style={{ resize: "vertical" }}
+                />
+                <span className="form-hint">When to use which tool — overrides the default tool selection logic.</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Safety & Guardrails */}
+          <div className="card settings-card">
+            <h3>🛡️ Safety & Guardrails</h3>
+            <p className="text-muted" style={{ marginBottom: 16 }}>
+              Set boundaries and safety rules for the AI.
+            </p>
+
+            <div className="form-grid" style={{ gap: 16 }}>
+              <label>
+                <span className="form-label">Guardrails</span>
+                <textarea
+                  rows={4}
+                  placeholder={"e.g.\n- Never disclose raw employee salary data\n- Don't make promises about delivery dates — provide estimates only\n- If asked about competitor pricing, decline politely\n- Escalate to a human when the user expresses frustration more than twice"}
+                  value={settings.aiGuardrails}
+                  onChange={(e) => upd("aiGuardrails", e.target.value)}
+                  style={{ resize: "vertical" }}
+                />
+                <span className="form-hint">Safety rules, boundaries, topics to avoid, escalation policies, data access constraints.</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Specialized Agent Instructions */}
+          <div className="card settings-card">
+            <h3>📊 Specialized Agent Instructions</h3>
+            <p className="text-muted" style={{ marginBottom: 16 }}>
+              Customize instructions for the insights analyzer and report generator agents.
+            </p>
+
+            <div className="form-grid" style={{ gap: 16 }}>
+              <label>
+                <span className="form-label">Insights Analysis Instructions</span>
+                <textarea
+                  rows={4}
+                  placeholder={"e.g.\n- Focus on conversion rates and seasonal demand patterns\n- Flag any significant month-over-month changes (>20%)\n- Compare revenue per category, not just totals\n- Consider external factors in recommendations"}
+                  value={settings.aiInsightsInstructions}
+                  onChange={(e) => upd("aiInsightsInstructions", e.target.value)}
+                  style={{ resize: "vertical" }}
+                />
+                <span className="form-hint">Custom instructions for demand forecasting, anomaly detection, and sales trend analysis.</span>
+              </label>
+
+              <label>
+                <span className="form-label">Report Generation Instructions</span>
+                <textarea
+                  rows={4}
+                  placeholder={"e.g.\n1. Executive Summary with key performance highlights\n2. Revenue breakdown by product category\n3. Customer acquisition and retention metrics\n4. Inventory turnover and health\n5. Forward-looking recommendations"}
+                  value={settings.aiReportInstructions}
+                  onChange={(e) => upd("aiReportInstructions", e.target.value)}
+                  style={{ resize: "vertical" }}
+                />
+                <span className="form-hint">Custom structure and focus areas for generated business reports.</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Info box */}
+          <div className="card" style={{ background: "#f0f9ff", border: "1px solid #bae6fd", padding: 16 }}>
+            <p style={{ margin: 0, fontSize: 13, color: "#0c4a6e" }}>
+              <strong>💡 How it works:</strong> These settings are loaded by the AI agents at request time. Changes take effect immediately on the next chat message — no redeployment needed. Leave any field empty to use built-in defaults. The AI always knows your configured terminology ({config.labels.product}, {config.labels.order}, etc.) and currency ({config.currency}) automatically.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ CUSTOM TOOLS SECTION ═══ */}
+      {activeSection === "tools" && (
+        <div className="settings-grid">
+          {/* Editor / Creator */}
+          <div className="card settings-card">
+            <h3>{editingTool?.id ? "✏️ Edit Tool" : "➕ Create Custom Tool"}</h3>
+            <p className="text-muted" style={{ marginBottom: 16 }}>
+              Define custom tools the AI assistant can invoke. Choose a type: <strong>Sandbox</strong> (run code), <strong>Webhook</strong> (call external API), or <strong>Client</strong> (trigger UI action).
+            </p>
+
+            <div className="form-grid" style={{ gap: 12 }}>
+              {/* Tool Type Selector */}
+              <div>
+                <span className="form-label">Tool Type</span>
+                <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                  {([
+                    { value: "sandbox" as ToolType, icon: "🖥️", label: "Sandbox", desc: "Run code in isolated container" },
+                    { value: "webhook" as ToolType, icon: "🌐", label: "Webhook", desc: "Call an external API endpoint" },
+                    { value: "client" as ToolType, icon: "📱", label: "Client", desc: "Trigger a UI action in the browser" },
+                  ] as const).map((tt) => (
+                    <button
+                      key={tt.value}
+                      onClick={() => setEditingTool((prev) => ({ ...(prev ?? newTool()), toolType: tt.value }))}
+                      style={{
+                        flex: 1,
+                        padding: "10px 12px",
+                        borderRadius: 8,
+                        border: `2px solid ${(editingTool?.toolType ?? "sandbox") === tt.value ? "#3b82f6" : "#e5e7eb"}`,
+                        background: (editingTool?.toolType ?? "sandbox") === tt.value ? "#eff6ff" : "#fafafa",
+                        cursor: "pointer",
+                        textAlign: "left",
+                      }}
+                    >
+                      <div style={{ fontSize: 16 }}>{tt.icon} {tt.label}</div>
+                      <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>{tt.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Common fields */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <label>
+                  <span className="form-label">Tool Name</span>
+                  <input
+                    type="text"
+                    placeholder="e.g. calculate_markup"
+                    value={editingTool?.name ?? ""}
+                    onChange={(e) => {
+                      const val = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "");
+                      setEditingTool((prev) => ({ ...(prev ?? newTool()), name: val }));
+                    }}
+                  />
+                  <span className="form-hint">Unique snake_case identifier (used by the AI)</span>
+                </label>
+                <label>
+                  <span className="form-label">Display Label</span>
+                  <input
+                    type="text"
+                    placeholder="e.g. Calculate Markup"
+                    value={editingTool?.label ?? ""}
+                    onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), label: e.target.value }))}
+                  />
+                  <span className="form-hint">Human-readable name shown in the UI</span>
+                </label>
+              </div>
+
+              <label>
+                <span className="form-label">Description (for the AI)</span>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Calculate the selling price given a cost price and desired markup percentage."
+                  value={editingTool?.description ?? ""}
+                  onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), description: e.target.value }))}
+                  style={{ resize: "vertical" }}
+                />
+                <span className="form-hint">Tells the AI when and why to use this tool</span>
+              </label>
+
+              <label>
+                <span className="form-label">Parameters (JSON Schema)</span>
+                <textarea
+                  rows={3}
+                  placeholder={'{\n  "cost_price": { "type": "number", "description": "Cost price" }\n}'}
+                  value={editingTool ? JSON.stringify(editingTool.parameterSchema, null, 2) : "{}"}
+                  onChange={(e) => {
+                    try {
+                      const parsed = JSON.parse(e.target.value);
+                      setEditingTool((prev) => ({ ...(prev ?? newTool()), parameterSchema: parsed }));
+                    } catch { /* Allow invalid JSON while typing */ }
+                  }}
+                  style={{ resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
+                />
+              </label>
+
+              {/* ── Sandbox-specific fields ── */}
+              {(editingTool?.toolType ?? "sandbox") === "sandbox" && (
+                <>
+                  <label>
+                    <span className="form-label">Code (TypeScript/JavaScript)</span>
+                    <textarea
+                      rows={8}
+                      placeholder={'async function execute(params) {\n  const { cost_price, markup_pct } = params;\n  return { selling_price: cost_price * (1 + markup_pct / 100) };\n}'}
+                      value={editingTool?.code ?? ""}
+                      onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), code: e.target.value }))}
+                      style={{ resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
+                    />
+                    <span className="form-hint">Must define an <code>execute(params)</code> function.</span>
+                  </label>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                    <label>
+                      <span className="form-label">Runtime</span>
+                      <select
+                        value={editingTool?.runtime ?? "bun:1"}
+                        onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), runtime: e.target.value }))}
+                      >
+                        <option value="bun:1">Bun 1.x</option>
+                        <option value="node">Node.js</option>
+                        <option value="python">Python</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span className="form-label">Timeout (ms)</span>
+                      <input type="number" min={1000} max={120000} step={1000}
+                        value={editingTool?.timeoutMs ?? 30000}
+                        onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), timeoutMs: Number(e.target.value) }))}
+                      />
+                    </label>
+                    <label>
+                      <span className="form-label">Network</span>
+                      <select
+                        value={editingTool?.networkEnabled ? "true" : "false"}
+                        onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), networkEnabled: e.target.value === "true" }))}
+                      >
+                        <option value="false">❌ Disabled</option>
+                        <option value="true">✅ Enabled</option>
+                      </select>
+                    </label>
+                  </div>
+                </>
+              )}
+
+              {/* ── Webhook-specific fields ── */}
+              {editingTool?.toolType === "webhook" && (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12 }}>
+                    <label>
+                      <span className="form-label">URL</span>
+                      <input type="text" placeholder="https://api.example.com/v1/action"
+                        value={editingTool.webhookUrl ?? ""}
+                        onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), webhookUrl: e.target.value }))}
+                      />
+                      <span className="form-hint">Supports {"{{variable}}"} placeholders and {"{path_param}"} interpolation</span>
+                    </label>
+                    <label>
+                      <span className="form-label">Method</span>
+                      <select value={editingTool.webhookMethod ?? "GET"}
+                        onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), webhookMethod: e.target.value }))}>
+                        <option value="GET">GET</option>
+                        <option value="POST">POST</option>
+                        <option value="PUT">PUT</option>
+                        <option value="PATCH">PATCH</option>
+                        <option value="DELETE">DELETE</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span className="form-label">Timeout (s)</span>
+                      <input type="number" min={1} max={120} value={editingTool.webhookTimeoutSecs ?? 20}
+                        onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), webhookTimeoutSecs: Number(e.target.value) }))}
+                      />
+                    </label>
+                  </div>
+
+                  {/* Authentication */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 12 }}>
+                    <label>
+                      <span className="form-label">Authentication</span>
+                      <select value={editingTool.authType ?? "none"}
+                        onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), authType: e.target.value }))}>
+                        <option value="none">None</option>
+                        <option value="api_key">API Key</option>
+                        <option value="bearer">Bearer Token</option>
+                        <option value="basic">Basic Auth</option>
+                        <option value="oauth2">OAuth 2.0</option>
+                      </select>
+                    </label>
+                    {editingTool.authType === "bearer" && (
+                      <label>
+                        <span className="form-label">Bearer Token</span>
+                        <input type="password" placeholder="your-api-token"
+                          value={editingTool.authConfig?.token ?? ""}
+                          onChange={(e) => setEditingTool((prev) => ({
+                            ...(prev ?? newTool()), authConfig: { ...(prev?.authConfig ?? {}), token: e.target.value }
+                          }))}
+                        />
+                      </label>
+                    )}
+                    {editingTool.authType === "api_key" && (
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <label>
+                          <span className="form-label">Header Name</span>
+                          <input type="text" placeholder="X-API-Key"
+                            value={editingTool.authConfig?.headerName ?? ""}
+                            onChange={(e) => setEditingTool((prev) => ({
+                              ...(prev ?? newTool()), authConfig: { ...(prev?.authConfig ?? {}), headerName: e.target.value }
+                            }))}
+                          />
+                        </label>
+                        <label>
+                          <span className="form-label">API Key</span>
+                          <input type="password" placeholder="sk-..."
+                            value={editingTool.authConfig?.apiKey ?? ""}
+                            onChange={(e) => setEditingTool((prev) => ({
+                              ...(prev ?? newTool()), authConfig: { ...(prev?.authConfig ?? {}), apiKey: e.target.value }
+                            }))}
+                          />
+                        </label>
+                      </div>
+                    )}
+                    {editingTool.authType === "basic" && (
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <label>
+                          <span className="form-label">Username</span>
+                          <input type="text"
+                            value={editingTool.authConfig?.username ?? ""}
+                            onChange={(e) => setEditingTool((prev) => ({
+                              ...(prev ?? newTool()), authConfig: { ...(prev?.authConfig ?? {}), username: e.target.value }
+                            }))}
+                          />
+                        </label>
+                        <label>
+                          <span className="form-label">Password</span>
+                          <input type="password"
+                            value={editingTool.authConfig?.password ?? ""}
+                            onChange={(e) => setEditingTool((prev) => ({
+                              ...(prev ?? newTool()), authConfig: { ...(prev?.authConfig ?? {}), password: e.target.value }
+                            }))}
+                          />
+                        </label>
+                      </div>
+                    )}
+                    {editingTool.authType === "oauth2" && (
+                      <label>
+                        <span className="form-label">Access Token</span>
+                        <input type="password" placeholder="Obtained via OAuth flow"
+                          value={editingTool.authConfig?.accessToken ?? ""}
+                          onChange={(e) => setEditingTool((prev) => ({
+                            ...(prev ?? newTool()), authConfig: { ...(prev?.authConfig ?? {}), accessToken: e.target.value }
+                          }))}
+                        />
+                      </label>
+                    )}
+                  </div>
+
+                  {/* Headers */}
+                  <label>
+                    <span className="form-label">Headers (JSON)</span>
+                    <textarea rows={2}
+                      placeholder={'{ "X-Custom-Header": "value" }'}
+                      value={editingTool ? JSON.stringify(editingTool.webhookHeaders ?? {}, null, 2) : "{}"}
+                      onChange={(e) => {
+                        try { setEditingTool((prev) => ({ ...(prev ?? newTool()), webhookHeaders: JSON.parse(e.target.value) })); } catch { /* typing */ }
+                      }}
+                      style={{ resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
+                    />
+                    <span className="form-hint">Extra headers (auth is added automatically based on the selection above)</span>
+                  </label>
+
+                  {/* Path Parameters */}
+                  <label>
+                    <span className="form-label">Path Parameters (JSON array)</span>
+                    <textarea rows={2}
+                      placeholder={'[{ "name": "user_id", "description": "User ID", "required": true }]'}
+                      value={editingTool ? JSON.stringify(editingTool.pathParamsSchema ?? [], null, 2) : "[]"}
+                      onChange={(e) => {
+                        try { setEditingTool((prev) => ({ ...(prev ?? newTool()), pathParamsSchema: JSON.parse(e.target.value) })); } catch { /* typing */ }
+                      }}
+                      style={{ resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
+                    />
+                    <span className="form-hint">Define path segments like {"{user_id}"} in your URL above</span>
+                  </label>
+
+                  {/* Query Parameters */}
+                  <label>
+                    <span className="form-label">Query Parameters (JSON array)</span>
+                    <textarea rows={2}
+                      placeholder={'[{ "name": "limit", "default": "10" }, { "name": "offset", "default": "0" }]'}
+                      value={editingTool ? JSON.stringify(editingTool.queryParamsSchema ?? [], null, 2) : "[]"}
+                      onChange={(e) => {
+                        try { setEditingTool((prev) => ({ ...(prev ?? newTool()), queryParamsSchema: JSON.parse(e.target.value) })); } catch { /* typing */ }
+                      }}
+                      style={{ resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
+                    />
+                    <span className="form-hint">Default query parameters appended to the URL</span>
+                  </label>
+
+                  {/* Request Body Schema (for POST/PUT/PATCH) */}
+                  {(editingTool.webhookMethod === "POST" || editingTool.webhookMethod === "PUT" || editingTool.webhookMethod === "PATCH") && (
+                    <label>
+                      <span className="form-label">Request Body Schema (JSON)</span>
+                      <textarea rows={3}
+                        placeholder={'{ "message": { "type": "string" }, "priority": { "type": "number", "default": 1 } }'}
+                        value={editingTool ? JSON.stringify(editingTool.requestBodySchema ?? {}, null, 2) : "{}"}
+                        onChange={(e) => {
+                          try { setEditingTool((prev) => ({ ...(prev ?? newTool()), requestBodySchema: JSON.parse(e.target.value) })); } catch { /* typing */ }
+                        }}
+                        style={{ resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
+                      />
+                      <span className="form-hint">Defines the structure of the JSON body sent with the request</span>
+                    </label>
+                  )}
+                </>
+              )}
+
+              {/* ── Client-specific fields ── */}
+              {editingTool?.toolType === "client" && (
+                <div className="card" style={{ background: "#f0f9ff", border: "1px solid #bae6fd", padding: 16 }}>
+                  <p style={{ margin: 0, fontSize: 13, color: "#0c4a6e", marginBottom: 12 }}>
+                    <strong>📱 Client tools</strong> emit a structured action to the browser via SSE. The frontend handles it (show modals, navigate, display cards).
+                  </p>
+                  <label>
+                    <span className="form-label">Wait for Response?</span>
+                    <select
+                      value={editingTool.expectsResponse ? "true" : "false"}
+                      onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), expectsResponse: e.target.value === "true" }))}
+                    >
+                      <option value="false">No — fire and forget</option>
+                      <option value="true">Yes — wait for user input</option>
+                    </select>
+                    <span className="form-hint">If yes, the AI pauses until the frontend responds.</span>
+                  </label>
+                </div>
+              )}
+
+              {/* ── Shared behaviour fields (webhook + client) ── */}
+              {(editingTool?.toolType === "webhook" || editingTool?.toolType === "client") && (
+                <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 12 }}>
+                  <span className="form-label" style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, display: "block" }}>Behaviour Settings</span>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
+                    <label>
+                      <span className="form-label">Execution Mode</span>
+                      <select
+                        value={editingTool?.executionMode ?? "immediate"}
+                        onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), executionMode: e.target.value }))}
+                      >
+                        <option value="immediate">Immediate</option>
+                        <option value="confirm">Ask User First</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span className="form-label">Pre-tool Speech</span>
+                      <select
+                        value={editingTool?.preToolSpeech ?? "auto"}
+                        onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), preToolSpeech: e.target.value }))}
+                      >
+                        <option value="auto">Auto</option>
+                        <option value="custom">Custom Text</option>
+                        <option value="none">None</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span className="form-label">Disable Interruptions</span>
+                      <select
+                        value={editingTool?.disableInterruptions ? "true" : "false"}
+                        onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), disableInterruptions: e.target.value === "true" }))}
+                      >
+                        <option value="false">No</option>
+                        <option value="true">Yes</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span className="form-label">Tool Call Sound</span>
+                      <select
+                        value={editingTool?.toolCallSound ?? "none"}
+                        onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), toolCallSound: e.target.value }))}
+                      >
+                        <option value="none">None</option>
+                        <option value="chime">Chime</option>
+                        <option value="click">Click</option>
+                        <option value="beep">Beep</option>
+                      </select>
+                    </label>
+                  </div>
+                  {editingTool?.preToolSpeech === "custom" && (
+                    <label style={{ marginTop: 8 }}>
+                      <span className="form-label">Custom Pre-tool Text</span>
+                      <input type="text" placeholder="e.g. Let me check that for you..."
+                        value={editingTool.preToolSpeechText ?? ""}
+                        onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), preToolSpeechText: e.target.value }))}
+                      />
+                    </label>
+                  )}
+                </div>
+              )}
+
+              {/* ── Dynamic Variables (all types) ── */}
+              {(editingTool?.toolType === "webhook" || editingTool?.toolType === "client") && (
+                <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 12 }}>
+                  <span className="form-label" style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, display: "block" }}>Dynamic Variables</span>
+                  <label>
+                    <span className="form-label">Variables (JSON)</span>
+                    <textarea rows={2}
+                      placeholder={'{ "user_id": "string", "session_id": "string" }'}
+                      value={editingTool ? JSON.stringify(editingTool.dynamicVariables ?? {}, null, 2) : "{}"}
+                      onChange={(e) => {
+                        try { setEditingTool((prev) => ({ ...(prev ?? newTool()), dynamicVariables: JSON.parse(e.target.value) })); } catch { /* typing */ }
+                      }}
+                      style={{ resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
+                    />
+                    <span className="form-hint">Template variables available in URL, headers, and body via {"{{var_name}}"}</span>
+                  </label>
+                  <label style={{ marginTop: 8 }}>
+                    <span className="form-label">Variable Assignments (JSON array)</span>
+                    <textarea rows={2}
+                      placeholder={'[{ "var": "user_id", "source": "session.userId", "default": "anonymous" }]'}
+                      value={editingTool ? JSON.stringify(editingTool.dynamicVariableAssignments ?? [], null, 2) : "[]"}
+                      onChange={(e) => {
+                        try { setEditingTool((prev) => ({ ...(prev ?? newTool()), dynamicVariableAssignments: JSON.parse(e.target.value) })); } catch { /* typing */ }
+                      }}
+                      style={{ resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
+                    />
+                    <span className="form-hint">How to populate each variable at runtime (source field or default value)</span>
+                  </label>
+                </div>
+              )}
+
+              {/* Save / Cancel */}
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button
+                  className="btn btn-primary"
+                  disabled={
+                    !editingTool?.name || !editingTool?.label ||
+                    ((editingTool?.toolType ?? "sandbox") === "sandbox" && !editingTool?.code) ||
+                    (editingTool?.toolType === "webhook" && !editingTool?.webhookUrl)
+                  }
+                  onClick={async () => {
+                    if (!editingTool) return;
+                    try {
+                      const method = editingTool.id ? "PUT" : "POST";
+                      const url = editingTool.id ? `/api/custom-tools/${editingTool.id}` : "/api/custom-tools";
+                      const res = await fetch(url, {
+                        method,
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(editingTool),
+                      });
+                      if (res.ok) {
+                        setMessage({ type: "success", text: `Tool "${editingTool.label}" saved!` });
+                        setEditingTool(null);
+                        loadCustomTools();
+                      } else {
+                        const err = await res.json();
+                        setMessage({ type: "error", text: err.error || "Failed to save tool" });
+                      }
+                    } catch {
+                      setMessage({ type: "error", text: "Network error saving tool" });
+                    }
+                  }}
+                >
+                  {editingTool?.id ? "💾 Update Tool" : "➕ Create Tool"}
+                </button>
+                {editingTool && (
+                  <button className="btn btn-secondary" onClick={() => setEditingTool(null)}>Cancel</button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* ── Tools Table ── */}
+          <div className="card settings-card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ margin: 0 }}>🧩 Your Custom Tools</h3>
+              <span className="text-muted" style={{ fontSize: 12 }}>
+                {customTools.length} tool{customTools.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+
+            {customTools.length === 0 ? (
+              <p className="text-muted">No custom tools defined yet. Create one above.</p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left" }}>
+                      <th style={{ padding: "6px 8px", fontWeight: 600, color: "#374151" }}>Name</th>
+                      <th style={{ padding: "6px 8px", fontWeight: 600, color: "#374151" }}>Type</th>
+                      <th style={{ padding: "6px 8px", fontWeight: 600, color: "#374151" }}>Description</th>
+                      <th style={{ padding: "6px 8px", fontWeight: 600, color: "#374151" }}>Mode</th>
+                      <th style={{ padding: "6px 8px", fontWeight: 600, color: "#374151", textAlign: "center" }}>Status</th>
+                      <th style={{ padding: "6px 8px", fontWeight: 600, color: "#374151", textAlign: "right" }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {customTools.map((t) => {
+                      const typeIcon = t.toolType === "webhook" ? "🌐" : t.toolType === "client" ? "📱" : "🖥️";
+                      const typeLabel = t.toolType === "webhook" ? "Webhook" : t.toolType === "client" ? "Client" : "Sandbox";
+                      return (
+                        <tr key={t.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                          <td style={{ padding: "8px 8px" }}>
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{t.label}</div>
+                            <div style={{ color: "#64748b", fontFamily: "monospace", fontSize: 11 }}>{t.name}</div>
+                          </td>
+                          <td style={{ padding: "8px 8px" }}>
+                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "#e0e7ff", color: "#3730a3", whiteSpace: "nowrap" }}>
+                              {typeIcon} {typeLabel}
+                            </span>
+                          </td>
+                          <td style={{ padding: "8px 8px", color: "#6b7280", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {t.description.slice(0, 60)}{t.description.length > 60 ? "…" : ""}
+                          </td>
+                          <td style={{ padding: "8px 8px", fontSize: 11, color: "#64748b", textTransform: "capitalize" }}>
+                            {(t as any).executionMode ?? "immediate"}
+                          </td>
+                          <td style={{ padding: "8px 8px", textAlign: "center" }}>
+                            <span style={{
+                              fontSize: 10, padding: "2px 8px", borderRadius: 4,
+                              background: t.isActive ? "#dcfce7" : "#f3f4f6",
+                              color: t.isActive ? "#166534" : "#6b7280",
+                            }}>
+                              {t.isActive ? "Active" : "Inactive"}
+                            </span>
+                          </td>
+                          <td style={{ padding: "8px 8px", textAlign: "right", whiteSpace: "nowrap" }}>
+                            <button className="btn btn-sm" style={{ fontSize: 11, padding: "3px 8px", marginRight: 4 }}
+                              onClick={() => setEditingTool({ ...t })}>
+                              ✏️
+                            </button>
+                            <button className="btn btn-sm" style={{ fontSize: 11, padding: "3px 8px", marginRight: 4 }}
+                              onClick={async () => {
+                                setTestingToolId(t.id!);
+                                setTestResult(null);
+                                try {
+                                  const params = JSON.parse(testParams);
+                                  const res = await fetch(`/api/custom-tools/${t.id}/test`, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ params }),
+                                  });
+                                  const json = await res.json();
+                                  setTestResult(JSON.stringify(json.data ?? json, null, 2));
+                                } catch (err: any) {
+                                  setTestResult(`Error: ${err.message}`);
+                                }
+                                setTestingToolId(null);
+                              }}>
+                              {testingToolId === t.id ? "⏳" : "▶️"}
+                            </button>
+                            <button className="btn btn-sm" style={{ fontSize: 11, padding: "3px 8px", color: "#dc2626" }}
+                              onClick={async () => {
+                                if (!confirm(`Delete tool "${t.label}"?`)) return;
+                                await fetch(`/api/custom-tools/${t.id}`, { method: "DELETE" });
+                                loadCustomTools();
+                              }}>
+                              🗑️
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Test panel */}
+            <div style={{ marginTop: 12 }}>
+              <label>
+                <span className="form-label" style={{ fontSize: 12 }}>Test Parameters (JSON)</span>
+                <textarea rows={2} value={testParams}
+                  onChange={(e) => setTestParams(e.target.value)}
+                  style={{ fontFamily: "monospace", fontSize: 12, resize: "vertical" }}
+                  placeholder='{"cost_price": 100, "markup_pct": 30}'
+                />
+              </label>
+              {testResult && (
+                <pre style={{
+                  background: "#1e293b", color: "#e2e8f0", padding: 12, borderRadius: 8,
+                  fontSize: 12, overflow: "auto", maxHeight: 200, marginTop: 8,
+                }}>
+                  {testResult}
+                </pre>
+              )}
+            </div>
+          </div>
+
+          {/* Info box */}
+          <div className="card" style={{ background: "#f0f9ff", border: "1px solid #bae6fd", padding: 16 }}>
+            <p style={{ margin: 0, fontSize: 13, color: "#0c4a6e" }}>
+              <strong>💡 How custom tools work:</strong> The AI discovers active tools at request time and invokes them when relevant.
+              <strong> Sandbox</strong> tools run code in isolated containers.
+              <strong> Webhook</strong> tools call external APIs with full auth, path/query params, and request body support.
+              <strong> Client</strong> tools trigger actions in the user's browser via SSE.
+              Add as many tools as you need — changes take effect immediately.
+            </p>
           </div>
         </div>
       )}

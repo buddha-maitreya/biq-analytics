@@ -288,8 +288,11 @@ chat.post("/chat/sessions/:id/send", async (c) => {
   // Build conversation context (rolling summary + recent messages)
   const { summary, recentMessages } = await getConversationContext(sessionId);
 
+  // Capture sandbox from route context for custom tool execution
+  const sandbox = (c.var as any).sandbox ?? null;
+
   // Start streaming (non-blocking — events go to SSE bus)
-  processStream(sessionId, message, recentMessages, summary, session.title).catch(
+  processStream(sessionId, message, recentMessages, summary, session.title, sandbox).catch(
     (err) => {
       broadcast(sessionId, "error", {
         message: err?.message || "Stream processing failed",
@@ -310,9 +313,10 @@ async function processStream(
   message: string,
   history: Array<{ role: "user" | "assistant" | "system"; content: string }>,
   conversationSummary: string | undefined,
-  sessionTitle: string | null
+  sessionTitle: string | null,
+  sandbox?: any
 ) {
-  const result = await streamChat(message, sessionId, history, conversationSummary);
+  const result = await streamChat(message, sessionId, history, conversationSummary, sandbox);
   const fullStream = result.fullStream;
 
   let fullText = "";

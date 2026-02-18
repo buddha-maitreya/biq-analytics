@@ -443,6 +443,107 @@ export const taxRules = pgTable("tax_rules", {
   ...timestamps(),
 });
 
+/**
+ * Custom Tools — user-defined tools executed by the AI agent at runtime.
+ *
+ * Three tool types:
+ *  1. **sandbox** — Code runs in an isolated Agentuity sandbox (bun:1/node/python).
+ *  2. **webhook** — AI invokes an external HTTP endpoint (POST/GET).
+ *  3. **client**  — AI emits a UI action for the frontend to handle (display card, navigate, etc.).
+ *
+ * Businesses can add unlimited tools of any type via the Settings UI.
+ */
+export const customTools = pgTable(
+  "custom_tools",
+  {
+    id: id(),
+    /** Tool type: sandbox (code execution), webhook (HTTP call), client (UI action) */
+    toolType: varchar("tool_type", { length: 20 }).notNull().default("sandbox"),
+    /** Unique tool name (snake_case, used as the AI tool key) */
+    name: varchar("name", { length: 100 }).notNull().unique(),
+    /** Human-readable label shown in the UI */
+    label: varchar("label", { length: 255 }).notNull(),
+    /** Description for the LLM — tells the AI when/why to invoke this tool */
+    description: text("description").notNull(),
+    /**
+     * JSON schema for tool parameters.
+     * Stored as a JSON object describing the expected input, e.g.:
+     * { "query": { "type": "string", "description": "Search term" } }
+     * The agent converts this to Zod at runtime.
+     */
+    parameterSchema: jsonb("parameter_schema").notNull().default({}),
+
+    // ── Sandbox-specific fields ─────────────────────────────
+    /** The TypeScript/JavaScript/Python code to execute in the sandbox.
+     * Must define an `execute(params)` function that returns a result.
+     * Only used when toolType = "sandbox".
+     */
+    code: text("code").notNull().default(""),
+    /** Runtime to use: bun:1 (default), node, python */
+    runtime: varchar("runtime", { length: 20 }).notNull().default("bun:1"),
+    /** Max execution time in ms (default 30000) */
+    timeoutMs: integer("timeout_ms").notNull().default(30000),
+    /** Whether network access is allowed in the sandbox */
+    networkEnabled: boolean("network_enabled").notNull().default(false),
+
+    // ── Webhook-specific fields ─────────────────────────────
+    /** URL to call when the tool is invoked. Only used when toolType = "webhook". */
+    webhookUrl: text("webhook_url").default(""),
+    /** HTTP method: GET (default), POST, PUT, DELETE */
+    webhookMethod: varchar("webhook_method", { length: 10 }).default("GET"),
+    /** Custom headers as JSON object, e.g. { "Authorization": "Bearer xxx" }. */
+    webhookHeaders: jsonb("webhook_headers").$type<Record<string, string>>().default({}),
+    /** Response timeout in seconds for webhook calls */
+    webhookTimeoutSecs: integer("webhook_timeout_secs").default(20),
+    /** Authentication type: none, api_key, bearer, basic, oauth2 */
+    authType: varchar("auth_type", { length: 20 }).default("none"),
+    /** Authentication config (api key value, bearer token, basic user/pass, oauth client creds, etc.) */
+    authConfig: jsonb("auth_config").$type<Record<string, string>>().default({}),
+    /** Path parameter definitions — array of { name, description, required, default } */
+    pathParamsSchema: jsonb("path_params_schema").$type<Array<Record<string, unknown>>>().default([]),
+    /** Query parameter definitions — array of { name, description, required, default } */
+    queryParamsSchema: jsonb("query_params_schema").$type<Array<Record<string, unknown>>>().default([]),
+    /** Request body JSON schema for POST/PUT/PATCH webhooks */
+    requestBodySchema: jsonb("request_body_schema").$type<Record<string, unknown>>().default({}),
+
+    // ── Client-specific fields ──────────────────────────────
+    /** Whether the tool expects a response from the client before continuing.
+     * If false, the AI fires-and-forgets the UI action.
+     * Only used when toolType = "client".
+     */
+    expectsResponse: boolean("expects_response").default(false),
+
+    // ── Shared behaviour fields (webhook + client) ──────────
+    /** Disable AI from speaking/streaming while this tool executes */
+    disableInterruptions: boolean("disable_interruptions").default(false),
+    /** Pre-tool speech mode: "auto" (AI decides), "custom" (use preToolSpeechText), "none" */
+    preToolSpeech: varchar("pre_tool_speech", { length: 20 }).default("auto"),
+    /** Custom text the AI says before invoking this tool (when preToolSpeech = "custom") */
+    preToolSpeechText: text("pre_tool_speech_text").default(""),
+    /** Execution mode: "immediate" (run right away) or "confirm" (ask user first) */
+    executionMode: varchar("execution_mode", { length: 20 }).default("immediate"),
+    /** Optional sound effect identifier played when tool is invoked */
+    toolCallSound: varchar("tool_call_sound", { length: 100 }).default("none"),
+    /** Dynamic variables — JSON object of template vars available in URL/body/headers, e.g. { "user_id": "string" } */
+    dynamicVariables: jsonb("dynamic_variables").$type<Record<string, unknown>>().default({}),
+    /** Dynamic variable assignments — how to populate dynamic vars at runtime, e.g. [{ var: "user_id", source: "session.userId" }] */
+    dynamicVariableAssignments: jsonb("dynamic_variable_assignments").$type<Array<Record<string, unknown>>>().default([]),
+
+    // ── Common fields ───────────────────────────────────────
+    /** Whether this tool is active and available to the AI agent */
+    isActive: boolean("is_active").notNull().default(true),
+    /** Display order in the UI */
+    sortOrder: integer("sort_order").notNull().default(0),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_custom_tools_active").on(t.isActive),
+    index("idx_custom_tools_name").on(t.name),
+    index("idx_custom_tools_type").on(t.toolType),
+  ]
+);
+
 // ============================================================
 // Asset Tables — long-term reusable equipment & resources
 // ============================================================

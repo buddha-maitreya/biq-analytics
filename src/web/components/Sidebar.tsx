@@ -29,8 +29,6 @@ const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"]
   { page: "inventory", icon: "🏭", labelKey: "warehouse", fallback: "Inventory" },
   { page: "invoices", icon: "📄", labelKey: "invoice", fallback: "Invoices" },
   { page: "reports", icon: "📈", labelKey: null, fallback: "Reports" },
-  { page: "pos", icon: "➕", labelKey: null, fallback: "New Order" },
-  { page: "invoice_checker", icon: "🔍", labelKey: null, fallback: "Invoice Checker" },
   { page: "admin", icon: "⚙️", labelKey: null, fallback: "Admin" },
   { page: "email", icon: "📧", labelKey: null, fallback: "Email" },
   { page: "about", icon: "ℹ️", labelKey: null, fallback: "About" },
@@ -85,7 +83,7 @@ export default function Sidebar({ config, currentPage, onNavigate, user, onLogou
             )}
           </div>
           <button className="sidebar-close-btn" onClick={onCloseMobile} aria-label="Close menu">✕</button>
-          <span className="sidebar-powered">Powered by Ruskins AI</span>
+          <span className="sidebar-powered">Business IQ - Enterprise</span>
         </div>
         <nav className="sidebar-nav">
           {navItems

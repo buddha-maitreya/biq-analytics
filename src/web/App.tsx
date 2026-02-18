@@ -141,13 +141,13 @@ export default function App() {
       case "products":
         return <ProductsPage config={cfg} />;
       case "orders":
-        return <OrdersPage config={cfg} />;
+        return <OrdersPage config={cfg} onNavigate={setPage} />;
       case "customers":
         return <CustomersPage config={cfg} />;
       case "inventory":
         return <InventoryPage config={cfg} />;
       case "invoices":
-        return <InvoicesPage config={cfg} />;
+        return <InvoicesPage config={cfg} onNavigate={setPage} />;
       case "assistant":
         return <AssistantPage config={cfg} />;
       case "reports":

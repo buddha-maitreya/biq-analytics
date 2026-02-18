@@ -9,12 +9,12 @@ export type Page =
   | "invoices"
   | "assistant"
   | "reports"
-  | "pos"
-  | "invoice_checker"
   | "admin"
   | "settings"
   | "email"
-  | "about";
+  | "about"
+  | "newOrder"
+  | "invoiceChecker";
 
 /** Authenticated user returned by the auth API */
 export interface AuthUser {

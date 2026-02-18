@@ -32,6 +32,8 @@ const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"]
   { page: "admin", icon: "⚙️", labelKey: null, fallback: "Admin" },
   { page: "email", icon: "📧", labelKey: null, fallback: "Email" },
   { page: "about", icon: "ℹ️", labelKey: null, fallback: "About" },
+  { page: "newOrder", icon: "➕", labelKey: null, fallback: "New Order" },
+  { page: "invoiceChecker", icon: "🔍", labelKey: null, fallback: "Invoice Checker" },
 ];
 
 /** Pages restricted by role (base access — can be extended via permissions) */
@@ -88,6 +90,7 @@ export default function Sidebar({ config, currentPage, onNavigate, user, onLogou
         <nav className="sidebar-nav">
           {navItems
             .filter((item) => !visiblePages || visiblePages.includes(item.page))
+            .filter((item) => item.page !== 'newOrder' && item.page !== 'invoiceChecker') // Remove specific pages
             .map((item) => (
               <button
                 key={item.page}

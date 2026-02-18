@@ -1,10 +1,9 @@
 import React, { useState, useMemo } from "react";
 import { useAPI } from "@agentuity/react";
-import type { AppConfig, Page } from "../types";
+import type { AppConfig } from "../types";
 
 interface InvoicesPageProps {
   config: AppConfig;
-  onNavigate?: (page: Page) => void;
 }
 
 type SortKey = "invoiceNumber" | "customer" | "status" | "totalAmount" | "paidAmount" | "balance" | "dueDate" | "kraVerified";
@@ -19,7 +18,54 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   cancelled: { label: "Cancelled", color: "#6b7280" },
 };
 
-export default function InvoicesPage({ config, onNavigate }: InvoicesPageProps) {
+interface InvoiceDetails {
+  salesDate: string | null;
+  transmissionDate: string | null;
+  invoiceDate: string | null;
+  totalItemCount: number;
+  supplierPIN: string | null;
+  supplierName: string | null;
+  deviceSerialNumber: string | null;
+  customerPin: string | null;
+  customerName: string | null;
+  controlUnitInvoiceNumber: string | null;
+  traderSystemInvoiceNumber: string | null;
+  totalInvoiceAmount: number | null;
+  totalTaxableAmount: number | null;
+  totalTaxAmount: number | null;
+  exemptionCertificateNo: string | null;
+  totalDiscountAmount: number | null;
+  itemDetails: unknown[];
+}
+
+interface CheckResult {
+  responseCode: number;
+  responseDesc: string;
+  status: "OK" | "ERROR";
+  invoiceDetails: InvoiceDetails | null;
+}
+
+interface HistoryEntry {
+  invoiceNumber: string;
+  invoiceDate: string;
+  checkedAt: string;
+  status: "OK" | "ERROR";
+  supplierName: string | null;
+  totalAmount: number | null;
+}
+
+export default function InvoicesPage({ config }: InvoicesPageProps) {
+  const [activeTab, setActiveTab] = useState<"list" | "checker">("list");
+
+  // ── Checker tab state ──
+  const [ckInvoiceNumber, setCkInvoiceNumber] = useState("");
+  const [ckDate, setCkDate] = useState("");
+  const [ckLoading, setCkLoading] = useState(false);
+  const [ckResult, setCkResult] = useState<CheckResult | null>(null);
+  const [ckError, setCkError] = useState<string | null>(null);
+  const [ckHistory, setCkHistory] = useState<HistoryEntry[]>([]);
+
+  // ── List tab state ──
   const [page, setPage] = useState(1);
   const { data, isLoading, refetch } = useAPI<any>(`GET /api/invoices?page=${page}&limit=200`);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -142,6 +188,63 @@ export default function InvoicesPage({ config, onNavigate }: InvoicesPageProps) 
     }
   };
 
+  // ── Checker helpers ──
+  const fmtAmount = (n: number | null) =>
+    n != null ? `${config.currency} ${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—";
+
+  const fmtDate = (d: string | null) => {
+    if (!d) return "—";
+    try { return new Date(d).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }); } catch { return d; }
+  };
+
+  const fmtDateTime = (d: string | null) => {
+    if (!d) return "—";
+    try { return new Date(d).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); } catch { return d; }
+  };
+
+  const handleCheck = async () => {
+    if (!ckInvoiceNumber.trim() || !ckDate) return;
+    setCkLoading(true);
+    setCkError(null);
+    setCkResult(null);
+    try {
+      const res = await fetch("/api/kra/invoice/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoiceNumber: ckInvoiceNumber.trim(), invoiceDate: ckDate }),
+      });
+      const json = await res.json();
+      const ckData: CheckResult = json.data ?? json;
+      setCkResult(ckData);
+      setCkHistory((prev) => [
+        {
+          invoiceNumber: ckInvoiceNumber.trim(),
+          invoiceDate: ckDate,
+          checkedAt: new Date().toISOString(),
+          status: ckData.status,
+          supplierName: ckData.invoiceDetails?.supplierName ?? null,
+          totalAmount: ckData.invoiceDetails?.totalInvoiceAmount ?? null,
+        },
+        ...prev.slice(0, 19),
+      ]);
+    } catch {
+      setCkError("Network error — could not reach the server.");
+    } finally {
+      setCkLoading(false);
+    }
+  };
+
+  const fillFromHistory = (entry: HistoryEntry) => {
+    setCkInvoiceNumber(entry.invoiceNumber);
+    setCkDate(entry.invoiceDate);
+    setCkResult(null);
+    setCkError(null);
+  };
+
+  const clearCkResult = () => { setCkResult(null); setCkError(null); };
+
+  const ckDetails = ckResult?.invoiceDetails;
+
   return (
     <div className="page">
       <div className="page-header-row">
@@ -151,12 +254,39 @@ export default function InvoicesPage({ config, onNavigate }: InvoicesPageProps) 
             {summary.count} invoice{summary.count !== 1 ? "s" : ""} · {config.currency} {fmt(summary.grandTotal)} billed
           </span>
         </div>
-        {onNavigate && (
-          <button className="btn btn-primary" onClick={() => onNavigate("invoice_checker")}>
-            🔍 {config.labels.invoice} Checker
-          </button>
-        )}
       </div>
+
+      {/* Tab Bar */}
+      <div style={{ display: "flex", gap: 0, borderBottom: "2px solid #e5e7eb", marginBottom: 16 }}>
+        <button
+          onClick={() => setActiveTab("list")}
+          style={{
+            padding: "10px 20px", border: "none", cursor: "pointer", fontSize: 14, fontWeight: 600,
+            background: "transparent",
+            color: activeTab === "list" ? "#3b82f6" : "#6b7280",
+            borderBottom: activeTab === "list" ? "2px solid #3b82f6" : "2px solid transparent",
+            marginBottom: -2,
+          }}
+        >
+          📄 {config.labels.invoice}s
+        </button>
+        <button
+          onClick={() => setActiveTab("checker")}
+          style={{
+            padding: "10px 20px", border: "none", cursor: "pointer", fontSize: 14, fontWeight: 600,
+            background: "transparent",
+            color: activeTab === "checker" ? "#3b82f6" : "#6b7280",
+            borderBottom: activeTab === "checker" ? "2px solid #3b82f6" : "2px solid transparent",
+            marginBottom: -2,
+          }}
+        >
+          🔍 {config.labels.invoice} Checker
+        </button>
+      </div>
+
+      {/* ═══ INVOICES LIST TAB ═══ */}
+      {activeTab === "list" && (
+        <>
 
       {/* Summary Cards */}
       {!isLoading && enriched.length > 0 && (
@@ -332,6 +462,162 @@ export default function InvoicesPage({ config, onNavigate }: InvoicesPageProps) 
           <button className="btn btn-sm btn-secondary" disabled={!data.pagination.hasPrev} onClick={() => setPage(page - 1)}>← Prev</button>
           <span className="pagination-info">Page {data.pagination.page} of {data.pagination.totalPages}</span>
           <button className="btn btn-sm btn-secondary" disabled={!data.pagination.hasNext} onClick={() => setPage(page + 1)}>Next →</button>
+        </div>
+      )}
+        </>
+      )}
+
+      {/* ═══ INVOICE CHECKER TAB ═══ */}
+      {activeTab === "checker" && (
+        <div className="checker-layout">
+          {/* ── LEFT: Search Form + Result ── */}
+          <div className="checker-main">
+            {/* Search Card */}
+            <div className="card checker-search-card">
+              <h3>Check an Invoice</h3>
+              <p className="text-muted" style={{ marginBottom: 16 }}>
+                Enter the invoice number and date from a supplier invoice to verify it was submitted to KRA.
+              </p>
+              <div className="checker-form">
+                <div className="form-field">
+                  <label>Invoice Number</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 0040799830000906400"
+                    value={ckInvoiceNumber}
+                    onChange={(e) => setCkInvoiceNumber(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleCheck()}
+                  />
+                  <span className="form-hint">The eTIMS invoice number printed on the supplier's receipt/invoice</span>
+                </div>
+                <div className="form-field">
+                  <label>Invoice Date</label>
+                  <input
+                    type="date"
+                    value={ckDate}
+                    onChange={(e) => setCkDate(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleCheck()}
+                  />
+                  <span className="form-hint">Date shown on the invoice (YYYY-MM-DD)</span>
+                </div>
+                <button
+                  className="btn btn-primary checker-submit-btn"
+                  disabled={ckLoading || !ckInvoiceNumber.trim() || !ckDate}
+                  onClick={handleCheck}
+                >
+                  {ckLoading ? (<><span className="spinner-inline" /> Checking…</>) : "🔍 Verify Invoice"}
+                </button>
+              </div>
+            </div>
+
+            {/* Error */}
+            {ckError && (
+              <div className="alert alert-error" style={{ marginTop: 16 }}>❌ {ckError}</div>
+            )}
+
+            {/* Result Card */}
+            {ckResult && (
+              <div className={`card checker-result-card ${ckResult.status === "OK" ? "result-ok" : "result-error"}`} style={{ marginTop: 16 }}>
+                <div className="checker-result-header">
+                  <div className="checker-result-status">
+                    {ckResult.status === "OK" ? (
+                      <><span className="result-icon result-icon-ok">✅</span><div><h3>Invoice Verified</h3><p className="text-muted">{ckResult.responseDesc}</p></div></>
+                    ) : (
+                      <><span className="result-icon result-icon-err">❌</span><div><h3>Verification Failed</h3><p className="text-muted">{ckResult.responseDesc}</p></div></>
+                    )}
+                  </div>
+                  <button className="btn btn-xs btn-secondary" onClick={clearCkResult}>Clear</button>
+                </div>
+
+                {ckDetails && (
+                  <div className="checker-detail-grid">
+                    <div className="checker-detail-section">
+                      <h4>Supplier</h4>
+                      <div className="detail-row"><span className="detail-label">Name</span><span className="detail-value">{ckDetails.supplierName ?? "—"}</span></div>
+                      <div className="detail-row"><span className="detail-label">KRA PIN</span><span className="detail-value mono">{ckDetails.supplierPIN ?? "—"}</span></div>
+                      <div className="detail-row"><span className="detail-label">Device S/N</span><span className="detail-value mono">{ckDetails.deviceSerialNumber ?? "—"}</span></div>
+                    </div>
+                    <div className="checker-detail-section">
+                      <h4>Customer</h4>
+                      <div className="detail-row"><span className="detail-label">Name</span><span className="detail-value">{ckDetails.customerName ?? "Not specified"}</span></div>
+                      <div className="detail-row"><span className="detail-label">KRA PIN</span><span className="detail-value mono">{ckDetails.customerPin ?? "Not specified"}</span></div>
+                    </div>
+                    <div className="checker-detail-section">
+                      <h4>Invoice References</h4>
+                      <div className="detail-row"><span className="detail-label">Control Unit #</span><span className="detail-value mono">{ckDetails.controlUnitInvoiceNumber ?? "—"}</span></div>
+                      <div className="detail-row"><span className="detail-label">Trader System #</span><span className="detail-value mono">{ckDetails.traderSystemInvoiceNumber ?? "—"}</span></div>
+                      {ckDetails.exemptionCertificateNo && (
+                        <div className="detail-row"><span className="detail-label">Exemption Cert</span><span className="detail-value mono">{ckDetails.exemptionCertificateNo}</span></div>
+                      )}
+                    </div>
+                    <div className="checker-detail-section">
+                      <h4>Dates</h4>
+                      <div className="detail-row"><span className="detail-label">Sale Date</span><span className="detail-value">{fmtDate(ckDetails.salesDate)}</span></div>
+                      <div className="detail-row"><span className="detail-label">Invoice Date</span><span className="detail-value">{fmtDateTime(ckDetails.invoiceDate)}</span></div>
+                      <div className="detail-row"><span className="detail-label">Transmitted</span><span className="detail-value">{fmtDateTime(ckDetails.transmissionDate)}</span></div>
+                    </div>
+                    <div className="checker-detail-section checker-amounts">
+                      <h4>Amounts</h4>
+                      <div className="detail-row"><span className="detail-label">Total Amount</span><span className="detail-value amount-total">{fmtAmount(ckDetails.totalInvoiceAmount)}</span></div>
+                      <div className="detail-row"><span className="detail-label">Taxable Amount</span><span className="detail-value">{fmtAmount(ckDetails.totalTaxableAmount)}</span></div>
+                      <div className="detail-row"><span className="detail-label">Tax Amount</span><span className="detail-value">{fmtAmount(ckDetails.totalTaxAmount)}</span></div>
+                      <div className="detail-row"><span className="detail-label">Discount</span><span className="detail-value">{fmtAmount(ckDetails.totalDiscountAmount)}</span></div>
+                      <div className="detail-row"><span className="detail-label">Items</span><span className="detail-value">{ckDetails.totalItemCount}</span></div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ── RIGHT: History Panel ── */}
+          <div className="checker-sidebar">
+            <div className="card checker-history-card">
+              <h3>Recent Checks</h3>
+              {ckHistory.length === 0 ? (
+                <p className="text-muted" style={{ fontSize: 13 }}>No invoices checked yet. Results will appear here.</p>
+              ) : (
+                <div className="checker-history-list">
+                  {ckHistory.map((entry, idx) => (
+                    <button
+                      key={`${entry.invoiceNumber}-${idx}`}
+                      className="checker-history-item"
+                      onClick={() => fillFromHistory(entry)}
+                      title="Click to re-check this invoice"
+                    >
+                      <div className="history-status">{entry.status === "OK" ? "✅" : "❌"}</div>
+                      <div className="history-info">
+                        <span className="history-invoice-no mono">
+                          {entry.invoiceNumber.length > 20 ? entry.invoiceNumber.slice(0, 8) + "…" + entry.invoiceNumber.slice(-8) : entry.invoiceNumber}
+                        </span>
+                        <span className="history-meta">
+                          {entry.supplierName ?? "Unknown supplier"} • {entry.totalAmount != null ? fmtAmount(entry.totalAmount) : "—"}
+                        </span>
+                        <span className="history-date">{fmtDateTime(entry.checkedAt)}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {ckHistory.length > 0 && (
+                <button className="btn btn-xs btn-secondary" style={{ marginTop: 8, width: "100%" }} onClick={() => setCkHistory([])}>Clear History</button>
+              )}
+            </div>
+
+            <div className="card checker-info-card">
+              <h4>ℹ️ About Invoice Checker</h4>
+              <p className="text-muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
+                This tool verifies supplier invoices against KRA's eTIMS (Electronic Tax Invoice Management System) database.
+                A successful check confirms the invoice was submitted and signed by a KRA-approved fiscal device.
+              </p>
+              <div className="checker-info-codes">
+                <div className="info-code"><span className="code-badge code-ok">40000</span><span>Success — invoice found</span></div>
+                <div className="info-code"><span className="code-badge code-err">40001</span><span>Invoice not found</span></div>
+                <div className="info-code"><span className="code-badge code-warn">40005</span><span>Unable to process — retry</span></div>
+                <div className="info-code"><span className="code-badge code-err">50000</span><span>KRA server error</span></div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

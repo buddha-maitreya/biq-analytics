@@ -1,16 +1,15 @@
 import React, { useState, useMemo } from "react";
 import { useAPI } from "@agentuity/react";
-import type { AppConfig, Page } from "../types";
+import type { AppConfig } from "../types";
 
 interface OrdersPageProps {
   config: AppConfig;
-  onNavigate?: (page: Page) => void;
 }
 
 type SortKey = "orderNumber" | "customer" | "status" | "totalAmount" | "createdAt";
 type SortDir = "asc" | "desc";
 
-export default function OrdersPage({ config, onNavigate }: OrdersPageProps) {
+export default function OrdersPage({ config }: OrdersPageProps) {
   const [page, setPage] = useState(1);
   const { data, isLoading, refetch } = useAPI<any>(`GET /api/orders?page=${page}&limit=100`);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -105,11 +104,6 @@ export default function OrdersPage({ config, onNavigate }: OrdersPageProps) {
             {summary.grandCount} {config.labels.orderPlural.toLowerCase()} · {config.currency} {fmt(summary.grandTotal)} total
           </span>
         </div>
-        {onNavigate && (
-          <button className="btn btn-primary" onClick={() => onNavigate("pos")}>
-            ➕ New {config.labels.order}
-          </button>
-        )}
       </div>
 
       {/* Summary Cards */}

@@ -10,8 +10,6 @@ import InvoicesPage from "./pages/InvoicesPage";
 import AssistantPage from "./pages/AssistantPage";
 import ReportsPage from "./pages/ReportsPage";
 import AdminPage from "./pages/AdminPage";
-import POSPage from "./pages/POSPage";
-import InvoiceCheckerPage from "./pages/InvoiceCheckerPage";
 import AboutPage from "./pages/AboutPage";
 import EmailPage from "./pages/EmailPage";
 import LoginPage from "./pages/LoginPage";
@@ -30,12 +28,12 @@ const PAGE_TITLES: Record<Page, string> = {
   invoices: "Invoices",
   assistant: "Executive AI Assistant",
   reports: "Reports",
-  pos: "New Order",
-  invoice_checker: "Invoice Checker",
   admin: "Admin",
   settings: "Settings",
   email: "Email",
   about: "About",
+  newOrder: "New Order",
+  invoiceChecker: "Invoice Checker",
 };
 
 export default function App() {
@@ -141,21 +139,17 @@ export default function App() {
       case "products":
         return <ProductsPage config={cfg} />;
       case "orders":
-        return <OrdersPage config={cfg} onNavigate={setPage} />;
+        return <OrdersPage config={cfg} />;
       case "customers":
         return <CustomersPage config={cfg} />;
       case "inventory":
         return <InventoryPage config={cfg} />;
       case "invoices":
-        return <InvoicesPage config={cfg} onNavigate={setPage} />;
+        return <InvoicesPage config={cfg} />;
       case "assistant":
         return <AssistantPage config={cfg} />;
       case "reports":
         return <ReportsPage config={cfg} />;
-      case "pos":
-        return <POSPage config={cfg} />;
-      case "invoice_checker":
-        return <InvoiceCheckerPage config={cfg} />;
       case "admin":
         return <AdminPage config={cfg} onSaved={refreshConfig} />;
       case "settings":

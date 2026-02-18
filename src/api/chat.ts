@@ -289,7 +289,8 @@ chat.post("/chat/sessions/:id/send", async (c) => {
   const { summary, recentMessages } = await getConversationContext(sessionId);
 
   // Start streaming (non-blocking — events go to SSE bus)
-  processStream(sessionId, message, recentMessages, summary, session.title).catch(
+  const sandboxApi = (c as any).var?.sandbox;
+  processStream(sessionId, message, recentMessages, summary, session.title, sandboxApi).catch(
     (err) => {
       broadcast(sessionId, "error", {
         message: err?.message || "Stream processing failed",
@@ -310,9 +311,10 @@ async function processStream(
   message: string,
   history: Array<{ role: "user" | "assistant" | "system"; content: string }>,
   conversationSummary: string | undefined,
-  sessionTitle: string | null
+  sessionTitle: string | null,
+  sandboxApi?: any
 ) {
-  const result = await streamChat(message, sessionId, history, conversationSummary);
+  const result = await streamChat(message, sessionId, history, conversationSummary, sandboxApi);
   const fullStream = result.fullStream;
 
   let fullText = "";

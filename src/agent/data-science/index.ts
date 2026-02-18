@@ -17,6 +17,8 @@ import {
 import { sql, eq, gte, lte, and, desc } from "drizzle-orm";
 import { config } from "@lib/config";
 import { getModel } from "@lib/ai";
+import { executeSandbox } from "@lib/sandbox";
+import type { SandboxResult } from "@lib/sandbox";
 import { getAISettings } from "@services/settings";
 import type { AISettings } from "@services/settings";
 import { listActiveTools, executeTool } from "@services/custom-tools";
@@ -315,6 +317,110 @@ const getBusinessSnapshotTool = tool({
 });
 
 // ────────────────────────────────────────────────────────────
+// run_analysis — Sandbox-powered code execution tool
+//
+// This is the "real AI agent" capability: the LLM writes JavaScript
+// code that gets executed in an isolated Bun sandbox. The code can
+// perform arbitrary computations — statistical analysis, data
+// transformations, forecasting, anomaly detection, etc.
+//
+// Flow:
+//   1. LLM writes a SQL query to fetch relevant data
+//   2. LLM writes JavaScript code to analyze that data
+//   3. We run the SQL, pipe results as DATA into the sandbox
+//   4. Sandbox executes the code in bun:1 (no network)
+//   5. Results are returned to the LLM for narration
+// ────────────────────────────────────────────────────────────
+
+/** Request-scoped sandbox API reference — set by the handler before tool execution */
+let _sandboxApi: any = null;
+
+function createRunAnalysisTool() {
+  return tool({
+    description: `Execute JavaScript code in an isolated Bun sandbox to perform sophisticated data analysis.
+Use this tool for computations that go BEYOND simple SQL: statistical calculations, moving averages, standard deviations, trend projections, percentage changes, data transformations, ranking algorithms, time-series analysis, anomaly scoring, forecasting, cohort analysis, or any calculation that benefits from programmatic logic.
+
+HOW IT WORKS:
+1. You write a SQL query to fetch the raw data you need
+2. You write JavaScript code that processes that data
+3. The SQL results are available as the global variable DATA (an array of row objects)
+4. Your code MUST return a result (the last expression or an explicit return)
+5. The code runs in Bun 1.x — you can use modern JS/TS features, async/await, etc.
+
+IMPORTANT RULES:
+- DATA is an array of objects (SQL result rows), e.g. [{name: "Widget", total_sold: 150}, ...]
+- Your code MUST return a value — this is what gets sent back as the result
+- You have NO network access and NO filesystem access beyond the sandbox
+- You have NO npm packages — use only built-in JavaScript/Bun APIs
+- Keep computations efficient — you have 30 seconds max
+- For large datasets, work with aggregated SQL data rather than raw rows
+
+EXAMPLE:
+  sqlQuery: "SELECT p.name, SUM(oi.quantity) as total_sold, SUM(oi.total_amount) as revenue FROM order_items oi JOIN products p ON oi.product_id = p.id JOIN orders o ON oi.order_id = o.id WHERE o.created_at >= NOW() - INTERVAL '90 days' GROUP BY p.name ORDER BY revenue DESC LIMIT 20"
+  code: |
+    // Calculate growth rates and rankings
+    const total = DATA.reduce((s, r) => s + Number(r.revenue), 0);
+    const analyzed = DATA.map((row, i) => ({
+      rank: i + 1,
+      product: row.name,
+      revenue: Number(row.revenue),
+      sharePercent: ((Number(row.revenue) / total) * 100).toFixed(1),
+      unitsSold: Number(row.total_sold),
+      avgPrice: (Number(row.revenue) / Number(row.total_sold)).toFixed(2),
+    }));
+    const top3Revenue = analyzed.slice(0, 3).reduce((s, r) => s + r.revenue, 0);
+    return {
+      products: analyzed,
+      totalRevenue: total,
+      top3Concentration: ((top3Revenue / total) * 100).toFixed(1) + "%",
+      productCount: analyzed.length
+    };`,
+    parameters: z.object({
+      sqlQuery: z
+        .string()
+        .optional()
+        .describe("PostgreSQL SELECT query to fetch data. Results become the DATA variable in the sandbox. Use PostgreSQL syntax (INTERVAL, ILIKE, STRING_AGG, etc). Can be omitted if you provide data directly via the analysis code."),
+      code: z
+        .string()
+        .describe("JavaScript code to execute in Bun sandbox. Receives DATA (array of row objects from SQL). Must RETURN a result (object, array, or primitive). Use modern JS — async/await, destructuring, Array methods, Math, Date, etc."),
+      explanation: z
+        .string()
+        .describe("Plain English description of what this analysis does and why"),
+    }),
+    execute: async ({ sqlQuery, code, explanation }) => {
+      if (!_sandboxApi) {
+        return {
+          error: "Sandbox not available — falling back to query_database for this request.",
+          explanation,
+        };
+      }
+
+      const result = await executeSandbox(_sandboxApi, {
+        code,
+        sqlQuery,
+        explanation,
+        timeoutMs: 30000,
+      });
+
+      if (!result.success) {
+        return {
+          error: result.error,
+          stderr: result.stderr,
+          dataRowCount: result.dataRowCount,
+          explanation,
+        };
+      }
+
+      return {
+        result: result.result,
+        dataRowCount: result.dataRowCount,
+        explanation,
+      };
+    },
+  });
+}
+
+// ────────────────────────────────────────────────────────────
 // System prompt
 // ────────────────────────────────────────────────────────────
 
@@ -342,9 +448,14 @@ function buildSystemPrompt(conversationSummary?: string, ai?: AISettings, custom
   const coreRole = `Your role:
 - Answer questions about the business using the available tools
 - Query the database directly for precise data answers
+- Use run_analysis to write and execute JavaScript code for sophisticated computations (statistics, forecasting, trend analysis, anomaly detection, data transformations)
 - Delegate to specialized agents (insights, reports, knowledge base) for complex analysis
 - Synthesize results and provide clear, actionable responses
-- After answering the user's question, check if your tool results revealed anything noteworthy beyond what was asked. If so, add a brief "💡 Also noticed:" section.`;
+- After answering the user's question, check if your tool results revealed anything noteworthy beyond what was asked. If so, add a brief "💡 Also noticed:" section.
+
+IMPORTANT — When to use run_analysis vs query_database:
+- query_database: Simple lookups, counts, totals, lists, aggregations that SQL can express directly
+- run_analysis: Anything requiring computation BEYOND SQL — percentages, rankings with custom logic, moving averages, standard deviations, growth rates, trend projections, cohort analysis, statistical tests, data scoring, pareto analysis, or any multi-step calculation. Prefer run_analysis for analytical questions — it makes you a real data scientist, not just a query runner.`;
 
   // ── Terminology (auto-generated from config labels) ───────
   const terminology = `Terminology for this deployment:
@@ -361,12 +472,14 @@ function buildSystemPrompt(conversationSummary?: string, ai?: AISettings, custom
 
   // ── Tool guidelines (client-customizable with defaults) ───
   const toolGuidelines = ai?.aiToolGuidelines?.trim()
-    || `- Use query_database for specific data lookups (counts, totals, lists, aggregations)
-- Use analyze_trends when users ask about forecasting, anomalies, restocking, or sales patterns
-- Use generate_report for comprehensive report requests
+    || `- Use run_analysis for ANY analytical question that needs computation: statistics, trends, forecasting, anomaly detection, growth rates, rankings, pareto analysis, cohort analysis, scoring, etc. Write SQL to fetch data, then JavaScript to compute results.
+- Use query_database for simple data lookups (counts, totals, lists) where SQL alone suffices
+- Use analyze_trends for quick pre-built insight types (demand-forecast, anomaly-detection, restock-recommendations, sales-trends)
+- Use generate_report for comprehensive formatted report requests
 - Use search_knowledge when users ask about policies, procedures, or uploaded documents
 - Use get_business_snapshot for broad "how is the business?" questions
-- You can use multiple tools in one turn — use as many as needed to build a thorough answer`;
+- You can use multiple tools in one turn — use as many as needed to build a thorough answer
+- PREFER run_analysis over query_database for analytical questions — your JS code can do real computation`;
 
   // ── Query reasoning (how to think before acting) ──────────
   const queryReasoning = ai?.aiQueryReasoning?.trim()
@@ -418,15 +531,16 @@ ${sqlDialect}${responseFormatting}${guardrails}${customToolsSection || ""}`;
 // Tools map
 // ────────────────────────────────────────────────────────────
 
-const tools = {
+const staticTools = {
   query_database: queryDatabaseTool,
+  run_analysis: createRunAnalysisTool(),
   analyze_trends: analyzeTrendsTool,
   generate_report: generateReportTool,
   search_knowledge: searchKnowledgeTool,
   get_business_snapshot: getBusinessSnapshotTool,
 };
 
-export type DataScienceTools = typeof tools;
+export type DataScienceTools = typeof staticTools;
 
 // ────────────────────────────────────────────────────────────
 // Dynamic Custom Tools — loaded from DB at request time
@@ -521,7 +635,7 @@ async function buildDynamicTools(): Promise<Record<string, any>> {
  */
 async function getAllTools(): Promise<Record<string, any>> {
   const dynamic = await buildDynamicTools();
-  return { ...tools, ...dynamic };
+  return { ...staticTools, ...dynamic };
 }
 
 /**
@@ -677,6 +791,9 @@ export async function maybeCompressSummary(
 export default createAgent("data-science", {
   schema: { input: inputSchema, output: outputSchema },
   handler: async (ctx, input) => {
+    // Set sandbox API for the run_analysis tool to use
+    _sandboxApi = ctx.sandbox;
+
     // Load client-customizable AI settings at request time
     const aiSettings = await getAISettings();
 
@@ -774,8 +891,12 @@ export async function streamChat(
   message: string,
   sessionId: string,
   history?: Array<{ role: "user" | "assistant" | "system"; content: string }>,
-  conversationSummary?: string
+  conversationSummary?: string,
+  sandboxApi?: any
 ) {
+  // Set sandbox API for the run_analysis tool
+  if (sandboxApi) _sandboxApi = sandboxApi;
+
   // Load client-customizable AI settings at request time
   const aiSettings = await getAISettings();
 

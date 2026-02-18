@@ -13,6 +13,7 @@
         "@ai-sdk/anthropic": "^1.0.0",
         "@ai-sdk/groq": "^1.0.0",
         "@ai-sdk/openai": "^1.0.0",
+        "@types/bcryptjs": "^3.0.0",
         "ai": "^4.0.0",
         "bcryptjs": "^3.0.3",
         "drizzle-orm": "^0.45.0",
@@ -23,7 +24,6 @@
       },
       "devDependencies": {
         "@agentuity/cli": "latest",
-        "@types/bcryptjs": "^3.0.0",
         "@types/bun": "latest",
         "@types/react": "^19.0.0",
         "@types/react-dom": "^19.0.0",
@@ -32,6 +32,9 @@
       },
     },
   },
+  "trustedDependencies": [
+    "@agentuity/cli",
+  ],
   "overrides": {
     "drizzle-orm": "^0.45.0",
   },

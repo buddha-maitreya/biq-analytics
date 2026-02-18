@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React from "react";
 import type { Page, AppConfig, AuthUser } from "../types";
 
 interface SidebarProps {
@@ -32,7 +32,7 @@ const ROLE_EMOJIS: Record<string, string> = {
 const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"] | null; fallback: string }[] = [
   { page: "assistant", icon: "🤖", labelKey: null, fallback: "Executive AI Assistant" },
   { page: "dashboard", icon: "📊", labelKey: null, fallback: "Dashboard" },
-  { page: "products", icon: "📦", labelKey: "productPlural", fallback: "Products" },
+  { page: "products", icon: "📦", labelKey: "productPlural", fallback: "Products / Services" },
   { page: "orders", icon: "🛒", labelKey: "orderPlural", fallback: "Orders" },
   { page: "customers", icon: "👥", labelKey: "customerPlural", fallback: "Customers" },
   { page: "inventory", icon: "🏭", labelKey: "warehouse", fallback: "Inventory" },
@@ -57,21 +57,6 @@ const PERMISSION_PAGES: Record<string, Page> = {
 };
 
 export default function Sidebar({ config, currentPage, onNavigate, user, onLogout, mobileOpen, onCloseMobile }: SidebarProps) {
-  // ── Theme toggle ──
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    if (typeof window !== "undefined") {
-      return (localStorage.getItem("biq-theme") as "light" | "dark") ?? "light";
-    }
-    return "light";
-  });
-
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("biq-theme", theme);
-  }, [theme]);
-
-  const toggleTheme = () => setTheme((t) => (t === "light" ? "dark" : "light"));
-
   // super_admin sees everything; others get role-based pages + permission-granted pages
   let visiblePages: Page[] | null = null; // null = all pages (super_admin)
   if (ROLE_VISIBLE[user.role]) {
@@ -107,11 +92,6 @@ export default function Sidebar({ config, currentPage, onNavigate, user, onLogou
             )}
           </div>
           <button className="sidebar-close-btn" onClick={onCloseMobile} aria-label="Close menu">✕</button>
-          <div className="sidebar-header-actions">
-            <button className="theme-toggle-btn" onClick={toggleTheme} title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}>
-              {theme === "light" ? "🌙" : "☀️"}
-            </button>
-          </div>
           <span className="sidebar-powered">Business IQ - Enterprise</span>
         </div>
         <nav className="sidebar-nav">

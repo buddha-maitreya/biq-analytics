@@ -1,6 +1,24 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useAPI } from "@agentuity/react";
 import Sidebar from "./components/Sidebar";
+
+/** Theme hook — persists to localStorage, syncs to data-theme attribute */
+function useTheme() {
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("biq-theme") as "light" | "dark") ?? "light";
+    }
+    return "light";
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("biq-theme", theme);
+  }, [theme]);
+
+  const toggle = useCallback(() => setTheme((t) => (t === "light" ? "dark" : "light")), []);
+  return { theme, toggle };
+}
 import Dashboard from "./pages/Dashboard";
 import ProductsPage from "./pages/ProductsPage";
 import OrdersPage from "./pages/OrdersPage";
@@ -40,6 +58,7 @@ export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { theme, toggle: toggleTheme } = useTheme();
   const { data: appConfig, refetch } = useAPI<AppConfig>("GET /api/config");
 
   // Check existing session on mount
@@ -171,12 +190,17 @@ export default function App() {
         onCloseMobile={() => setSidebarOpen(false)}
       />
       <main className="main-content">
-        {/* Mobile top bar — only visible on small screens via CSS */}
-        <div className="mobile-header">
-          <button className="hamburger-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
-            <span /><span /><span />
+        {/* Top bar — mobile hamburger + theme toggle (always top-right) */}
+        <div className="content-top-bar">
+          <div className="mobile-header">
+            <button className="hamburger-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
+              <span /><span /><span />
+            </button>
+            <span className="mobile-header-title">{PAGE_TITLES[page] || "Business IQ"}</span>
+          </div>
+          <button className="theme-toggle-btn-main" onClick={toggleTheme} title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}>
+            {theme === "light" ? "🌙" : "☀️"}
           </button>
-          <span className="mobile-header-title">{PAGE_TITLES[page] || "Business IQ"}</span>
         </div>
         {renderPage()}
       </main>

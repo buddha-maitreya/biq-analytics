@@ -478,13 +478,27 @@ export async function getDashboardChartData(startDate?: string, endDate?: string
         WHERE i.created_at >= ${start.toISOString()} AND i.created_at <= ${end.toISOString()}`
   ) as any[];
 
+  // Fill missing dates in salesByDay so the chart draws a continuous line
+  const salesByDayMap = new Map(salesByDay.map((r: any) => [r.date, r]));
+  const filledSalesByDay: { date: string; orderCount: number; revenue: number }[] = [];
+  const cursor = new Date(start);
+  cursor.setUTCHours(0, 0, 0, 0);
+  const endDay = new Date(end);
+  endDay.setUTCHours(0, 0, 0, 0);
+  while (cursor <= endDay) {
+    const key = cursor.toISOString().slice(0, 10);
+    const row = salesByDayMap.get(key);
+    filledSalesByDay.push({
+      date: key,
+      orderCount: row ? Number(row.order_count) : 0,
+      revenue: row ? Number(row.revenue) : 0,
+    });
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
   return {
     period: { start: start.toISOString(), end: end.toISOString() },
-    salesByDay: salesByDay.map((r: any) => ({
-      date: r.date,
-      orderCount: Number(r.order_count),
-      revenue: Number(r.revenue),
-    })),
+    salesByDay: filledSalesByDay,
     revenueByStatus: revenueByStatus.map((r: any) => ({
       name: r.status_name,
       label: r.status_label ?? r.status_name,

@@ -90,107 +90,76 @@ Every client gets a fully isolated deployment:
 
 ---
 
-## Phase 7 — POS Integration
+## Phase 7 — POS Integration (Weeks 1–3)
 
-Integrate with the **client's existing POS system** — Business IQ Enterprise is a BI solution provider, not a POS vendor. Clients already run their own POS (Square, Clover, Toast, Lightspeed, Shopify POS, Vend, Loyverse, custom systems, etc.). This phase builds the connectors that pull sales and inventory data from those POS systems into Business IQ for unified analytics, reporting, and AI insights.
+External hardware Point-of-Sale integration — connecting Business IQ Enterprise to physical POS terminals, receipt printers, barcode scanners, and cash drawers.
 
-### 7.1 POS Integration Architecture
+### 7.1 POS Gateway Architecture
 
 ```
-┌──────────────────┐   REST/Webhook   ┌───────────────────┐    Internal     ┌──────────────┐
-│  Client's POS     │ ──────────────► │  POS Connector     │ ─────────────► │  Business IQ  │
-│  (Square, Clover, │ ◄── Polling ─── │  Service Layer     │                │  (DB + AI)    │
-│   Toast, etc.)    │                  │  src/services/pos/ │                │               │
-└──────────────────┘                  └───────────────────┘                └──────────────┘
-                                            │
-                                            ├── Webhook receiver (real-time push)
-                                            ├── Polling scheduler (for POS without webhooks)
-                                            ├── Data normalizer (POS-specific → generic schema)
-                                            └── Sync log + conflict resolution
+┌────────────────┐     WebSocket      ┌──────────────────┐    REST/SSE    ┌──────────────┐
+│  POS Terminal   │ ◄──────────────── │  POS Gateway      │ ◄──────────── │  Business IQ  │
+│  (hardware)     │ ──────────────── │  (local bridge)    │ ──────────── │  (cloud)      │
+└────────────────┘                    └──────────────────┘               └──────────────┘
+     │                                      │
+     ├── Barcode Scanner                    ├── Receipt Printer Driver
+     ├── Cash Drawer                        ├── Offline Queue (SQLite)
+     └── Card Reader                        └── Sync Engine
 ```
 
-**Key principle:** We don't touch the POS hardware or software. We connect to the POS **API** to read sales transactions, product catalogs, inventory levels, and customer data — then normalize it into our generic schema for unified BI.
+The POS Gateway is a lightweight local bridge application (`bun` or `electron`) that runs on the client device near the POS hardware, communicating with Business IQ cloud via WebSockets and handling hardware I/O locally.
 
-### 7.2 Supported POS Platforms (Connector Matrix)
+### 7.2 POS API Routes
+- [ ] `POST /api/pos/register` — Register a POS terminal (name, location, hardware config)
+- [ ] `GET /api/pos/terminals` — List registered terminals with status
+- [ ] `PUT /api/pos/terminals/:id/config` — Update terminal configuration
+- [ ] `POST /api/pos/transactions` — Submit a completed POS transaction
+- [ ] `GET /api/pos/transactions` — List transactions with filters (terminal, date, cashier)
+- [ ] `POST /api/pos/sync` — Bulk sync offline transactions
+- [ ] `WS /api/pos/live` — WebSocket endpoint for real-time terminal ↔ cloud communication
 
-| POS Platform | Auth Method | Data Available | Sync Method |
-|-------------|-------------|----------------|-------------|
-| **Square** | OAuth 2.0 | Sales, items, inventory, customers | Webhooks + REST API |
-| **Clover** | OAuth 2.0 | Orders, items, inventory, employees | REST API + polling |
-| **Toast** | API Key | Orders, menu items, labor, payments | Webhooks + REST API |
-| **Lightspeed** | OAuth 2.0 | Sales, products, inventory, customers | REST API + polling |
-| **Shopify POS** | OAuth 2.0 | Orders, products, inventory, customers | Webhooks + REST API |
-| **Vend (Lightspeed X)** | OAuth 2.0 | Sales, products, inventory, customers | REST API + webhooks |
-| **Loyverse** | API Token | Sales, items, inventory, customers | REST API + polling |
-| **Custom / Generic** | API Key / OAuth | Configurable field mapping | Webhook + REST |
+### 7.3 POS Database Schema
+- [ ] `pos_terminals` — id, name, warehouseId, status (online/offline), hardwareConfig (JSONB), lastSeen
+- [ ] `pos_transactions` — id, terminalId, orderId, cashierId, paymentMethod, receiptNumber, metadata
+- [ ] `pos_sessions` — id, terminalId, cashierId, openedAt, closedAt, openingBalance, closingBalance, status
 
-Each deployment configures which POS connector to use and provides API credentials via environment variables.
+### 7.4 POS Gateway (Local Bridge)
+- [ ] **Runtime:** Bun (cross-platform, single binary)
+- [ ] **Hardware drivers:** USB HID for barcode scanners, ESC/POS for thermal printers, serial for cash drawers
+- [ ] **Offline mode:** SQLite queue for transactions when cloud is unreachable
+- [ ] **Auto-sync:** Background sync engine that flushes offline queue when connectivity returns
+- [ ] **Config:** Gateway reads terminal config from cloud on startup, polls for config changes
+- [ ] **Authentication:** API key per terminal (managed in Admin console)
 
-### 7.3 POS API Routes
-- [ ] `POST /api/pos/connect` — Initiate OAuth flow or validate API key for a POS provider
-- [ ] `GET /api/pos/status` — Connection status, last sync time, error count
-- [ ] `POST /api/pos/sync` — Trigger a manual full or incremental sync
-- [ ] `GET /api/pos/sync-log` — Paginated sync history (success/failure, records synced)
-- [ ] `POST /api/pos/webhook` — Webhook receiver endpoint (POS pushes events here)
-- [ ] `GET /api/pos/mapping` — Field mapping configuration (POS fields → BIQ fields)
-- [ ] `PUT /api/pos/mapping` — Update field mapping for custom POS integrations
-- [ ] `POST /api/pos/disconnect` — Revoke tokens and disable sync
+### 7.5 POS Features
+- [ ] Barcode scan → product lookup → add to cart (< 200ms round-trip)
+- [ ] Receipt printing (ESC/POS thermal: 58mm and 80mm widths)
+- [ ] Cash drawer open trigger on transaction completion
+- [ ] Cashier session management (clock in/out, opening/closing balance)
+- [ ] End-of-day settlement with discrepancy detection
+- [ ] Split payment support (cash + card + mobile money)
+- [ ] Offline transaction queue with visual indicator
+- [ ] Real-time inventory deduction on sale
+- [ ] Customer loyalty lookup by phone/barcode
 
-### 7.4 POS Database Schema
-- [ ] `pos_connections` — id, provider (square/clover/toast/...), warehouseId, authType, credentials (encrypted JSONB), status (connected/disconnected/error), lastSyncAt, syncFrequencyMins, fieldMapping (JSONB), metadata
-- [ ] `pos_sync_log` — id, connectionId, syncType (full/incremental/webhook), status (success/partial/failed), recordsSynced, errors (JSONB), startedAt, completedAt
-- [ ] `pos_transactions` — id, connectionId, externalId (POS transaction ID), orderId (our order), rawData (JSONB), normalizedAt, metadata
+### 7.6 POS Hardware Compatibility Matrix
+| Hardware | Protocol | Driver |
+|----------|----------|--------|
+| Barcode Scanner (USB HID) | USB HID keyboard mode | Native — no driver needed |
+| Thermal Printer (ESC/POS) | USB / Network / Bluetooth | `escpos` Bun-compatible library |
+| Cash Drawer | Printer-triggered (DK port) | ESC/POS cash drawer command |
+| Card Reader (Verifone/PAX) | Serial / TCP | Vendor SDK or ISO 8583 |
+| Weighing Scale (serial) | RS-232 / USB-Serial | Custom serial parser |
 
-### 7.5 POS Connector Service
-
-`src/services/pos.ts` + `src/services/pos/` subdirectory per provider
-
-Each connector implements a common interface:
-```typescript
-interface POSConnector {
-  authorize(config: POSConfig): Promise<AuthResult>;       // OAuth flow or key validation
-  syncProducts(since?: Date): Promise<NormalizedProduct[]>; // Pull product catalog
-  syncSales(since?: Date): Promise<NormalizedSale[]>;       // Pull sales transactions
-  syncInventory(since?: Date): Promise<NormalizedStock[]>;  // Pull stock levels
-  syncCustomers(since?: Date): Promise<NormalizedCustomer[]>; // Pull customer records
-  handleWebhook(payload: unknown): Promise<WebhookResult>;  // Process incoming webhook
-  disconnect(): Promise<void>;                              // Revoke & cleanup
-}
-```
-
-**Data normalization:** Each POS has different field names, statuses, and structures. The connector normalizes everything into our generic schema (products, orders, customers, inventory) before writing to the database. Field mapping is configurable per-connection for custom POS systems.
-
-### 7.6 Sync Strategy
-- [ ] **Webhook-first:** For POS platforms that support webhooks (Square, Toast, Shopify), register webhooks on connect for real-time data push
-- [ ] **Polling fallback:** For platforms without webhooks (some Clover setups, Loyverse), schedule periodic polling via cron (`/api/cron/pos-sync`)
-- [ ] **Incremental sync:** Use `lastSyncAt` + POS-side `updated_at` filters to pull only changes
-- [ ] **Full sync:** Admin-triggered full re-sync for data reconciliation
-- [ ] **Conflict resolution:** POS is source of truth for sales; Business IQ is source of truth for analytics. Duplicate detection via `externalId`
-- [ ] **Error handling:** Failed syncs logged with retry. After 3 consecutive failures, mark connection as `error` and notify admin
-
-### 7.7 Environment Variables (Per-Client)
-```env
-POS_PROVIDER=square              # square | clover | toast | lightspeed | shopify | vend | loyverse | custom
-POS_API_KEY=                     # API key (for token-based auth)
-POS_CLIENT_ID=                   # OAuth client ID (for OAuth-based auth)
-POS_CLIENT_SECRET=               # OAuth client secret
-POS_WEBHOOK_SECRET=              # Webhook signature verification secret
-POS_SYNC_FREQUENCY_MINS=15       # Polling interval (for non-webhook providers)
-POS_LOCATION_ID=                 # POS location/store ID to sync (multi-location support)
-```
-
-### 7.8 POS Frontend Updates (Admin Console)
-- [ ] New "POS Integration" tab in Admin console
-- [ ] Provider selection with guided setup wizard (OAuth redirect or API key input)
-- [ ] Connection status dashboard: last sync, records synced, error count
-- [ ] Sync log viewer with error details and retry button
-- [ ] Field mapping editor for custom POS integrations
-- [ ] Manual sync trigger button
-- [ ] POS data preview: recent transactions pulled from POS before they're synced
+### 7.7 POS Frontend Updates
+- [ ] Terminal management page in Admin console (register, configure, monitor)
+- [ ] POS session view: live terminal status, current cashier, transaction count
+- [ ] End-of-day settlement wizard
+- [ ] POS transaction history with receipt re-print
 
 ---
 
-## Phase 8 — Intelligent Business Chatbot
+## Phase 8 — Intelligent Business Chatbot (Weeks 4–8)
 
 ### Overview — "Brain of the Business"
 
@@ -429,29 +398,29 @@ New tab in Admin page: **Integrations**
 ### 8.10 Implementation Sequence
 
 ```
-Step 1: Data Science Assistant agent (orchestrator) + tool definitions
+Week 4: Data Science Assistant agent (orchestrator) + tool definitions
          ├── Intent classifier (using Groq for speed)
          ├── Tool function implementations (query_database, analyze_trends etc.)
          └── Thread management with rolling summary
 
-Step 2: SSE streaming infrastructure
+Week 5: SSE streaming infrastructure
          ├── Chat routes: send, events, history, sessions
          ├── SSE event protocol (message.delta, tool.start, tool.result etc.)
          └── Chat session + message DB tables + migrations
 
-Step 3: Enhanced Assistant Page (frontend)
+Week 6: Enhanced Assistant Page (frontend)
          ├── useReducer hook for SSE events (adapted from Coder)
          ├── Tool call cards (query results, insights, reports)
          ├── Session sidebar, markdown rendering, streaming display
          └── Mobile optimization
 
-Step 4: Integration Bridge agent
+Week 7: Integration Bridge agent
          ├── HRMIS connector (BambooHR/OrangeHRM)
          ├── CRM connector (HubSpot/Salesforce)
          ├── Admin console Integration tab
          └── Connection testing + error handling
 
-Step 5: Proactive intelligence + polish
+Week 8: Proactive intelligence + polish
          ├── Cron jobs (daily brief, weekly insights, anomaly watch)
          ├── Notification delivery via SSE
          ├── Feedback system (thumbs up/down → improvement loop)
@@ -460,7 +429,7 @@ Step 5: Proactive intelligence + polish
 
 ---
 
-## Phase 9 — Testing, Optimization & Deployment
+## Phase 9 — Testing, Optimization & Deployment (Weeks 9–10)
 
 ### 9.1 Testing
 - [ ] Agent evaluations via Agentuity's eval system
@@ -496,11 +465,11 @@ Step 5: Proactive intelligence + polish
 │                         React Frontend                               │
 │  src/web/ — @agentuity/react hooks (useAPI, useEventStream)          │
 │  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐  ┌──────────┐  │
-│  │  Dashboard    │  │  Admin       │  │  AI Assistant  │  │  POS Mgmt│  │
-│  │  (charts)     │  │  (6 tabs)    │  │  (SSE stream)  │  │  (sync)  │  │
+│  │  Dashboard    │  │  Admin       │  │  AI Assistant  │  │  POS UI  │  │
+│  │  (charts)     │  │  (5 tabs)    │  │  (SSE stream)  │  │  (orders)│  │
 │  └──────┬────────┘  └──────┬───────┘  └──────┬─────────┘  └────┬────┘  │
 └─────────┼──────────────────┼─────────────────┼──────────────────┼───────┘
-          │ HTTP             │ HTTP            │ SSE              │ HTTP
+          │ HTTP             │ HTTP            │ SSE              │ WS
 ┌─────────▼──────────────────▼─────────────────▼──────────────────▼───────┐
 │                          API Routes (Hono)                               │
 │  src/api/ — createRouter(), auth middleware, SSE streaming               │
@@ -518,8 +487,8 @@ Step 5: Proactive intelligence + polish
 ┌───────────────────────────────────────────────────────────────────────────┐
 │                           Services Layer                                  │
 │  ┌──────────────┐  ┌───────────┐  ┌────────────┐  ┌───────────────────┐  │
-│  │ Neon Postgres │  │ KV Storage│  │Vector Store│  │ External APIs      │  │
-│  │ (Drizzle ORM)│  │ (cache)   │  │ (RAG docs) │  │ (POS/HRMIS/CRM)   │  │
+│  │ Neon Postgres │  │ KV Storage│  │Vector Store│  │ External APIs     │  │
+│  │ (Drizzle ORM)│  │ (cache)   │  │ (RAG docs) │  │ (HRMIS/CRM/POS)  │  │
 │  └──────────────┘  └───────────┘  └────────────┘  └───────────────────┘  │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
@@ -539,7 +508,7 @@ Step 5: Proactive intelligence + polish
 | Auth | jose JWT + Bun.password | HS256 tokens, bcrypt hashing, 24h expiry |
 | Chat streaming | SSE (Server-Sent Events) | Adapted from Coder project — tool-call visualization, agent delegation |
 | Chat state | useReducer | Complex event dispatch (adapted from Coder's `useSessionEvents.ts`) |
-| POS integration | REST API connectors | Pull data from client's existing POS (Square, Clover, Toast etc.) |
-| POS sync | Webhook + polling | Real-time webhooks where available, scheduled polling as fallback |
+| POS comm | WebSocket | Real-time bidirectional terminal ↔ cloud communication |
+| POS offline | SQLite queue | Local transaction buffer when cloud is unreachable |
 | **Architecture** | **Single-tenant** | **One deployment per client — full isolation, no tenant_id** |
 | **Design** | **Industry-agnostic** | **Generic models + env-driven labels — zero vertical hardcoding** |

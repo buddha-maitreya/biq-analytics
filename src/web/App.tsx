@@ -28,7 +28,7 @@ const PAGE_TITLES: Record<Page, string> = {
   customers: "Customers",
   inventory: "Inventory",
   invoices: "Invoices",
-  assistant: "AI Assistant",
+  assistant: "Executive AI Assistant",
   reports: "Reports",
   pos: "New Order",
   invoice_checker: "Invoice Checker",
@@ -44,22 +44,7 @@ export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    const saved = localStorage.getItem("biq_theme");
-    if (saved === "dark" || saved === "light") return saved;
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  });
   const { data: appConfig, refetch } = useAPI<AppConfig>("GET /api/config");
-
-  // Apply theme to document
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("biq_theme", theme);
-  }, [theme]);
-
-  const toggleTheme = useCallback(() => {
-    setTheme((t) => (t === "light" ? "dark" : "light"));
-  }, []);
 
   // Check existing session on mount
   useEffect(() => {
@@ -75,6 +60,10 @@ export default function App() {
           const data = await res.json();
           if (data.user) {
             setUser(data.user);
+            // Super admin lands on Executive AI Assistant
+            if (data.user.role === "super_admin") {
+              setPage("assistant");
+            }
           }
         }
       } catch {
@@ -87,7 +76,7 @@ export default function App() {
 
   const handleLogin = useCallback((loggedInUser: AuthUser) => {
     setUser(loggedInUser);
-    setPage("dashboard");
+    setPage(loggedInUser.role === "super_admin" ? "assistant" : "dashboard");
   }, []);
 
   const handleLogout = useCallback(async () => {
@@ -188,8 +177,6 @@ export default function App() {
         onLogout={handleLogout}
         mobileOpen={sidebarOpen}
         onCloseMobile={() => setSidebarOpen(false)}
-        theme={theme}
-        onToggleTheme={toggleTheme}
       />
       <main className="main-content">
         {/* Mobile top bar — only visible on small screens via CSS */}

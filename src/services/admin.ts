@@ -162,6 +162,7 @@ export const ALL_PERMISSIONS = [
   "invoices",
   "reports",
   "pos",
+  "assistant",
   "admin",
   "settings",
 ] as const;

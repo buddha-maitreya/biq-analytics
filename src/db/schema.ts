@@ -431,7 +431,7 @@ export const taxRules = pgTable("tax_rules", {
 // Chat Tables (Phase 8 — Intelligent Business Chatbot)
 // ============================================================
 
-/** Chat Sessions — persistent conversation threads */
+/** Chat Sessions — one conversation thread per user session */
 export const chatSessions = pgTable(
   "chat_sessions",
   {
@@ -461,24 +461,8 @@ export const chatMessages = pgTable(
       .references(() => chatSessions.id, { onDelete: "cascade" }),
     role: varchar("role", { length: 20 }).notNull(), // user | assistant | tool | system
     content: text("content"),
-    toolCalls: jsonb("tool_calls").$type<
-      Array<{
-        id: string;
-        name: string;
-        input: Record<string, unknown>;
-        output?: unknown;
-        status: "pending" | "running" | "completed" | "error";
-        startedAt?: string;
-        completedAt?: string;
-      }>
-    >(),
-    metadata: jsonb("metadata").$type<{
-      model?: string;
-      tokens?: { prompt: number; completion: number };
-      latencyMs?: number;
-      delegatedAgent?: string;
-      feedbackRating?: "up" | "down";
-    }>(),
+    toolCalls: jsonb("tool_calls"),
+    metadata: metadata(),
     ...timestamps(),
   },
   (t) => [

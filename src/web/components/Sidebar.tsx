@@ -9,8 +9,6 @@ interface SidebarProps {
   onLogout: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
-  theme: "light" | "dark";
-  onToggleTheme: () => void;
 }
 
 /** Role display labels */
@@ -23,13 +21,13 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"] | null; fallback: string }[] = [
+  { page: "assistant", icon: "🤖", labelKey: null, fallback: "Executive AI Assistant" },
   { page: "dashboard", icon: "📊", labelKey: null, fallback: "Dashboard" },
   { page: "products", icon: "📦", labelKey: "productPlural", fallback: "Products" },
   { page: "orders", icon: "🛒", labelKey: "orderPlural", fallback: "Orders" },
   { page: "customers", icon: "👥", labelKey: "customerPlural", fallback: "Customers" },
   { page: "inventory", icon: "🏭", labelKey: "warehouse", fallback: "Inventory" },
   { page: "invoices", icon: "📄", labelKey: "invoice", fallback: "Invoices" },
-  { page: "assistant", icon: "🤖", labelKey: null, fallback: "AI Assistant" },
   { page: "reports", icon: "📈", labelKey: null, fallback: "Reports" },
   { page: "pos", icon: "➕", labelKey: null, fallback: "New Order" },
   { page: "invoice_checker", icon: "🔍", labelKey: null, fallback: "Invoice Checker" },
@@ -38,17 +36,31 @@ const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"]
   { page: "about", icon: "ℹ️", labelKey: null, fallback: "About" },
 ];
 
-/** Pages restricted by role */
+/** Pages restricted by role (base access — can be extended via permissions) */
 const ROLE_VISIBLE: Record<string, Page[]> = {
   viewer: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "about"],
-  staff: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "assistant", "reports", "pos", "invoice_checker", "about"],
-  manager: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "assistant", "reports", "pos", "invoice_checker", "about"],
-  admin: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "assistant", "reports", "pos", "invoice_checker", "admin", "about"],
+  staff: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "pos", "invoice_checker", "about"],
+  manager: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "pos", "invoice_checker", "about"],
+  admin: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "pos", "invoice_checker", "admin", "about"],
 };
 
-export default function Sidebar({ config, currentPage, onNavigate, user, onLogout, mobileOpen, onCloseMobile, theme, onToggleTheme }: SidebarProps) {
-  // super_admin and admin see everything; others see role-specific pages
-  const visiblePages = ROLE_VISIBLE[user.role] ?? null; // null = all pages
+/** Pages that can be unlocked via the permissions array (regardless of role) */
+const PERMISSION_PAGES: Record<string, Page> = {
+  assistant: "assistant",
+};
+
+export default function Sidebar({ config, currentPage, onNavigate, user, onLogout, mobileOpen, onCloseMobile }: SidebarProps) {
+  // super_admin sees everything; others get role-based pages + permission-granted pages
+  let visiblePages: Page[] | null = null; // null = all pages (super_admin)
+  if (ROLE_VISIBLE[user.role]) {
+    visiblePages = [...ROLE_VISIBLE[user.role]];
+    // Add permission-gated pages
+    for (const [perm, page] of Object.entries(PERMISSION_PAGES)) {
+      if (user.permissions?.includes(perm) && !visiblePages.includes(page)) {
+        visiblePages.unshift(page); // Add at the top
+      }
+    }
+  }
 
   const handleNav = (p: Page) => {
     onNavigate(p);
@@ -92,22 +104,6 @@ export default function Sidebar({ config, currentPage, onNavigate, user, onLogou
             ))}
         </nav>
         <div className="sidebar-footer">
-          <div className="theme-toggle-row">
-            <button
-              className={`theme-toggle-btn ${theme === "light" ? "active" : ""}`}
-              onClick={theme !== "light" ? onToggleTheme : undefined}
-              title="Light mode"
-            >
-              ☀️
-            </button>
-            <button
-              className={`theme-toggle-btn ${theme === "dark" ? "active" : ""}`}
-              onClick={theme !== "dark" ? onToggleTheme : undefined}
-              title="Dark mode"
-            >
-              🌙
-            </button>
-          </div>
           <div className="sidebar-user">
             <div className="sidebar-user-avatar">
               {user.name.charAt(0).toUpperCase()}

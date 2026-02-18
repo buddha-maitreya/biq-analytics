@@ -113,6 +113,7 @@ const PERM_LABELS: Record<string, { icon: string; label: string; desc: string }>
   invoices: { icon: "📄", label: "Invoices", desc: "Billing & payment tracking" },
   reports: { icon: "📈", label: "Reports", desc: "Generate & download reports" },
   pos: { icon: "💳", label: "POS", desc: "Point-of-Sale interface" },
+  assistant: { icon: "🤖", label: "Executive AI Assistant", desc: "AI-powered business intelligence" },
   admin: { icon: "⚙️", label: "Admin", desc: "Admin console access" },
   settings: { icon: "🎨", label: "Settings", desc: "System configuration" },
 };

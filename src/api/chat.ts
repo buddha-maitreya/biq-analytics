@@ -1,132 +1,95 @@
 import { createRouter } from "@agentuity/runtime";
-import { generateText } from "ai";
-import { errorMiddleware, ValidationError } from "@lib/errors";
-import { authMiddleware, verifyToken, getUserFromToken } from "@services/auth";
+import { errorMiddleware, ValidationError, NotFoundError } from "@lib/errors";
+import { authMiddleware, verifyToken } from "@services/auth";
 import type { AuthUser } from "@services/auth";
 import {
   db,
   chatSessions,
   chatMessages,
 } from "@db/index";
-import { eq, desc, and, sql } from "drizzle-orm";
-import { streamChat, getConversationContext, maybeCompressSummary } from "@agent/data-science";
-import { getModel } from "@lib/ai";
+import { eq, desc, and } from "drizzle-orm";
+import {
+  streamChat,
+  getConversationContext,
+  maybeCompressSummary,
+} from "../agent/data-science/index";
+
+// ────────────────────────────────────────────────────────────
+// In-memory SSE event bus (per-session, per-deployment)
+//
+// Each active session has a Set of writable callbacks.
+// When the Data Science Agent streams, we push events to all
+// connected clients on that session (normally just one browser tab).
+// ────────────────────────────────────────────────────────────
+
+type SSEWriter = (event: string, data: unknown) => void;
+const sessionBus = new Map<string, Set<SSEWriter>>();
+
+function addWriter(sessionId: string, writer: SSEWriter) {
+  let writers = sessionBus.get(sessionId);
+  if (!writers) {
+    writers = new Set();
+    sessionBus.set(sessionId, writers);
+  }
+  writers.add(writer);
+}
+
+function removeWriter(sessionId: string, writer: SSEWriter) {
+  const writers = sessionBus.get(sessionId);
+  if (writers) {
+    writers.delete(writer);
+    if (writers.size === 0) sessionBus.delete(sessionId);
+  }
+}
+
+function broadcast(sessionId: string, event: string, data: unknown) {
+  const writers = sessionBus.get(sessionId);
+  if (writers) {
+    for (const write of writers) {
+      try {
+        write(event, data);
+      } catch {
+        // Writer may have been closed
+      }
+    }
+  }
+}
+
+// ────────────────────────────────────────────────────────────
+// Router
+// ────────────────────────────────────────────────────────────
 
 const chat = createRouter();
 chat.use(errorMiddleware());
 
-/**
- * Generate a concise 4-6 word session title from the first user message.
- * Uses gpt-4o-mini (cheap & fast). Returns null on failure.
- */
-async function generateSessionTitle(
-  firstMessage: string
-): Promise<string | null> {
-  try {
-    const { text } = await generateText({
-      model: getModel("gpt-4o-mini"),
-      prompt: `Generate a concise 4-6 word title for a business chat conversation that starts with this message. Return ONLY the title, no quotes, no punctuation at the end.\n\nUser message: "${firstMessage.slice(0, 200)}"`,
-    });
-    const title = text.trim().replace(/^["']|["']$/g, "");
-    return title.length > 0 && title.length < 80 ? title : null;
-  } catch {
-    return null;
+// Auth middleware for all routes EXCEPT SSE events endpoint
+// (EventSource can't set headers — SSE uses query param auth)
+chat.use("/chat/*", async (c, next) => {
+  if (c.req.path.endsWith("/events")) {
+    await next();
+    return;
   }
+  return authMiddleware()(c, next);
+});
+
+// ── Helper: extract user from context ────────────────────────
+function getUser(c: any): AuthUser {
+  return c.get("authUser" as any) as AuthUser;
 }
 
-// ────────────────────────────────────────────────────────────
-// Session Event Bus — in-memory pub/sub per session
-//
-// Adapted from Agentuity Coder's SSE proxy architecture.
-// POST /send fires the agent and emits events to the bus.
-// GET /events subscribes and streams events to the frontend.
-// A short-lived buffer prevents events from being lost if
-// the EventSource connects slightly after the agent starts.
-// ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+// SESSION CRUD
+// ════════════════════════════════════════════════════════════
 
-type EventListener = (eventType: string, data: unknown) => void;
-
-const sessionListeners = new Map<string, Set<EventListener>>();
-const sessionEventBuffer = new Map<
-  string,
-  Array<{ type: string; data: unknown; ts: number }>
->();
-const MAX_BUFFER = 200;
-const BUFFER_TTL_MS = 30_000;
-
-/**
- * Emit an SSE event to all subscribers of a session.
- * Also buffers the event for late-connecting EventSource clients.
- */
-function emitSessionEvent(sessionId: string, type: string, data: unknown) {
-  // Buffer
-  let buffer = sessionEventBuffer.get(sessionId);
-  if (!buffer) {
-    buffer = [];
-    sessionEventBuffer.set(sessionId, buffer);
-  }
-  buffer.push({ type, data, ts: Date.now() });
-  if (buffer.length > MAX_BUFFER) buffer.shift();
-
-  // Deliver to live listeners
-  const listeners = sessionListeners.get(sessionId);
-  if (listeners) {
-    for (const fn of listeners) {
-      fn(type, data);
-    }
-  }
-}
-
-/**
- * Subscribe to SSE events for a session. Replays any buffered
- * events (within TTL) before switching to live delivery.
- * Returns an unsubscribe function.
- */
-function subscribeSession(
-  sessionId: string,
-  listener: EventListener
-): () => void {
-  // Replay buffered events (within TTL)
-  const buffer = sessionEventBuffer.get(sessionId) || [];
-  const now = Date.now();
-  for (const entry of buffer) {
-    if (now - entry.ts < BUFFER_TTL_MS) {
-      listener(entry.type, entry.data);
-    }
-  }
-  // Clear stale buffer after replay
-  sessionEventBuffer.delete(sessionId);
-
-  // Subscribe for live events
-  let listeners = sessionListeners.get(sessionId);
-  if (!listeners) {
-    listeners = new Set();
-    sessionListeners.set(sessionId, listeners);
-  }
-  listeners.add(listener);
-
-  return () => {
-    listeners!.delete(listener);
-    if (listeners!.size === 0) {
-      sessionListeners.delete(sessionId);
-    }
-  };
-}
-
-// ────────────────────────────────────────────────────────────
-// Session CRUD (auth via middleware)
-// ────────────────────────────────────────────────────────────
-
-/** POST /chat/sessions — Create a new chat session */
-chat.post("/chat/sessions", authMiddleware(), async (c) => {
-  const authUser = c.get("authUser" as any) as AuthUser;
-  const body = await c.req.json().catch(() => ({}));
+/** POST /sessions — Create a new chat session */
+chat.post("/chat/sessions", async (c) => {
+  const user = getUser(c);
 
   const [session] = await db
     .insert(chatSessions)
     .values({
-      userId: authUser.id,
-      title: body.title || null,
+      userId: user.id,
+      title: null,
       status: "active",
     })
     .returning();
@@ -134,15 +97,14 @@ chat.post("/chat/sessions", authMiddleware(), async (c) => {
   return c.json({ data: session }, 201);
 });
 
-/** GET /chat/sessions — List user's chat sessions */
-chat.get("/chat/sessions", authMiddleware(), async (c) => {
-  const authUser = c.get("authUser" as any) as AuthUser;
-  const status = c.req.query("status") || "active";
+/** GET /sessions — List user's chat sessions */
+chat.get("/chat/sessions", async (c) => {
+  const user = getUser(c);
 
   const sessions = await db.query.chatSessions.findMany({
     where: and(
-      eq(chatSessions.userId, authUser.id),
-      eq(chatSessions.status, status)
+      eq(chatSessions.userId, user.id),
+      eq(chatSessions.status, "active")
     ),
     orderBy: [desc(chatSessions.updatedAt)],
     limit: 50,
@@ -151,56 +113,152 @@ chat.get("/chat/sessions", authMiddleware(), async (c) => {
   return c.json({ data: sessions });
 });
 
-/** DELETE /chat/sessions/:id — Delete (archive) a chat session */
-chat.delete("/chat/sessions/:id", authMiddleware(), async (c) => {
-  const authUser = c.get("authUser" as any) as AuthUser;
+/** DELETE /sessions/:id — Delete (archive) a chat session */
+chat.delete("/chat/sessions/:id", async (c) => {
+  const user = getUser(c);
   const sessionId = c.req.param("id");
+
+  const session = await db.query.chatSessions.findFirst({
+    where: and(
+      eq(chatSessions.id, sessionId),
+      eq(chatSessions.userId, user.id)
+    ),
+  });
+
+  if (!session) throw new NotFoundError("Chat session", sessionId);
 
   await db
     .update(chatSessions)
     .set({ status: "archived", updatedAt: new Date() })
-    .where(
-      and(
-        eq(chatSessions.id, sessionId),
-        eq(chatSessions.userId, authUser.id)
-      )
-    );
+    .where(eq(chatSessions.id, sessionId));
 
-  return c.json({ success: true });
+  return c.json({ data: { success: true } });
 });
 
-// ────────────────────────────────────────────────────────────
-// Messages
-// ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+// MESSAGE HISTORY
+// ════════════════════════════════════════════════════════════
 
-/** GET /chat/sessions/:id/messages — Get messages for a session */
-chat.get("/chat/sessions/:id/messages", authMiddleware(), async (c) => {
+/** GET /sessions/:id/messages — Paginated message history */
+chat.get("/chat/sessions/:id/messages", async (c) => {
+  const user = getUser(c);
   const sessionId = c.req.param("id");
-  const limit = parseInt(c.req.query("limit") || "50", 10);
+
+  // Verify ownership
+  const session = await db.query.chatSessions.findFirst({
+    where: and(
+      eq(chatSessions.id, sessionId),
+      eq(chatSessions.userId, user.id)
+    ),
+  });
+  if (!session) throw new NotFoundError("Chat session", sessionId);
 
   const messages = await db.query.chatMessages.findMany({
     where: eq(chatMessages.sessionId, sessionId),
-    orderBy: [desc(chatMessages.createdAt)],
-    limit: limit + 1,
+    orderBy: [chatMessages.createdAt],
   });
 
-  const hasMore = messages.length > limit;
-  const result = (hasMore ? messages.slice(0, limit) : messages).reverse();
-
-  return c.json({ data: result, hasMore });
+  return c.json({ data: messages });
 });
 
-// ────────────────────────────────────────────────────────────
-// POST /chat/sessions/:id/send — Fire-and-forget message send
-//
-// Adapted from Agentuity Coder's fire-and-forget session pattern.
-// Persists the user message, returns immediately, then processes
-// the agent response in an async IIFE. Events flow to the
-// EventSource SSE endpoint via the session event bus.
-// ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+// SSE EVENT STREAM
+// ════════════════════════════════════════════════════════════
 
-chat.post("/chat/sessions/:id/send", authMiddleware(), async (c) => {
-  const authUser = c.get("authUser" as any) as AuthUser;
+/**
+ * GET /sessions/:id/events — Server-Sent Events stream.
+ *
+ * Auth via query param ?token= (EventSource can't set headers).
+ * Sends keepalive pings every 15s.
+ * Events arrive when the user sends a message via POST /sessions/:id/send.
+ */
+chat.get("/chat/sessions/:id/events", async (c) => {
+  const sessionId = c.req.param("id");
+
+  // Auth from query param (EventSource limitation)
+  const url = new URL(c.req.url);
+  const token = url.searchParams.get("token");
+  if (!token) {
+    return c.json({ error: "Token required" }, 401);
+  }
+
+  const payload = await verifyToken(token);
+  if (!payload) {
+    return c.json({ error: "Invalid token" }, 401);
+  }
+
+  // Verify session ownership
+  const session = await db.query.chatSessions.findFirst({
+    where: and(
+      eq(chatSessions.id, sessionId),
+      eq(chatSessions.userId, payload.sub!)
+    ),
+  });
+  if (!session) {
+    return c.json({ error: "Session not found" }, 404);
+  }
+
+  // SSE response
+  const stream = new ReadableStream({
+    start(controller) {
+      const encoder = new TextEncoder();
+
+      function send(event: string, data: unknown) {
+        const payload = JSON.stringify({ type: event, properties: data });
+        controller.enqueue(
+          encoder.encode(`data: ${payload}\n\n`)
+        );
+      }
+
+      // Register writer
+      addWriter(sessionId, send);
+
+      // Send connected event
+      send("session.connected", { sessionId });
+
+      // Keepalive ping every 15s
+      const pingInterval = setInterval(() => {
+        try {
+          send("ping", { ts: Date.now() });
+        } catch {
+          clearInterval(pingInterval);
+        }
+      }, 15_000);
+
+      // Cleanup on close
+      c.req.raw.signal.addEventListener("abort", () => {
+        clearInterval(pingInterval);
+        removeWriter(sessionId, send);
+      });
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// SEND MESSAGE (fire-and-forget → events arrive via SSE)
+// ════════════════════════════════════════════════════════════
+
+/**
+ * POST /sessions/:id/send — Send a user message.
+ *
+ * 1. Persists the user message
+ * 2. Broadcasts session.status = busy
+ * 3. Streams AI response, broadcasting tool.start / tool.result / message.delta
+ * 4. Persists the assistant message
+ * 5. Broadcasts message.done
+ * 6. Auto-titles the session on first message
+ */
+chat.post("/chat/sessions/:id/send", async (c) => {
+  const user = getUser(c);
   const sessionId = c.req.param("id");
   const { message } = await c.req.json();
 
@@ -208,294 +266,208 @@ chat.post("/chat/sessions/:id/send", authMiddleware(), async (c) => {
     throw new ValidationError("message is required and must be a string");
   }
 
-  // Verify session belongs to user
+  // Verify ownership
   const session = await db.query.chatSessions.findFirst({
     where: and(
       eq(chatSessions.id, sessionId),
-      eq(chatSessions.userId, authUser.id)
+      eq(chatSessions.userId, user.id)
     ),
   });
-  if (!session) {
-    return c.json({ error: "Session not found" }, 404);
-  }
+  if (!session) throw new NotFoundError("Chat session", sessionId);
 
   // Persist user message
-  const [userMsg] = await db
-    .insert(chatMessages)
-    .values({ sessionId, role: "user", content: message })
-    .returning();
-
-  // Auto-generate session title from first message (LLM, background)
-  if (!session.title && message.length > 0) {
-    // Set an immediate fallback title, then upgrade async
-    const fallback =
-      message.length > 60 ? message.slice(0, 57) + "..." : message;
-    db.update(chatSessions)
-      .set({ title: fallback, updatedAt: new Date() })
-      .where(eq(chatSessions.id, sessionId))
-      .then(() =>
-        generateSessionTitle(message).then(async (aiTitle) => {
-          if (aiTitle) {
-            await db
-              .update(chatSessions)
-              .set({ title: aiTitle, updatedAt: new Date() })
-              .where(eq(chatSessions.id, sessionId));
-          }
-        })
-      )
-      .catch(() => {});
-  }
-
-  // --- Fire-and-forget: start agent processing ---
-  // Response events flow through the session event bus →
-  // picked up by the GET /events SSE endpoint.
-  (async () => {
-    try {
-      emitSessionEvent(sessionId, "session.status", { status: "busy" });
-
-      // Build conversation context with rolling summary
-      const { summary, recentMessages } =
-        await getConversationContext(sessionId);
-
-      const stream = await streamChat(
-        message,
-        sessionId,
-        recentMessages,
-        summary
-      );
-
-      let fullText = "";
-
-      // Iterate the fullStream — each chunk is emitted to the event bus.
-      // This mirrors the Coder project's SSE proxy loop but generates
-      // events directly instead of proxying a remote stream.
-      for await (const part of stream.fullStream) {
-        switch (part.type) {
-          case "text-delta":
-            fullText += part.textDelta;
-            emitSessionEvent(sessionId, "message.delta", {
-              content: part.textDelta,
-            });
-            break;
-
-          case "tool-call":
-            emitSessionEvent(sessionId, "tool.start", {
-              toolId: part.toolCallId,
-              name: part.toolName,
-              input: part.args,
-            });
-            break;
-
-          case "tool-result":
-            emitSessionEvent(sessionId, "tool.result", {
-              toolId: part.toolCallId,
-              name: (part as any).toolName,
-              output: part.result,
-            });
-            break;
-
-          case "error":
-            emitSessionEvent(sessionId, "error", {
-              message:
-                part.error instanceof Error
-                  ? part.error.message
-                  : String(part.error),
-            });
-            break;
-
-          default:
-            break;
-        }
-      }
-
-      // Collect final tool calls for persistence
-      const steps = await stream.steps;
-      const usage = await stream.usage;
-      const finalToolCalls: Array<{
-        id: string;
-        name: string;
-        input: Record<string, unknown>;
-        output?: unknown;
-        status: "completed" | "error";
-      }> = [];
-
-      for (const step of steps) {
-        if (step.toolCalls) {
-          for (const tc of step.toolCalls) {
-            const result = step.toolResults?.find(
-              (tr: any) => tr.toolCallId === tc.toolCallId
-            );
-            finalToolCalls.push({
-              id: tc.toolCallId,
-              name: tc.toolName,
-              input: tc.args as Record<string, unknown>,
-              output: result?.result,
-              status: result ? "completed" : "error",
-            });
-          }
-        }
-      }
-
-      // Persist assistant message
-      const [assistantMsg] = await db
-        .insert(chatMessages)
-        .values({
-          sessionId,
-          role: "assistant",
-          content: fullText,
-          toolCalls: finalToolCalls.length ? finalToolCalls : undefined,
-          metadata: {
-            model: "gpt-4o",
-            tokens: usage
-              ? {
-                  prompt: usage.promptTokens,
-                  completion: usage.completionTokens,
-                }
-              : undefined,
-          },
-        })
-        .returning();
-
-      // Update session timestamp
-      await db
-        .update(chatSessions)
-        .set({ updatedAt: new Date() })
-        .where(eq(chatSessions.id, sessionId));
-
-      // Emit completion
-      emitSessionEvent(sessionId, "message.done", {
-        messageId: assistantMsg.id,
-        toolCalls: finalToolCalls.length ? finalToolCalls : undefined,
-      });
-
-      emitSessionEvent(sessionId, "session.status", { status: "idle" });
-
-      // Rolling summary compression (background, non-blocking)
-      maybeCompressSummary(sessionId).catch(() => {});
-    } catch (err: unknown) {
-      emitSessionEvent(sessionId, "error", {
-        message: err instanceof Error ? err.message : "Stream failed",
-      });
-      emitSessionEvent(sessionId, "session.status", { status: "idle" });
-    }
-  })();
-
-  // Return immediately (fire-and-forget pattern from Coder)
-  return c.json({ success: true, messageId: userMsg.id });
-});
-
-// ────────────────────────────────────────────────────────────
-// GET /chat/sessions/:id/events — SSE event stream
-//
-// Adapted from Agentuity Coder's GET /:id/events SSE endpoint.
-// Uses EventSource on the frontend. Auth via query param because
-// EventSource doesn't support custom headers.
-// Features: keepalive pings (15s), buffered event replay,
-// proper cleanup on disconnect.
-// ────────────────────────────────────────────────────────────
-
-chat.get("/chat/sessions/:id/events", async (c) => {
-  // Auth via query param (EventSource can't send custom headers)
-  const token = c.req.query("token");
-  if (!token) {
-    return c.json({ error: "Authentication required" }, 401);
-  }
-
-  const tokenPayload = await verifyToken(token);
-  if (!tokenPayload || !tokenPayload.sub) {
-    return c.json({ error: "Invalid or expired token" }, 401);
-  }
-
-  const sessionId = c.req.param("id");
-
-  // Verify session belongs to this user
-  const session = await db.query.chatSessions.findFirst({
-    where: and(
-      eq(chatSessions.id, sessionId),
-      eq(chatSessions.userId, tokenPayload.sub)
-    ),
+  await db.insert(chatMessages).values({
+    sessionId,
+    role: "user",
+    content: message,
   });
-  if (!session) {
-    return c.json({ error: "Session not found" }, 404);
-  }
 
-  // SSE stream with keepalive and event subscription
-  let keepalive: ReturnType<typeof setInterval> | null = null;
-  let unsubscribe: (() => void) | null = null;
-  let closed = false;
+  // Broadcast: session is busy
+  broadcast(sessionId, "session.status", { status: "busy" });
 
-  return c.newResponse(
-    new ReadableStream({
-      start(controller) {
-        const encoder = new TextEncoder();
+  // Build conversation context (rolling summary + recent messages)
+  const { summary, recentMessages } = await getConversationContext(sessionId);
 
-        // Safe write wrapper (mirrors Coder's safeWrite pattern)
-        const write = (payload: { type: string; properties: unknown }) => {
-          if (closed) return;
-          try {
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)
-            );
-          } catch {
-            closed = true;
-            cleanup();
-          }
-        };
-
-        const cleanup = () => {
-          closed = true;
-          if (keepalive) {
-            clearInterval(keepalive);
-            keepalive = null;
-          }
-          unsubscribe?.();
-        };
-
-        // Keepalive ping every 15s (mirrors Coder's keepalive timer)
-        keepalive = setInterval(() => {
-          write({ type: "ping", properties: { ts: Date.now() } });
-        }, 15_000);
-
-        // Subscribe to session event bus
-        unsubscribe = subscribeSession(
-          sessionId,
-          (eventType: string, data: unknown) => {
-            write({ type: eventType, properties: data });
-          }
-        );
-
-        // Send initial connection event
-        write({
-          type: "session.connected",
-          properties: { sessionId },
-        });
-      },
-      cancel() {
-        closed = true;
-        if (keepalive) {
-          clearInterval(keepalive);
-          keepalive = null;
-        }
-        unsubscribe?.();
-      },
-    }),
-    {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-        "X-Accel-Buffering": "no",
-      },
+  // Start streaming (non-blocking — events go to SSE bus)
+  processStream(sessionId, message, recentMessages, summary, session.title).catch(
+    (err) => {
+      broadcast(sessionId, "error", {
+        message: err?.message || "Stream processing failed",
+      });
     }
   );
+
+  // Return immediately (fire-and-forget)
+  return c.json({ data: { messageId: sessionId, status: "processing" } });
 });
 
-// ────────────────────────────────────────────────────────────
-// Feedback
-// ────────────────────────────────────────────────────────────
+/**
+ * Process the AI stream and broadcast SSE events.
+ * Runs async after the HTTP response is sent.
+ */
+async function processStream(
+  sessionId: string,
+  message: string,
+  history: Array<{ role: "user" | "assistant" | "system"; content: string }>,
+  conversationSummary: string | undefined,
+  sessionTitle: string | null
+) {
+  const result = await streamChat(message, sessionId, history, conversationSummary);
+  const fullStream = result.fullStream;
 
-/** POST /chat/messages/:id/feedback — Rate a message (thumbs up/down) */
-chat.post("/chat/messages/:id/feedback", authMiddleware(), async (c) => {
+  let fullText = "";
+  const toolCalls: Array<{
+    id: string;
+    name: string;
+    input: Record<string, unknown>;
+    output?: unknown;
+    status: string;
+  }> = [];
+
+  for await (const chunk of fullStream) {
+    switch (chunk.type) {
+      case "text-delta":
+        fullText += chunk.textDelta;
+        broadcast(sessionId, "message.delta", {
+          content: chunk.textDelta,
+        });
+        break;
+
+      case "tool-call":
+        // Tool call started
+        broadcast(sessionId, "tool.start", {
+          toolId: chunk.toolCallId,
+          name: chunk.toolName,
+          input: chunk.args,
+        });
+        toolCalls.push({
+          id: chunk.toolCallId,
+          name: chunk.toolName,
+          input: chunk.args as Record<string, unknown>,
+          status: "running",
+        });
+        break;
+
+      case "tool-result":
+        // Tool call completed
+        broadcast(sessionId, "tool.result", {
+          toolId: chunk.toolCallId,
+          name: chunk.toolName,
+          output: chunk.result,
+        });
+        // Update the matching tool call
+        const tc = toolCalls.find((t) => t.id === chunk.toolCallId);
+        if (tc) {
+          tc.output = chunk.result;
+          tc.status = "completed";
+        }
+        break;
+
+      case "error":
+        broadcast(sessionId, "error", {
+          message: String((chunk as any).error ?? "Unknown error"),
+        });
+        break;
+    }
+  }
+
+  // Get final text from awaiting the result
+  try {
+    const finalText = await result.text;
+    if (finalText && finalText !== fullText) {
+      fullText = finalText;
+    }
+  } catch {
+    // Use accumulated text
+  }
+
+  // Get usage stats
+  let tokenMeta: Record<string, unknown> | undefined;
+  try {
+    const usage = await result.usage;
+    if (usage) {
+      tokenMeta = {
+        model: "gpt-4o",
+        tokens: {
+          prompt: usage.promptTokens,
+          completion: usage.completionTokens,
+        },
+      };
+    }
+  } catch {
+    // Non-critical
+  }
+
+  // Generate a message ID
+  const messageId = crypto.randomUUID();
+
+  // Persist assistant message
+  try {
+    await db.insert(chatMessages).values({
+      id: messageId,
+      sessionId,
+      role: "assistant",
+      content: fullText,
+      toolCalls: toolCalls.length ? toolCalls : undefined,
+      metadata: tokenMeta,
+    });
+  } catch {
+    // Non-critical — message was already streamed to user
+  }
+
+  // Broadcast done
+  broadcast(sessionId, "message.done", {
+    messageId,
+    toolCalls: toolCalls.length ? toolCalls : undefined,
+    metadata: tokenMeta,
+  });
+
+  // Auto-title on first message (non-blocking)
+  if (!sessionTitle) {
+    autoTitleSession(sessionId, message).catch(() => {});
+  }
+
+  // Maybe compress summary (non-blocking)
+  maybeCompressSummary(sessionId).catch(() => {});
+
+  // Update session timestamp
+  try {
+    await db
+      .update(chatSessions)
+      .set({ updatedAt: new Date() })
+      .where(eq(chatSessions.id, sessionId));
+  } catch {
+    // Non-critical
+  }
+}
+
+/**
+ * Auto-generate a session title from the first user message.
+ * Uses a simple heuristic — first 60 chars, trimmed to last full word.
+ */
+async function autoTitleSession(
+  sessionId: string,
+  firstMessage: string
+): Promise<void> {
+  let title = firstMessage.trim().slice(0, 60);
+  if (firstMessage.length > 60) {
+    const lastSpace = title.lastIndexOf(" ");
+    if (lastSpace > 30) title = title.slice(0, lastSpace);
+    title += "…";
+  }
+
+  await db
+    .update(chatSessions)
+    .set({ title, updatedAt: new Date() })
+    .where(eq(chatSessions.id, sessionId));
+}
+
+// ════════════════════════════════════════════════════════════
+// FEEDBACK
+// ════════════════════════════════════════════════════════════
+
+/** POST /messages/:id/feedback — Thumbs up/down on a message */
+chat.post("/chat/messages/:id/feedback", async (c) => {
   const messageId = c.req.param("id");
   const { rating } = await c.req.json();
 
@@ -503,47 +475,47 @@ chat.post("/chat/messages/:id/feedback", authMiddleware(), async (c) => {
     throw new ValidationError("rating must be 'up' or 'down'");
   }
 
-  await db.execute(
-    sql`UPDATE chat_messages SET metadata = COALESCE(metadata, '{}'::jsonb) || ${JSON.stringify({ feedbackRating: rating })}::jsonb WHERE id = ${messageId}`
-  );
+  const msg = await db.query.chatMessages.findFirst({
+    where: eq(chatMessages.id, messageId),
+  });
+  if (!msg) throw new NotFoundError("Chat message", messageId);
 
-  return c.json({ success: true });
+  const currentMeta = (msg.metadata as Record<string, unknown>) || {};
+  await db
+    .update(chatMessages)
+    .set({
+      metadata: { ...currentMeta, feedbackRating: rating },
+      updatedAt: new Date(),
+    })
+    .where(eq(chatMessages.id, messageId));
+
+  return c.json({ data: { success: true } });
 });
 
-// ────────────────────────────────────────────────────────────
-// Legacy endpoint (backward compat with existing assistant)
-// ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+// LEGACY COMPAT: POST / — fallback for old UI
+// ════════════════════════════════════════════════════════════
 
-/** POST /chat — Simple request/response (non-streaming) */
-chat.post("/chat", authMiddleware(), async (c) => {
+chat.post("/chat", async (c) => {
   const { message } = await c.req.json();
 
   if (!message || typeof message !== "string") {
     throw new ValidationError("message is required and must be a string");
   }
 
-  const dataScience = (await import("@agent/data-science")).default;
-  const authUser = c.get("authUser" as any) as AuthUser;
+  // Use data-science agent directly (non-streaming fallback)
+  const dataScienceAgent = (await import("../agent/data-science/index")).default;
+  const tempSessionId = crypto.randomUUID();
 
-  const [session] = await db
-    .insert(chatSessions)
-    .values({
-      userId: authUser.id,
-      title: message.slice(0, 80),
-      status: "active",
-    })
-    .returning();
-
-  const result = await dataScience.run({
+  const result = await dataScienceAgent.run({
     message,
-    sessionId: session.id,
+    sessionId: tempSessionId,
   });
 
   return c.json({
     data: {
-      reply: result.text || "I wasn't able to generate a response.",
-      data: result.toolCalls,
-      suggestedActions: [],
+      reply: result.text ?? "I wasn't able to generate a response.",
+      toolCalls: result.toolCalls,
     },
   });
 });

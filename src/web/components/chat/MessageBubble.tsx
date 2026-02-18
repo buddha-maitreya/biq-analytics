@@ -41,7 +41,7 @@ export default function MessageBubble({
           )}
         </div>
 
-        {/* Footer: time + feedback */}
+        {/* Footer: time + tokens + feedback */}
         <div className="message-footer">
           <span className="message-time">
             {new Date(message.createdAt).toLocaleTimeString()}
@@ -194,6 +194,23 @@ function renderInline(text: string): React.ReactNode {
         </code>
       );
       remaining = remaining.slice(codeMatch[0].length);
+      continue;
+    }
+
+    // Links: [text](url)
+    const linkMatch = remaining.match(/^\[([^\]]+)\]\(([^)]+)\)/);
+    if (linkMatch) {
+      parts.push(
+        <a
+          key={key++}
+          href={linkMatch[2]}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {linkMatch[1]}
+        </a>
+      );
+      remaining = remaining.slice(linkMatch[0].length);
       continue;
     }
 

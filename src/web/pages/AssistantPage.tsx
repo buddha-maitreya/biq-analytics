@@ -1,19 +1,19 @@
 /**
- * AssistantPage — Phase 8 Intelligent Business Chatbot.
+ * AssistantPage — SSE-streaming AI Assistant with session management.
  *
- * Features:
- *   - SSE streaming responses from the Data Science Assistant
- *   - Tool call visualization (database queries, analysis, reports, knowledge)
- *   - Multi-session chat with sidebar
- *   - Markdown rendering with code blocks and tables
- *   - Feedback (thumbs up/down) per message
- *   - Typing indicator with live token streaming
- *   - Mobile-responsive with drawer sidebar
+ * Wires together:
+ * - useChatStream hook (SSE + session CRUD + send)
+ * - SessionSidebar (conversation list)
+ * - MessageBubble (rich markdown + tool cards + feedback)
+ * - ToolCallCard (per-tool renderers shown during streaming)
+ * - Connection status dot + reconnecting banner
+ * - Token usage display on assistant messages
  */
 
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import type { AppConfig } from "../types";
 import { useChatStream } from "../hooks/useChatStream";
+import type { ToolCall } from "../hooks/useChatStream";
 import SessionSidebar from "../components/chat/SessionSidebar";
 import MessageBubble from "../components/chat/MessageBubble";
 import ToolCallCard from "../components/chat/ToolCallCard";
@@ -23,20 +23,15 @@ interface AssistantPageProps {
 }
 
 export default function AssistantPage({ config }: AssistantPageProps) {
-  const [input, setInput] = useState("");
-  const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
   const {
     sessions,
     activeSessionId,
     messages,
-    streaming,
-    error,
     streamingText,
     streamingToolCalls,
+    streaming,
     isConnected,
+    error,
     loadSessions,
     createSession,
     selectSession,
@@ -46,108 +41,109 @@ export default function AssistantPage({ config }: AssistantPageProps) {
     submitFeedback,
   } = useChatStream();
 
+  const [input, setInput] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
   // Load sessions on mount
   useEffect(() => {
     loadSessions();
   }, [loadSessions]);
 
-  // Scroll to bottom on new messages or streaming text
+  // Auto-scroll on new messages / streaming
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingText, streamingToolCalls]);
 
-  // Focus input after stream completes
-  useEffect(() => {
-    if (!streaming) {
-      inputRef.current?.focus();
-    }
-  }, [streaming]);
-
-  const handleSend = useCallback(async () => {
-    if (!input.trim() || streaming) return;
-    const msg = input.trim();
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text || streaming) return;
     setInput("");
-    await sendMessage(msg);
-  }, [input, streaming, sendMessage]);
+    await sendMessage(text);
+  };
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        handleSend();
-      }
-    },
-    [handleSend]
-  );
+  const handleSuggestion = async (text: string) => {
+    if (streaming) return;
+    setInput("");
+    await sendMessage(text);
+  };
 
   const suggestions = [
     `What are my top selling ${config.labels.productPlural.toLowerCase()}?`,
-    `Show me a sales summary report`,
-    `Which ${config.labels.productPlural.toLowerCase()} are running low?`,
-    `Analyze demand trends for the last 30 days`,
-    `What's my total revenue this month?`,
-    `Give me a business overview`,
+    "Which products are running low on stock?",
+    `How many ${config.labels.orderPlural.toLowerCase()} were placed this week?`,
+    "What's my total revenue this month?",
+    "Show me a sales trend analysis",
+    "Give me a business snapshot",
   ];
 
+  const hasMessages = messages.length > 0 || streamingText || streamingToolCalls.length > 0;
+
   return (
-    <div className="page assistant-page-v2">
-      {/* Session Sidebar */}
+    <div className="page assistant-page">
+      {/* Session sidebar */}
       <SessionSidebar
         sessions={sessions}
         activeSessionId={activeSessionId}
         onSelect={selectSession}
         onCreate={createSession}
         onDelete={deleteSession}
-        mobileOpen={sessionDrawerOpen}
-        onCloseMobile={() => setSessionDrawerOpen(false)}
+        mobileOpen={sidebarOpen}
+        onCloseMobile={() => setSidebarOpen(false)}
       />
 
-      {/* Main Chat Area */}
+      {/* Main chat area */}
       <div className="chat-main">
         {/* Header */}
-        <div className="chat-main-header">
+        <div className="chat-header">
           <button
-            className="chat-session-toggle"
-            onClick={() => setSessionDrawerOpen(true)}
-            title="Show conversations"
+            className="chat-sidebar-toggle"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open conversations"
           >
             ☰
           </button>
-          <div className="chat-main-title">
-            <h2>🧠 Data Science Assistant</h2>
-            <span className="chat-main-subtitle">
-              Ask about {config.labels.productPlural.toLowerCase()},{" "}
-              {config.labels.orderPlural.toLowerCase()}, trends, reports, and
-              more
-            </span>
+          <h2>🤖 Executive AI Assistant</h2>
+          <div className="chat-header-right">
+            <span
+              className={`chat-connection-dot ${isConnected ? "connected" : "disconnected"}`}
+              title={isConnected ? "Connected" : "Disconnected"}
+            />
           </div>
-          {/* Connection status indicator */}
-          <span
-            className={`chat-connection-dot ${isConnected ? "connected" : "disconnected"}`}
-            title={isConnected ? "Connected" : "Reconnecting…"}
-          />
         </div>
 
-        {/* Messages */}
-        <div className="chat-messages-v2">
-          {/* Empty state */}
-          {messages.length === 0 && !streaming && !activeSessionId && (
-            <div className="chat-empty-v2">
-              <div className="chat-empty-icon">🧠</div>
-              <h3>Data Science Assistant</h3>
-              <p>
-                I can query your database, analyze trends, generate reports, and
-                search your knowledge base. What would you like to know?
+        {/* Reconnecting banner */}
+        {!isConnected && activeSessionId && (
+          <div className="chat-reconnecting-banner">
+            Reconnecting…
+          </div>
+        )}
+
+        {/* Error banner */}
+        {error && (
+          <div className="chat-error-banner">
+            <span>{error}</span>
+            <button onClick={retryLastMessage} className="btn btn-sm">
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Messages area */}
+        <div className="chat-messages">
+          {!hasMessages && (
+            <div className="chat-empty">
+              <h3>How can I help?</h3>
+              <p className="text-muted">
+                Ask about {config.labels.productPlural.toLowerCase()},{" "}
+                {config.labels.orderPlural.toLowerCase()}, inventory, and more
               </p>
-              <div className="chat-suggestions-grid">
+              <div className="suggestion-grid">
                 {suggestions.map((s, i) => (
                   <button
                     key={i}
-                    className="chat-suggestion-btn"
-                    onClick={() => {
-                      setInput(s);
-                      inputRef.current?.focus();
-                    }}
+                    className="suggestion-btn"
+                    onClick={() => handleSuggestion(s)}
                   >
                     {s}
                   </button>
@@ -156,97 +152,76 @@ export default function AssistantPage({ config }: AssistantPageProps) {
             </div>
           )}
 
-          {/* Message list */}
+          {/* Persisted messages */}
           {messages.map((msg) => (
             <MessageBubble
               key={msg.id}
               message={msg}
-              onFeedback={submitFeedback}
+              onFeedback={msg.role === "assistant" ? submitFeedback : undefined}
             />
           ))}
 
-          {/* Streaming assistant response */}
-          {streaming && (
+          {/* Streaming: live tool calls */}
+          {streamingToolCalls.length > 0 && (
             <div className="chat-message assistant">
-              <div className="message-bubble streaming-bubble">
-                {/* Active tool calls */}
-                {streamingToolCalls.length > 0 && (
-                  <div className="message-tool-calls">
-                    {streamingToolCalls.map((tc) => (
-                      <ToolCallCard key={tc.id} toolCall={tc} />
-                    ))}
-                  </div>
-                )}
-
-                {/* Streaming text */}
-                {streamingText ? (
-                  <div className="message-content">
-                    <div className="message-markdown">
-                      <p>{streamingText}</p>
-                    </div>
-                  </div>
-                ) : streamingToolCalls.length === 0 ? (
-                  <div className="message-content">
-                    <span className="typing-indicator-v2">
-                      <span />
-                      <span />
-                      <span />
-                    </span>
-                  </div>
-                ) : null}
+              <div className="message-bubble">
+                <div className="message-tool-calls">
+                  {streamingToolCalls.map((tc: ToolCall) => (
+                    <ToolCallCard key={tc.id} toolCall={tc} />
+                  ))}
+                </div>
               </div>
             </div>
           )}
 
-          {/* Reconnecting banner */}
-          {!isConnected && activeSessionId && (
-            <div className="chat-reconnecting-banner">
-              <span className="reconnecting-spinner" />
-              Reconnecting…
+          {/* Streaming: live text */}
+          {streamingText && (
+            <div className="chat-message assistant">
+              <div className="message-bubble">
+                <div className="message-content">
+                  <div className="message-markdown streaming-text">
+                    {streamingText}
+                    <span className="streaming-cursor">▍</span>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
-          {/* Error display */}
-          {error && (
-            <div className="chat-error-banner">
-              <span>⚠️ {error}</span>
-              <button
-                onClick={() => {
-                  retryLastMessage();
-                }}
-              >
-                Retry
-              </button>
+          {/* Thinking indicator (streaming with no text yet) */}
+          {streaming && !streamingText && streamingToolCalls.length === 0 && (
+            <div className="chat-message assistant">
+              <div className="message-bubble loading-bubble">
+                <span className="typing-indicator">●●●</span>
+              </div>
             </div>
           )}
 
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input */}
-        <div className="chat-input-v2">
-          <div className="chat-input-row">
-            <input
-              ref={inputRef}
-              type="text"
-              placeholder="Ask a question about your business…"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={streaming}
-              autoFocus
-            />
-            <button
-              className="btn btn-primary chat-send-btn"
-              onClick={handleSend}
-              disabled={!input.trim() || streaming}
-            >
-              {streaming ? "…" : "Send"}
-            </button>
-          </div>
-          <div className="chat-input-hint">
-            Press Enter to send · Powered by Data Science Assistant
-          </div>
+        {/* Input area */}
+        <div className="chat-input">
+          <input
+            type="text"
+            placeholder="Ask a question about your business..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            disabled={streaming}
+          />
+          <button
+            className="btn btn-primary"
+            onClick={handleSend}
+            disabled={!input.trim() || streaming}
+          >
+            {streaming ? "…" : "Send"}
+          </button>
         </div>
       </div>
     </div>

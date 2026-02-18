@@ -1,9 +1,11 @@
 {
   "$schema": "https://agentuity.dev/schema/cli/v1/agentuity.json",
-  "projectId": "proj_613c24fc78f3fe3afda8b8c40bf3656e",
+  "projectId": "proj_679d3caf6d456524695889309f44aded",
   "orgId": "org_39hottyMau3fIKUOChR1QIZJtPF",
   "deployment": {
-    "domains": [],
+    "domains": [
+      "hasora-ke.com"
+    ],
     "resources": {
       "memory": "500Mi",
       "cpu": "500m",

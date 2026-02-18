@@ -32,8 +32,6 @@ const PAGE_TITLES: Record<Page, string> = {
   settings: "Settings",
   email: "Email",
   about: "About",
-  newOrder: "New Order",
-  invoiceChecker: "Invoice Checker",
 };
 
 export default function App() {

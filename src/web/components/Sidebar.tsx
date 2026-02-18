@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import type { Page, AppConfig, AuthUser } from "../types";
 
 interface SidebarProps {
@@ -20,6 +20,15 @@ const ROLE_LABELS: Record<string, string> = {
   viewer: "Viewer",
 };
 
+/** Role emoji badges */
+const ROLE_EMOJIS: Record<string, string> = {
+  super_admin: "🛡️",
+  admin: "⚡",
+  manager: "📋",
+  staff: "👤",
+  viewer: "👁️",
+};
+
 const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"] | null; fallback: string }[] = [
   { page: "assistant", icon: "🤖", labelKey: null, fallback: "Executive AI Assistant" },
   { page: "dashboard", icon: "📊", labelKey: null, fallback: "Dashboard" },
@@ -32,8 +41,6 @@ const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"]
   { page: "admin", icon: "⚙️", labelKey: null, fallback: "Admin" },
   { page: "email", icon: "📧", labelKey: null, fallback: "Email" },
   { page: "about", icon: "ℹ️", labelKey: null, fallback: "About" },
-  { page: "newOrder", icon: "➕", labelKey: null, fallback: "New Order" },
-  { page: "invoiceChecker", icon: "🔍", labelKey: null, fallback: "Invoice Checker" },
 ];
 
 /** Pages restricted by role (base access — can be extended via permissions) */
@@ -50,6 +57,21 @@ const PERMISSION_PAGES: Record<string, Page> = {
 };
 
 export default function Sidebar({ config, currentPage, onNavigate, user, onLogout, mobileOpen, onCloseMobile }: SidebarProps) {
+  // ── Theme toggle ──
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("biq-theme") as "light" | "dark") ?? "light";
+    }
+    return "light";
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("biq-theme", theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme((t) => (t === "light" ? "dark" : "light"));
+
   // super_admin sees everything; others get role-based pages + permission-granted pages
   let visiblePages: Page[] | null = null; // null = all pages (super_admin)
   if (ROLE_VISIBLE[user.role]) {
@@ -85,12 +107,16 @@ export default function Sidebar({ config, currentPage, onNavigate, user, onLogou
             )}
           </div>
           <button className="sidebar-close-btn" onClick={onCloseMobile} aria-label="Close menu">✕</button>
+          <div className="sidebar-header-actions">
+            <button className="theme-toggle-btn" onClick={toggleTheme} title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}>
+              {theme === "light" ? "🌙" : "☀️"}
+            </button>
+          </div>
           <span className="sidebar-powered">Business IQ - Enterprise</span>
         </div>
         <nav className="sidebar-nav">
           {navItems
             .filter((item) => !visiblePages || visiblePages.includes(item.page))
-            .filter((item) => item.page !== 'newOrder' && item.page !== 'invoiceChecker') // Remove specific pages
             .map((item) => (
               <button
                 key={item.page}
@@ -107,7 +133,7 @@ export default function Sidebar({ config, currentPage, onNavigate, user, onLogou
         <div className="sidebar-footer">
           <div className="sidebar-user">
             <div className="sidebar-user-avatar">
-              {user.name.charAt(0).toUpperCase()}
+              {ROLE_EMOJIS[user.role] ?? "👤"}
             </div>
             <div className="sidebar-user-info">
               <span className="sidebar-user-name">{user.name}</span>

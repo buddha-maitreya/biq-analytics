@@ -12,9 +12,7 @@ export type Page =
   | "admin"
   | "settings"
   | "email"
-  | "about"
-  | "newOrder"
-  | "invoiceChecker";
+  | "about";
 
 /** Authenticated user returned by the auth API */
 export interface AuthUser {

@@ -173,6 +173,13 @@ export async function updatePassword(userId: string, hashedPassword: string): Pr
 
 export function authMiddleware() {
   return async (c: Context, next: Next) => {
+    // Skip auth for public routes
+    const path = new URL(c.req.url).pathname;
+    if (path.startsWith("/api/auth/") || path === "/api/config" || path === "/api/health") {
+      await next();
+      return;
+    }
+
     // Extract token from Authorization header or cookie
     let token: string | undefined;
 

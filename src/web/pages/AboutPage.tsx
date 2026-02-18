@@ -86,7 +86,7 @@ export default function AboutPage({ config }: AboutPageProps) {
       <section className="about-hero">
         <div className="about-hero-badge">AI-NATIVE SOFTWARE</div>
         <h1 className="about-hero-title">
-          {config.companyName || "Business IQ"} Enterprise
+          Business IQ Enterprise
         </h1>
         <p className="about-hero-subtitle">
           The intelligent inventory &amp; sales management platform that
@@ -161,7 +161,9 @@ export default function AboutPage({ config }: AboutPageProps) {
         <div className="about-version">
           <span>Business IQ Enterprise v1.0.0</span>
           <span className="about-separator">·</span>
-          <span>Powered by Agentuity</span>
+          <span>Powered by Ruskins AI</span>
+          <span className="about-separator">·</span>
+          <span>© 2026 Ruskins AI Consulting LTD</span>
         </div>
       </section>
     </div>

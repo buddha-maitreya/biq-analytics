@@ -71,7 +71,7 @@ export default function Sidebar({ config, currentPage, onNavigate, user, onLogou
             )}
           </div>
           <button className="sidebar-close-btn" onClick={onCloseMobile} aria-label="Close menu">✕</button>
-          <span className="sidebar-powered">Powered by Business IQ</span>
+          <span className="sidebar-powered">Powered by Ruskins AI</span>
         </div>
         <nav className="sidebar-nav">
           {navItems

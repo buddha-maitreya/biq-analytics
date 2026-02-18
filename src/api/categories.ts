@@ -1,9 +1,11 @@
 import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
+import { authMiddleware } from "@services/auth";
 import * as svc from "@services/categories";
 
 const router = createRouter();
 router.use(errorMiddleware());
+router.use(authMiddleware());
 
 router.get("/categories", async (c) => {
   const result = await svc.listCategories();

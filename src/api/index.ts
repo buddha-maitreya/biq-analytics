@@ -21,6 +21,7 @@
  */
 
 export { default as configRoutes } from "./config";
+export { default as authRoutes } from "./auth";
 export { default as productRoutes } from "./products";
 export { default as categoryRoutes } from "./categories";
 export { default as customerRoutes } from "./customers";

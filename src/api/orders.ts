@@ -1,10 +1,12 @@
 import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
+import { authMiddleware } from "@services/auth";
 import { paginationSchema } from "@lib/pagination";
 import * as svc from "@services/orders";
 
 const router = createRouter();
 router.use(errorMiddleware());
+router.use(authMiddleware());
 
 router.get("/orders", async (c) => {
   const params = paginationSchema.parse({

@@ -1,11 +1,22 @@
 import React from "react";
-import type { Page, AppConfig } from "../types";
+import type { Page, AppConfig, AuthUser } from "../types";
 
 interface SidebarProps {
   config: AppConfig;
   currentPage: Page;
   onNavigate: (page: Page) => void;
+  user: AuthUser;
+  onLogout: () => void;
 }
+
+/** Role display labels */
+const ROLE_LABELS: Record<string, string> = {
+  super_admin: "Super Admin",
+  admin: "Admin",
+  manager: "Manager",
+  staff: "Staff",
+  viewer: "Viewer",
+};
 
 const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"] | null; fallback: string }[] = [
   { page: "dashboard", icon: "📊", labelKey: null, fallback: "Dashboard" },
@@ -22,7 +33,17 @@ const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"]
   { page: "settings", icon: "🎨", labelKey: null, fallback: "Settings" },
 ];
 
-export default function Sidebar({ config, currentPage, onNavigate }: SidebarProps) {
+/** Pages restricted by role */
+const ROLE_VISIBLE: Record<string, Page[]> = {
+  viewer: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports"],
+  staff: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "assistant", "reports", "pos", "invoice_checker"],
+  manager: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "assistant", "reports", "pos", "invoice_checker"],
+};
+
+export default function Sidebar({ config, currentPage, onNavigate, user, onLogout }: SidebarProps) {
+  // super_admin and admin see everything; others see role-specific pages
+  const visiblePages = ROLE_VISIBLE[user.role] ?? null; // null = all pages
+
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -40,21 +61,34 @@ export default function Sidebar({ config, currentPage, onNavigate }: SidebarProp
         <span className="sidebar-powered">Powered by Business IQ</span>
       </div>
       <nav className="sidebar-nav">
-        {navItems.map((item) => (
-          <button
-            key={item.page}
-            className={`nav-item ${currentPage === item.page ? "active" : ""}`}
-            onClick={() => onNavigate(item.page)}
-          >
-            <span className="nav-icon">{item.icon}</span>
-            <span className="nav-label">
-              {item.labelKey ? config.labels[item.labelKey] : item.fallback}
-            </span>
-          </button>
-        ))}
+        {navItems
+          .filter((item) => !visiblePages || visiblePages.includes(item.page))
+          .map((item) => (
+            <button
+              key={item.page}
+              className={`nav-item ${currentPage === item.page ? "active" : ""}`}
+              onClick={() => onNavigate(item.page)}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-label">
+                {item.labelKey ? config.labels[item.labelKey] : item.fallback}
+              </span>
+            </button>
+          ))}
       </nav>
       <div className="sidebar-footer">
-        <span className="version">v1.0.0</span>
+        <div className="sidebar-user">
+          <div className="sidebar-user-avatar">
+            {user.name.charAt(0).toUpperCase()}
+          </div>
+          <div className="sidebar-user-info">
+            <span className="sidebar-user-name">{user.name}</span>
+            <span className="sidebar-user-role">{ROLE_LABELS[user.role] ?? user.role}</span>
+          </div>
+          <button className="sidebar-logout-btn" onClick={onLogout} title="Sign out">
+            ⏻
+          </button>
+        </div>
       </div>
     </aside>
   );

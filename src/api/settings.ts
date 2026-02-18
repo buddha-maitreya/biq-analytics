@@ -1,9 +1,11 @@
 import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
+import { authMiddleware } from "@services/auth";
 import * as settingsSvc from "@services/settings";
 
 const router = createRouter();
 router.use(errorMiddleware());
+router.use(authMiddleware());
 
 /** GET /api/settings — all business settings */
 router.get("/settings", async (c) => {

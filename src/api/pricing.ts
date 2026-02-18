@@ -1,9 +1,11 @@
 import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
+import { authMiddleware } from "@services/auth";
 import * as svc from "@services/pricing";
 
 const router = createRouter();
 router.use(errorMiddleware());
+router.use(authMiddleware());
 
 /** Get price breakdown for a single product */
 router.get("/pricing/:productId", async (c) => {

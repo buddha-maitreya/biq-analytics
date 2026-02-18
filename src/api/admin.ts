@@ -1,9 +1,11 @@
 import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
+import { authMiddleware } from "@services/auth";
 import * as adminSvc from "@services/admin";
 
 const router = createRouter();
 router.use(errorMiddleware());
+router.use(authMiddleware());
 
 // ─── Dashboard Stats ─────────────────────────────────────────
 

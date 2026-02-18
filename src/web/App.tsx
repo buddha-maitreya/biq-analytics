@@ -13,15 +13,58 @@ import AdminPage from "./pages/AdminPage";
 import POSPage from "./pages/POSPage";
 import InvoiceCheckerPage from "./pages/InvoiceCheckerPage";
 import SettingsPage from "./pages/SettingsPage";
+import LoginPage from "./pages/LoginPage";
 import "./styles/global.css";
-import type { Page, AppConfig } from "./types";
+import type { Page, AppConfig, AuthUser } from "./types";
 
-export type { Page, AppConfig };
+export type { Page, AppConfig, AuthUser };
 
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
   const [configVersion, setConfigVersion] = useState(0);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const { data: appConfig, refetch } = useAPI<AppConfig>("GET /api/config");
+
+  // Check existing session on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        // Try cookie-based auth first, fall back to localStorage token
+        const token = localStorage.getItem("biq_token");
+        const headers: Record<string, string> = {};
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+
+        const res = await fetch("/api/auth/me", { headers });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.user) {
+            setUser(data.user);
+          }
+        }
+      } catch {
+        // Network error — stay on login
+      } finally {
+        setAuthChecked(true);
+      }
+    })();
+  }, []);
+
+  const handleLogin = useCallback((loggedInUser: AuthUser) => {
+    setUser(loggedInUser);
+    setPage("dashboard");
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // ignore
+    }
+    localStorage.removeItem("biq_token");
+    setUser(null);
+    setPage("dashboard");
+  }, []);
 
   const refreshConfig = useCallback(() => {
     setConfigVersion((v) => v + 1);
@@ -48,6 +91,24 @@ export default function App() {
       unitDefault: "piece",
     },
   };
+
+  // Show loading spinner while checking auth
+  if (!authChecked) {
+    return (
+      <div className="login-page">
+        <div className="login-card" style={{ textAlign: "center", padding: "60px 40px" }}>
+          <div className="login-title" style={{ fontSize: "18px", color: "#94a3b8" }}>
+            Loading…
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login if not authenticated
+  if (!user) {
+    return <LoginPage config={cfg} onLogin={handleLogin} />;
+  }
 
   const renderPage = () => {
     switch (page) {
@@ -80,7 +141,7 @@ export default function App() {
 
   return (
     <div className="app-layout">
-      <Sidebar config={cfg} currentPage={page} onNavigate={setPage} />
+      <Sidebar config={cfg} currentPage={page} onNavigate={setPage} user={user} onLogout={handleLogout} />
       <main className="main-content">{renderPage()}</main>
     </div>
   );

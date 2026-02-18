@@ -14,6 +14,15 @@ export type Page =
   | "admin"
   | "settings";
 
+/** Authenticated user returned by the auth API */
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  permissions: string[];
+}
+
 export interface AppConfig {
   companyName: string;
   companyLogoUrl: string;

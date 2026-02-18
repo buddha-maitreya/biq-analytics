@@ -1,9 +1,11 @@
 import { createRouter } from "@agentuity/runtime";
 import businessAssistant from "@agent/business-assistant";
 import { errorMiddleware, ValidationError } from "@lib/errors";
+import { authMiddleware } from "@services/auth";
 
 const chat = createRouter();
 chat.use(errorMiddleware());
+chat.use(authMiddleware());
 
 /**
  * POST /chat — Send a message to the business assistant agent.

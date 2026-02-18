@@ -1,9 +1,11 @@
 import { createRouter } from "@agentuity/runtime";
 import reportGenerator from "@agent/report-generator";
 import { errorMiddleware, ValidationError } from "@lib/errors";
+import { authMiddleware } from "@services/auth";
 
 const reports = createRouter();
 reports.use(errorMiddleware());
+reports.use(authMiddleware());
 
 /**
  * POST /reports/generate — Generate an AI-powered business report.

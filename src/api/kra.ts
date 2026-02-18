@@ -7,10 +7,12 @@
 
 import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
+import { authMiddleware } from "@services/auth";
 import * as kraSvc from "@services/kra-etims";
 
 const router = createRouter();
 router.use(errorMiddleware());
+router.use(authMiddleware());
 
 // ── Provider Status ──
 router.get("/kra/status", async (c) => {

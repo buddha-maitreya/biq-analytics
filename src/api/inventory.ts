@@ -1,9 +1,11 @@
 import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
+import { authMiddleware } from "@services/auth";
 import * as svc from "@services/inventory";
 
 const router = createRouter();
 router.use(errorMiddleware());
+router.use(authMiddleware());
 
 /** Adjust stock level */
 router.post("/inventory/adjust", async (c) => {

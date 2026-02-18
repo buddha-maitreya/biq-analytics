@@ -1,9 +1,11 @@
 import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware, ValidationError } from "@lib/errors";
+import { authMiddleware } from "@services/auth";
 import * as paymentsSvc from "@services/payments-integration";
 
 const router = createRouter();
 router.use(errorMiddleware());
+router.use(authMiddleware());
 
 // ─── Payment Provider Status ─────────────────────────────────
 

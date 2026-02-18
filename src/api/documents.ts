@@ -1,5 +1,6 @@
 import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware, ValidationError } from "@lib/errors";
+import { authMiddleware } from "@services/auth";
 import { chunkDocument } from "@lib/chunker";
 import knowledgeBase from "@agent/knowledge-base";
 
@@ -15,6 +16,7 @@ import knowledgeBase from "@agent/knowledge-base";
 
 const router = createRouter();
 router.use(errorMiddleware());
+router.use(authMiddleware());
 
 /** Upload and ingest a document into the knowledge base */
 router.post("/admin/documents", async (c) => {

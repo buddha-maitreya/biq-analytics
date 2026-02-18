@@ -79,6 +79,16 @@ const outputSchema = z.object({
 
 const queryDatabaseTool = tool({
   description: `Execute a read-only SQL query against the business database to answer data questions.
+IMPORTANT: The database is PostgreSQL (NOT MySQL). You MUST use PostgreSQL syntax:
+- Date math: NOW() - INTERVAL '30 days' (NOT DATE_SUB or DATE_ADD)
+- String concat: || (NOT CONCAT())
+- Boolean: TRUE/FALSE (NOT 1/0)
+- ILIKE for case-insensitive LIKE
+- EXTRACT(MONTH FROM date) or date_trunc('month', date)
+- LIMIT/OFFSET (no LIMIT x,y syntax)
+- Type casting: column::text or CAST(column AS text)
+- String agg: STRING_AGG(col, ',') (NOT GROUP_CONCAT)
+- Current date: CURRENT_DATE, CURRENT_TIMESTAMP, NOW()
 Available tables: products, categories, warehouses, inventory, inventory_transactions, customers, orders, order_items, order_statuses, invoices, payments, users, notifications, tax_rules.
 Key columns: products(id, sku, name, price, cost_price, unit, category_id, is_active), orders(id, order_number, customer_id, status_id, total_amount, created_at), order_items(order_id, product_id, quantity, unit_price, total_amount), inventory(product_id, warehouse_id, quantity), customers(id, name, email, phone), invoices(id, invoice_number, total_amount, paid_amount, status).
 Always use SELECT only. Use aggregations, JOINs, and GROUP BY as needed.`,
@@ -328,6 +338,13 @@ Tool usage guidelines:
 - Use search_knowledge when users ask about policies, procedures, or uploaded documents
 - Use get_business_snapshot for broad "how is the business?" questions
 - You can use multiple tools in one turn — use as many as needed to build a thorough answer
+
+CRITICAL — SQL dialect:
+- The database is PostgreSQL. NEVER use MySQL syntax.
+- Date intervals: NOW() - INTERVAL '30 days' (NOT DATE_SUB/DATE_ADD)
+- String aggregation: STRING_AGG() (NOT GROUP_CONCAT)
+- Case-insensitive match: ILIKE (NOT LOWER() + LIKE)
+- Boolean literals: TRUE/FALSE (NOT 1/0)
 
 Response style:
 - Be concise but thorough

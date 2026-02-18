@@ -16,7 +16,6 @@
  */
 
 import { createPostgresDrizzle } from "@agentuity/drizzle";
-import * as bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import * as schema from "../src/db/schema";
 import { users } from "../src/db/schema";
@@ -24,7 +23,6 @@ import { users } from "../src/db/schema";
 const { db } = createPostgresDrizzle({ schema });
 
 const DEMO_PASSWORD = "demo2025";
-const BCRYPT_ROUNDS = 12;
 
 /** All 10 permission modules */
 const ALL_PERMISSIONS = [
@@ -107,8 +105,8 @@ async function main() {
   console.log(`   Password for all demo accounts: "${DEMO_PASSWORD}"\n`);
 
   // Hash the shared demo password once
-  const hashedPassword = await bcrypt.hash(DEMO_PASSWORD, BCRYPT_ROUNDS);
-  console.log(`   ✓ Password hashed (bcrypt, ${BCRYPT_ROUNDS} rounds)\n`);
+  const hashedPassword = await Bun.password.hash(DEMO_PASSWORD, { algorithm: "bcrypt", cost: 12 });
+  console.log(`   ✓ Password hashed (Bun.password, bcrypt cost 12)\n`);
 
   let created = 0;
   let updated = 0;

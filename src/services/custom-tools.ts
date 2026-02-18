@@ -2,16 +2,21 @@
  * Custom Tools Service
  *
  * CRUD operations for user-defined tools and execution.
- * Three tool types are supported:
+ * Four tool types (aligned with ElevenLabs Agents taxonomy):
  *
- * 1. **Sandbox** — Code runs in an isolated Agentuity sandbox (bun:1/node/python).
- *    Uses ctx.sandbox.run() for one-shot execution.
+ * 1. **Server** — External API calls (HTTP/REST). The AI invokes external
+ *    endpoints with configurable URL, method, headers, auth, and params.
  *
- * 2. **Webhook** — AI invokes an external HTTP endpoint.
- *    Uses fetch() with configurable URL, method, headers, and timeout.
+ * 2. **Client** — Browser-side execution. The AI emits a structured action
+ *    to the frontend via SSE for the UI to handle (display cards, navigate, etc.).
  *
- * 3. **Client** — AI emits a UI action (display card, navigate, show notification).
- *    The result is sent to the frontend via SSE for the UI to handle.
+ * 3. **System** — Built-in tools (query_database, analyze_trends, etc.).
+ *    Defined in agent code, not stored in the custom_tools table.
+ *
+ * 4. **MCP** — Model Context Protocol servers (future).
+ *    Reserved for MCP tool integrations.
+ *
+ * Only server and client tools are user-configurable via the Settings UI.
  */
 
 import { db, customTools } from "@db/index";
@@ -19,7 +24,7 @@ import { eq, asc } from "drizzle-orm";
 
 // ── Types ──────────────────────────────────────────────────
 
-export type ToolType = "sandbox" | "webhook" | "client";
+export type ToolType = "server" | "client" | "system" | "mcp";
 
 export interface CustomToolRow {
   id: string;
@@ -28,12 +33,7 @@ export interface CustomToolRow {
   label: string;
   description: string;
   parameterSchema: Record<string, unknown>;
-  // Sandbox fields
-  code: string;
-  runtime: string;
-  timeoutMs: number;
-  networkEnabled: boolean;
-  // Webhook fields
+  // Server tool fields (HTTP/API)
   webhookUrl: string | null;
   webhookMethod: string | null;
   webhookHeaders: Record<string, string> | null;
@@ -45,7 +45,7 @@ export interface CustomToolRow {
   requestBodySchema: Record<string, unknown> | null;
   // Client fields
   expectsResponse: boolean | null;
-  // Shared behaviour (webhook + client)
+  // Shared behaviour (server + client)
   disableInterruptions: boolean | null;
   preToolSpeech: string | null;
   preToolSpeechText: string | null;
@@ -67,12 +67,7 @@ export interface CreateToolInput {
   label: string;
   description: string;
   parameterSchema?: Record<string, unknown>;
-  // Sandbox
-  code?: string;
-  runtime?: string;
-  timeoutMs?: number;
-  networkEnabled?: boolean;
-  // Webhook
+  // Server tool fields
   webhookUrl?: string;
   webhookMethod?: string;
   webhookHeaders?: Record<string, string>;
@@ -84,7 +79,7 @@ export interface CreateToolInput {
   requestBodySchema?: Record<string, unknown>;
   // Client
   expectsResponse?: boolean;
-  // Shared behaviour (webhook + client)
+  // Shared behaviour (server + client)
   disableInterruptions?: boolean;
   preToolSpeech?: string;
   preToolSpeechText?: string;
@@ -131,17 +126,12 @@ export async function createTool(input: CreateToolInput): Promise<CustomToolRow>
   const [row] = await db
     .insert(customTools)
     .values({
-      toolType: input.toolType ?? "sandbox",
+      toolType: input.toolType ?? "server",
       name: input.name,
       label: input.label,
       description: input.description,
       parameterSchema: input.parameterSchema ?? {},
-      // Sandbox
-      code: input.code ?? "",
-      runtime: input.runtime ?? "bun:1",
-      timeoutMs: input.timeoutMs ?? 30000,
-      networkEnabled: input.networkEnabled ?? false,
-      // Webhook
+      // Server tool fields
       webhookUrl: input.webhookUrl ?? "",
       webhookMethod: input.webhookMethod ?? "GET",
       webhookHeaders: input.webhookHeaders ?? {},
@@ -180,10 +170,6 @@ export async function updateTool(
   if (input.label !== undefined) updates.label = input.label;
   if (input.description !== undefined) updates.description = input.description;
   if (input.parameterSchema !== undefined) updates.parameterSchema = input.parameterSchema;
-  if (input.code !== undefined) updates.code = input.code;
-  if (input.runtime !== undefined) updates.runtime = input.runtime;
-  if (input.timeoutMs !== undefined) updates.timeoutMs = input.timeoutMs;
-  if (input.networkEnabled !== undefined) updates.networkEnabled = input.networkEnabled;
   if (input.webhookUrl !== undefined) updates.webhookUrl = input.webhookUrl;
   if (input.webhookMethod !== undefined) updates.webhookMethod = input.webhookMethod;
   if (input.webhookHeaders !== undefined) updates.webhookHeaders = input.webhookHeaders;
@@ -222,106 +208,10 @@ export async function deleteTool(id: string): Promise<boolean> {
   return result.length > 0;
 }
 
-// ── Sandbox Execution ──────────────────────────────────────
+// ── Server Tool Execution ──────────────────────────────────
 
 /**
- * Build the execution script for a custom tool.
- *
- * The tool code runs inside a bun:1 sandbox. We wrap the user's code
- * in a standard harness that:
- * 1. Parses the input params from a JSON env var
- * 2. Calls the user's function
- * 3. Outputs the result as JSON to stdout
- *
- * The user's code should export or define a function called `execute`
- * that receives (params) and returns a result.
- */
-export function buildSandboxScript(
-  toolCode: string,
-  params: Record<string, unknown>
-): string {
-  // Escape the JSON params and code for safe embedding
-  const paramsJson = JSON.stringify(params);
-
-  // The harness wraps the user code and calls it
-  return `
-// ── Sandbox harness ──
-const __params = ${paramsJson};
-
-// User-defined tool code (inlined)
-${toolCode}
-
-// Execute and output result
-(async () => {
-  try {
-    if (typeof execute !== 'function') {
-      console.log(JSON.stringify({ error: "Tool must define an 'execute' function" }));
-      process.exit(1);
-    }
-    const result = await execute(__params);
-    console.log(JSON.stringify(result ?? { success: true }));
-  } catch (err) {
-    console.log(JSON.stringify({ error: String(err.message || err) }));
-    process.exit(1);
-  }
-})();
-`.trim();
-}
-
-/**
- * Execute a custom tool in an Agentuity sandbox.
- *
- * @param sandbox - The sandbox API (ctx.sandbox from an agent context)
- * @param tool - The tool definition from the database
- * @param params - The parameters passed by the LLM
- * @returns Parsed JSON result from the tool, or an error object
- */
-export async function executeToolInSandbox(
-  sandbox: { run: (opts: Record<string, unknown>) => Promise<{ stdout: string; stderr: string; exitCode: number }> },
-  tool: CustomToolRow,
-  params: Record<string, unknown>
-): Promise<Record<string, unknown>> {
-  const script = buildSandboxScript(tool.code, params);
-
-  try {
-    const result = await sandbox.run({
-      runtime: tool.runtime || "bun:1",
-      command: `bun eval ${JSON.stringify(script)}`,
-      timeout: { execution: tool.timeoutMs || 30000 },
-      network: { enabled: tool.networkEnabled ?? false },
-      resources: {
-        memory: "256MB",
-        cpu: 1,
-        disk: "256MB",
-      },
-    });
-
-    if (result.exitCode !== 0) {
-      return {
-        error: `Tool "${tool.label}" failed (exit code ${result.exitCode})`,
-        stderr: result.stderr?.slice(0, 500) || "",
-      };
-    }
-
-    // Parse stdout as JSON
-    const stdout = result.stdout?.trim() || "";
-    try {
-      return JSON.parse(stdout);
-    } catch {
-      // If output isn't valid JSON, return it as text
-      return { output: stdout };
-    }
-  } catch (err: any) {
-    return {
-      error: `Sandbox execution failed: ${err.message || String(err)}`,
-    };
-  }
-}
-
-// ── Webhook Execution ──────────────────────────────────────
-
-/**
- * Execute a webhook tool by making an HTTP request to the configured endpoint.
+ * Execute a server tool by making an HTTP request to the configured endpoint.
  *
  * Supports:
  * - Authentication (api_key, bearer, basic, oauth2)
@@ -335,12 +225,12 @@ export async function executeToolInSandbox(
  *                 or as query params for GET/DELETE
  * @returns Parsed JSON response, or an error object
  */
-export async function executeWebhookTool(
+export async function executeServerTool(
   tool: CustomToolRow,
   params: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
   if (!tool.webhookUrl) {
-    return { error: `Webhook tool "${tool.label}" has no URL configured` };
+    return { error: `Server tool "${tool.label}" has no URL configured` };
   }
 
   const method = (tool.webhookMethod || "GET").toUpperCase();
@@ -430,7 +320,7 @@ export async function executeWebhookTool(
 
     if (!res.ok) {
       return {
-        error: `Webhook "${tool.label}" returned HTTP ${res.status}`,
+        error: `Server tool "${tool.label}" returned HTTP ${res.status}`,
         status: res.status,
         body: text.slice(0, 500),
       };
@@ -444,9 +334,9 @@ export async function executeWebhookTool(
     }
   } catch (err: any) {
     if (err.name === "AbortError") {
-      return { error: `Webhook "${tool.label}" timed out after ${timeoutMs}ms` };
+      return { error: `Server tool "${tool.label}" timed out after ${timeoutMs}ms` };
     }
-    return { error: `Webhook execution failed: ${err.message || String(err)}` };
+    return { error: `Server tool execution failed: ${err.message || String(err)}` };
   }
 }
 
@@ -482,31 +372,26 @@ export function buildClientToolAction(
 /**
  * Execute a custom tool based on its type.
  *
- * - sandbox → runs code in isolated container via ctx.sandbox.run()
- * - webhook → makes HTTP request to external URL
+ * - server → makes HTTP request to external URL (API call)
  * - client → returns a structured UI action payload (no server-side execution)
+ *
+ * System and MCP tools are handled by the agent directly, not through this dispatcher.
  *
  * @param tool - The tool definition
  * @param params - Parameters from the LLM
- * @param sandbox - Sandbox API (required for sandbox tools, optional otherwise)
  */
 export async function executeTool(
   tool: CustomToolRow,
-  params: Record<string, unknown>,
-  sandbox?: { run: (opts: Record<string, unknown>) => Promise<{ stdout: string; stderr: string; exitCode: number }> } | null
+  params: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
   switch (tool.toolType) {
-    case "webhook":
-      return executeWebhookTool(tool, params);
+    case "server":
+      return executeServerTool(tool, params);
 
     case "client":
       return buildClientToolAction(tool, params);
 
-    case "sandbox":
     default:
-      if (!sandbox) {
-        return { error: `Sandbox not available — cannot execute tool "${tool.label}"` };
-      }
-      return executeToolInSandbox(sandbox, tool, params);
+      return { error: `Unsupported tool type "${tool.toolType}" for tool "${tool.label}"` };
   }
 }

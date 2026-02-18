@@ -37,9 +37,9 @@ const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"]
 /** Pages restricted by role (base access — can be extended via permissions) */
 const ROLE_VISIBLE: Record<string, Page[]> = {
   viewer: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "about"],
-  staff: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "pos", "invoice_checker", "about"],
-  manager: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "pos", "invoice_checker", "about"],
-  admin: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "pos", "invoice_checker", "admin", "about"],
+  staff: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "about"],
+  manager: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "about"],
+  admin: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "admin", "about"],
 };
 
 /** Pages that can be unlocked via the permissions array (regardless of role) */

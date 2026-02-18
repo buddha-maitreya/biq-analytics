@@ -68,7 +68,7 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
   const [activeSection, setActiveSection] = useState<"business" | "payments" | "tax" | "ai" | "tools">("business");
 
   // Custom tools state
-  type ToolType = "sandbox" | "webhook" | "client";
+  type ToolType = "server" | "client";
   interface CustomTool {
     id?: string;
     toolType: ToolType;
@@ -76,12 +76,7 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
     label: string;
     description: string;
     parameterSchema: Record<string, unknown>;
-    // Sandbox
-    code: string;
-    runtime: string;
-    timeoutMs: number;
-    networkEnabled: boolean;
-    // Webhook
+    // Server tool fields (HTTP/API)
     webhookUrl: string;
     webhookMethod: string;
     webhookHeaders: Record<string, string>;
@@ -93,7 +88,7 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
     requestBodySchema: Record<string, unknown>;
     // Client
     expectsResponse: boolean;
-    // Shared behaviour (webhook + client)
+    // Shared behaviour (server + client)
     disableInterruptions: boolean;
     preToolSpeech: string;
     preToolSpeechText: string;
@@ -112,15 +107,11 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
   const [testingToolId, setTestingToolId] = useState<string | null>(null);
 
   const newTool = (): CustomTool => ({
-    toolType: "sandbox",
+    toolType: "server",
     name: "",
     label: "",
     description: "",
     parameterSchema: {},
-    code: "",
-    runtime: "bun:1",
-    timeoutMs: 30000,
-    networkEnabled: false,
     webhookUrl: "",
     webhookMethod: "GET",
     webhookHeaders: {},
@@ -1002,7 +993,7 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
           <div className="card settings-card">
             <h3>{editingTool?.id ? "✏️ Edit Tool" : "➕ Create Custom Tool"}</h3>
             <p className="text-muted" style={{ marginBottom: 16 }}>
-              Define custom tools the AI assistant can invoke. Choose a type: <strong>Sandbox</strong> (run code), <strong>Webhook</strong> (call external API), or <strong>Client</strong> (trigger UI action).
+              Define custom tools the AI assistant can invoke. Choose a type: <strong>Server</strong> (call external API) or <strong>Client</strong> (trigger browser action).
             </p>
 
             <div className="form-grid" style={{ gap: 12 }}>
@@ -1011,9 +1002,8 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
                 <span className="form-label">Tool Type</span>
                 <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                   {([
-                    { value: "sandbox" as ToolType, icon: "🖥️", label: "Sandbox", desc: "Run code in isolated container" },
-                    { value: "webhook" as ToolType, icon: "🌐", label: "Webhook", desc: "Call an external API endpoint" },
-                    { value: "client" as ToolType, icon: "📱", label: "Client", desc: "Trigger a UI action in the browser" },
+                    { value: "server" as ToolType, icon: "🌐", label: "Server", desc: "Call an external API endpoint" },
+                    { value: "client" as ToolType, icon: "📱", label: "Client", desc: "Trigger an action in the browser" },
                   ] as const).map((tt) => (
                     <button
                       key={tt.value}
@@ -1022,8 +1012,8 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
                         flex: 1,
                         padding: "10px 12px",
                         borderRadius: 8,
-                        border: `2px solid ${(editingTool?.toolType ?? "sandbox") === tt.value ? "#3b82f6" : "#e5e7eb"}`,
-                        background: (editingTool?.toolType ?? "sandbox") === tt.value ? "#eff6ff" : "#fafafa",
+                        border: `2px solid ${(editingTool?.toolType ?? "server") === tt.value ? "#3b82f6" : "#e5e7eb"}`,
+                        background: (editingTool?.toolType ?? "server") === tt.value ? "#eff6ff" : "#fafafa",
                         cursor: "pointer",
                         textAlign: "left",
                       }}
@@ -1090,55 +1080,8 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
                 />
               </label>
 
-              {/* ── Sandbox-specific fields ── */}
-              {(editingTool?.toolType ?? "sandbox") === "sandbox" && (
-                <>
-                  <label>
-                    <span className="form-label">Code (TypeScript/JavaScript)</span>
-                    <textarea
-                      rows={8}
-                      placeholder={'async function execute(params) {\n  const { cost_price, markup_pct } = params;\n  return { selling_price: cost_price * (1 + markup_pct / 100) };\n}'}
-                      value={editingTool?.code ?? ""}
-                      onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), code: e.target.value }))}
-                      style={{ resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
-                    />
-                    <span className="form-hint">Must define an <code>execute(params)</code> function.</span>
-                  </label>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                    <label>
-                      <span className="form-label">Runtime</span>
-                      <select
-                        value={editingTool?.runtime ?? "bun:1"}
-                        onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), runtime: e.target.value }))}
-                      >
-                        <option value="bun:1">Bun 1.x</option>
-                        <option value="node">Node.js</option>
-                        <option value="python">Python</option>
-                      </select>
-                    </label>
-                    <label>
-                      <span className="form-label">Timeout (ms)</span>
-                      <input type="number" min={1000} max={120000} step={1000}
-                        value={editingTool?.timeoutMs ?? 30000}
-                        onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), timeoutMs: Number(e.target.value) }))}
-                      />
-                    </label>
-                    <label>
-                      <span className="form-label">Network</span>
-                      <select
-                        value={editingTool?.networkEnabled ? "true" : "false"}
-                        onChange={(e) => setEditingTool((prev) => ({ ...(prev ?? newTool()), networkEnabled: e.target.value === "true" }))}
-                      >
-                        <option value="false">❌ Disabled</option>
-                        <option value="true">✅ Enabled</option>
-                      </select>
-                    </label>
-                  </div>
-                </>
-              )}
-
-              {/* ── Webhook-specific fields ── */}
-              {editingTool?.toolType === "webhook" && (
+              {/* ── Server tool fields (HTTP/API) ── */}
+              {editingTool?.toolType === "server" && (
                 <>
                   <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12 }}>
                     <label>
@@ -1329,8 +1272,8 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
                 </div>
               )}
 
-              {/* ── Shared behaviour fields (webhook + client) ── */}
-              {(editingTool?.toolType === "webhook" || editingTool?.toolType === "client") && (
+              {/* ── Shared behaviour fields (server + client) ── */}
+              {(editingTool?.toolType === "server" || editingTool?.toolType === "client") && (
                 <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 12 }}>
                   <span className="form-label" style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, display: "block" }}>Behaviour Settings</span>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
@@ -1390,8 +1333,8 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
                 </div>
               )}
 
-              {/* ── Dynamic Variables (all types) ── */}
-              {(editingTool?.toolType === "webhook" || editingTool?.toolType === "client") && (
+              {/* ── Dynamic Variables (server + client) ── */}
+              {(editingTool?.toolType === "server" || editingTool?.toolType === "client") && (
                 <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 12 }}>
                   <span className="form-label" style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, display: "block" }}>Dynamic Variables</span>
                   <label>
@@ -1427,8 +1370,7 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
                   className="btn btn-primary"
                   disabled={
                     !editingTool?.name || !editingTool?.label ||
-                    ((editingTool?.toolType ?? "sandbox") === "sandbox" && !editingTool?.code) ||
-                    (editingTool?.toolType === "webhook" && !editingTool?.webhookUrl)
+                    ((editingTool?.toolType ?? "server") === "server" && !editingTool?.webhookUrl)
                   }
                   onClick={async () => {
                     if (!editingTool) return;
@@ -1488,8 +1430,8 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
                   </thead>
                   <tbody>
                     {customTools.map((t) => {
-                      const typeIcon = t.toolType === "webhook" ? "🌐" : t.toolType === "client" ? "📱" : "🖥️";
-                      const typeLabel = t.toolType === "webhook" ? "Webhook" : t.toolType === "client" ? "Client" : "Sandbox";
+                      const typeIcon = t.toolType === "server" ? "🌐" : t.toolType === "client" ? "📱" : "🔧";
+                      const typeLabel = t.toolType === "server" ? "Server" : t.toolType === "client" ? "Client" : t.toolType;
                       return (
                         <tr key={t.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
                           <td style={{ padding: "8px 8px" }}>
@@ -1583,8 +1525,7 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
           <div className="card" style={{ background: "#f0f9ff", border: "1px solid #bae6fd", padding: 16 }}>
             <p style={{ margin: 0, fontSize: 13, color: "#0c4a6e" }}>
               <strong>💡 How custom tools work:</strong> The AI discovers active tools at request time and invokes them when relevant.
-              <strong> Sandbox</strong> tools run code in isolated containers.
-              <strong> Webhook</strong> tools call external APIs with full auth, path/query params, and request body support.
+              <strong> Server</strong> tools call external APIs with full authentication, path/query params, and request body support.
               <strong> Client</strong> tools trigger actions in the user's browser via SSE.
               Add as many tools as you need — changes take effect immediately.
             </p>

@@ -446,19 +446,20 @@ export const taxRules = pgTable("tax_rules", {
 /**
  * Custom Tools — user-defined tools executed by the AI agent at runtime.
  *
- * Three tool types:
- *  1. **sandbox** — Code runs in an isolated Agentuity sandbox (bun:1/node/python).
- *  2. **webhook** — AI invokes an external HTTP endpoint (POST/GET).
- *  3. **client**  — AI emits a UI action for the frontend to handle (display card, navigate, etc.).
+ * Four tool types (aligned with ElevenLabs Agents taxonomy):
+ *  1. **server**  — External API calls (HTTP/REST). Configured with URL, method, headers, auth, path/query/body params.
+ *  2. **client**  — Browser-side execution. Emits a structured action to the frontend via SSE.
+ *  3. **system**  — Built-in tools (query_database, analyze_trends, etc.). Not stored here — defined in agent code.
+ *  4. **mcp**     — Model Context Protocol servers (future). Reserved for MCP tool integrations.
  *
- * Businesses can add unlimited tools of any type via the Settings UI.
+ * Only **server** and **client** tools are user-configurable via the Settings UI.
  */
 export const customTools = pgTable(
   "custom_tools",
   {
     id: id(),
-    /** Tool type: sandbox (code execution), webhook (HTTP call), client (UI action) */
-    toolType: varchar("tool_type", { length: 20 }).notNull().default("sandbox"),
+    /** Tool type: server (HTTP/API call), client (browser UI action), system (built-in), mcp (future) */
+    toolType: varchar("tool_type", { length: 20 }).notNull().default("server"),
     /** Unique tool name (snake_case, used as the AI tool key) */
     name: varchar("name", { length: 100 }).notNull().unique(),
     /** Human-readable label shown in the UI */
@@ -473,27 +474,14 @@ export const customTools = pgTable(
      */
     parameterSchema: jsonb("parameter_schema").notNull().default({}),
 
-    // ── Sandbox-specific fields ─────────────────────────────
-    /** The TypeScript/JavaScript/Python code to execute in the sandbox.
-     * Must define an `execute(params)` function that returns a result.
-     * Only used when toolType = "sandbox".
-     */
-    code: text("code").notNull().default(""),
-    /** Runtime to use: bun:1 (default), node, python */
-    runtime: varchar("runtime", { length: 20 }).notNull().default("bun:1"),
-    /** Max execution time in ms (default 30000) */
-    timeoutMs: integer("timeout_ms").notNull().default(30000),
-    /** Whether network access is allowed in the sandbox */
-    networkEnabled: boolean("network_enabled").notNull().default(false),
-
-    // ── Webhook-specific fields ─────────────────────────────
-    /** URL to call when the tool is invoked. Only used when toolType = "webhook". */
+    // ── Server tool fields (HTTP/API) ───────────────────────
+    /** URL to call when the tool is invoked. Required for server tools. */
     webhookUrl: text("webhook_url").default(""),
-    /** HTTP method: GET (default), POST, PUT, DELETE */
+    /** HTTP method: GET (default), POST, PUT, DELETE, PATCH */
     webhookMethod: varchar("webhook_method", { length: 10 }).default("GET"),
     /** Custom headers as JSON object, e.g. { "Authorization": "Bearer xxx" }. */
     webhookHeaders: jsonb("webhook_headers").$type<Record<string, string>>().default({}),
-    /** Response timeout in seconds for webhook calls */
+    /** Response timeout in seconds for server tool HTTP calls */
     webhookTimeoutSecs: integer("webhook_timeout_secs").default(20),
     /** Authentication type: none, api_key, bearer, basic, oauth2 */
     authType: varchar("auth_type", { length: 20 }).default("none"),
@@ -513,7 +501,7 @@ export const customTools = pgTable(
      */
     expectsResponse: boolean("expects_response").default(false),
 
-    // ── Shared behaviour fields (webhook + client) ──────────
+    // ── Shared behaviour fields (server + client) ─────────
     /** Disable AI from speaking/streaming while this tool executes */
     disableInterruptions: boolean("disable_interruptions").default(false),
     /** Pre-tool speech mode: "auto" (AI decides), "custom" (use preToolSpeechText), "none" */

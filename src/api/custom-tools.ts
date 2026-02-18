@@ -41,12 +41,9 @@ router.post("/custom-tools", async (c) => {
   }
 
   // Type-specific validation
-  const toolType = body.toolType ?? "sandbox";
-  if (toolType === "sandbox" && !body.code) {
-    return c.json({ error: "code is required for sandbox tools" }, 400);
-  }
-  if (toolType === "webhook" && !body.webhookUrl) {
-    return c.json({ error: "webhookUrl is required for webhook tools" }, 400);
+  const toolType = body.toolType ?? "server";
+  if (toolType === "server" && !body.webhookUrl) {
+    return c.json({ error: "webhookUrl is required for server tools" }, 400);
   }
 
   const tool = await toolsSvc.createTool(body);
@@ -68,7 +65,7 @@ router.delete("/custom-tools/:id", async (c) => {
   return c.json({ success: true });
 });
 
-/** POST /api/custom-tools/:id/test — test-run a tool (any type) */
+/** POST /api/custom-tools/:id/test — test-run a tool (server or client) */
 router.post("/custom-tools/:id/test", async (c) => {
   const tool = await toolsSvc.getToolById(c.req.param("id"));
   if (!tool) return c.json({ error: "Tool not found" }, 404);
@@ -76,17 +73,7 @@ router.post("/custom-tools/:id/test", async (c) => {
   const body = await c.req.json();
   const params = body.params ?? {};
 
-  const sandbox = (c.var as any).sandbox ?? null;
-
-  // Sandbox tools require the sandbox API; others don't
-  if (tool.toolType === "sandbox" && !sandbox) {
-    return c.json(
-      { error: "Sandbox API not available in this environment" },
-      503
-    );
-  }
-
-  const result = await toolsSvc.executeTool(tool, params, sandbox);
+  const result = await toolsSvc.executeTool(tool, params);
   return c.json({ data: result });
 });
 

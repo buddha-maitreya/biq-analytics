@@ -431,20 +431,13 @@ export type DataScienceTools = typeof tools;
 // ────────────────────────────────────────────────────────────
 // Dynamic Custom Tools — loaded from DB at request time
 //
-// Businesses define custom tools via the Settings UI. Three types:
-// - sandbox: code runs in isolated bun:1 container
-// - webhook: HTTP call to external URL
+// Businesses define custom tools via the Settings UI. Two user-configurable types:
+// - server: HTTP call to external URL (API endpoint)
 // - client: structured action sent to frontend via SSE
+//
+// System tools (query_database, etc.) are built-in above.
+// MCP tools are reserved for future Model Context Protocol support.
 // ────────────────────────────────────────────────────────────
-
-/** Sandbox interface — subset of ctx.sandbox / c.var.sandbox */
-type SandboxAPI = {
-  run: (opts: Record<string, unknown>) => Promise<{
-    stdout: string;
-    stderr: string;
-    exitCode: number;
-  }>;
-};
 
 /**
  * Convert a JSON parameter schema to a Zod schema.
@@ -484,14 +477,11 @@ function jsonSchemaToZod(
  * Build dynamic Vercel AI SDK tools from active custom tool definitions.
  * Returns a tools map that can be merged with the static tools.
  *
- * All three tool types are supported:
- * - sandbox: requires sandbox API, executes code in isolated container
- * - webhook: makes HTTP request to configured endpoint
- * - client: returns structured action payload for the frontend
+ * Two user-configurable tool types:
+ * - server: makes HTTP request to configured endpoint (API call)
+ * - client: returns structured action payload for the frontend (SSE)
  */
-async function buildDynamicTools(
-  sandbox: SandboxAPI | null
-): Promise<Record<string, any>> {
+async function buildDynamicTools(): Promise<Record<string, any>> {
   let activeTools: CustomToolRow[];
   try {
     activeTools = await listActiveTools();
@@ -504,9 +494,6 @@ async function buildDynamicTools(
   const dynamicTools: Record<string, any> = {};
 
   for (const customTool of activeTools) {
-    // Skip sandbox tools if no sandbox available
-    if (customTool.toolType === "sandbox" && !sandbox) continue;
-
     const parameterSchema = jsonSchemaToZod(
       (customTool.parameterSchema as Record<string, unknown>) || {}
     );
@@ -516,7 +503,7 @@ async function buildDynamicTools(
       parameters: parameterSchema,
       execute: async (params: Record<string, unknown>) => {
         try {
-          return await executeTool(customTool, params, sandbox);
+          return await executeTool(customTool, params);
         } catch (err: any) {
           return {
             error: `Custom tool "${customTool.label}" failed: ${err.message || String(err)}`,
@@ -532,10 +519,8 @@ async function buildDynamicTools(
 /**
  * Build a complete tools map: static built-in tools + dynamic custom tools.
  */
-async function getAllTools(
-  sandbox: SandboxAPI | null
-): Promise<Record<string, any>> {
-  const dynamic = await buildDynamicTools(sandbox);
+async function getAllTools(): Promise<Record<string, any>> {
+  const dynamic = await buildDynamicTools();
   return { ...tools, ...dynamic };
 }
 
@@ -553,8 +538,7 @@ async function buildCustomToolsPromptSection(): Promise<string> {
   if (activeTools.length === 0) return "";
 
   const typeLabel: Record<string, string> = {
-    sandbox: "code execution",
-    webhook: "external API",
+    server: "external API",
     client: "UI action",
   };
 
@@ -696,9 +680,8 @@ export default createAgent("data-science", {
     // Load client-customizable AI settings at request time
     const aiSettings = await getAISettings();
 
-    // Build complete tool set: static + dynamic custom tools
-    const sandbox = (ctx as any).sandbox as SandboxAPI | null;
-    const allTools = await getAllTools(sandbox);
+    // Build complete tool set: static built-in + dynamic custom tools
+    const allTools = await getAllTools();
     const customToolsSection = await buildCustomToolsPromptSection();
 
     const messages: Array<{
@@ -791,14 +774,13 @@ export async function streamChat(
   message: string,
   sessionId: string,
   history?: Array<{ role: "user" | "assistant" | "system"; content: string }>,
-  conversationSummary?: string,
-  sandbox?: SandboxAPI | null
+  conversationSummary?: string
 ) {
   // Load client-customizable AI settings at request time
   const aiSettings = await getAISettings();
 
-  // Build complete tool set: static + dynamic custom tools from DB
-  const allTools = await getAllTools(sandbox ?? null);
+  // Build complete tool set: static built-in + dynamic custom tools from DB
+  const allTools = await getAllTools();
   const customToolsSection = await buildCustomToolsPromptSection();
 
   const messages: Array<{

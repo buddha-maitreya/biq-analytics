@@ -2,7 +2,7 @@
  * Authentication Service — JWT + Bun.password
  *
  * Provides:
- * - Password hashing (Bun.password — bcrypt, 12 rounds)
+ * - Password hashing (Bun.password — bcrypt, 10 rounds)
  * - JWT token signing/verification (jose, HS256)
  * - Login validation against the users table
  * - Auth middleware for Hono routes
@@ -13,13 +13,8 @@
 
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
 import { eq } from "drizzle-orm";
-import { createPostgresDrizzle } from "@agentuity/drizzle";
-import * as schema from "../db/schema";
-import { users } from "../db/schema";
+import { db, users } from "@db/index";
 import type { Context, Next } from "hono";
-
-// ── Database ─────────────────────────────────────────────────
-const { db } = createPostgresDrizzle({ schema });
 
 // ── Config ───────────────────────────────────────────────────
 const JWT_EXPIRY_HOURS = parseInt(process.env.JWT_EXPIRY_HOURS ?? "24", 10);
@@ -49,7 +44,7 @@ export interface TokenPayload extends JWTPayload {
 // ── Password Hashing ─────────────────────────────────────────
 
 export async function hashPassword(plain: string): Promise<string> {
-  return Bun.password.hash(plain, { algorithm: "bcrypt", cost: 12 });
+  return Bun.password.hash(plain, { algorithm: "bcrypt", cost: 10 });
 }
 
 export async function verifyPassword(plain: string, hashed: string): Promise<boolean> {

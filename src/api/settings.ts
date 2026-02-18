@@ -2,6 +2,7 @@ import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
 import { authMiddleware } from "@services/auth";
 import * as settingsSvc from "@services/settings";
+import { invalidateConfigCache } from "./config";
 
 const router = createRouter();
 router.use(errorMiddleware());
@@ -17,6 +18,7 @@ router.get("/settings", async (c) => {
 router.put("/settings", async (c) => {
   const body = await c.req.json();
   const updated = await settingsSvc.updateSettings(body);
+  invalidateConfigCache();
   return c.json({ data: updated });
 });
 

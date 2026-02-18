@@ -345,24 +345,19 @@ export function getRBACConfig() {
 // ─── Dashboard Stats ─────────────────────────────────────────
 
 export async function getDashboardStats() {
-  const [{ productCount }] = await db.execute(
-    sql`SELECT count(*) as "productCount" FROM products WHERE is_active = true`
-  ) as any;
-  const [{ orderCount }] = await db.execute(
-    sql`SELECT count(*) as "orderCount" FROM orders`
-  ) as any;
-  const [{ customerCount }] = await db.execute(
-    sql`SELECT count(*) as "customerCount" FROM customers WHERE is_active = true`
-  ) as any;
-  const [{ totalRevenue }] = await db.execute(
-    sql`SELECT COALESCE(sum(total_amount), 0) as "totalRevenue" FROM orders`
-  ) as any;
+  // Run all 4 count queries in parallel instead of sequentially
+  const [products_, orders_, customers_, revenue_] = await Promise.all([
+    db.execute(sql`SELECT count(*) as "productCount" FROM products WHERE is_active = true`) as Promise<any[]>,
+    db.execute(sql`SELECT count(*) as "orderCount" FROM orders`) as Promise<any[]>,
+    db.execute(sql`SELECT count(*) as "customerCount" FROM customers WHERE is_active = true`) as Promise<any[]>,
+    db.execute(sql`SELECT COALESCE(sum(total_amount), 0) as "totalRevenue" FROM orders`) as Promise<any[]>,
+  ]);
 
   return {
-    productCount: Number(productCount),
-    orderCount: Number(orderCount),
-    customerCount: Number(customerCount),
-    totalRevenue: Number(totalRevenue),
+    productCount: Number(products_[0].productCount),
+    orderCount: Number(orders_[0].orderCount),
+    customerCount: Number(customers_[0].customerCount),
+    totalRevenue: Number(revenue_[0].totalRevenue),
   };
 }
 
@@ -373,110 +368,127 @@ export async function getDashboardChartData(startDate?: string, endDate?: string
   const start = startDate ? new Date(startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
   const end = endDate ? new Date(endDate) : now;
 
-  // 1. Sales by day (line chart)
-  const salesByDay = await db.execute(
-    sql`SELECT
-          TO_CHAR(created_at, 'YYYY-MM-DD') as date,
-          COUNT(*) as order_count,
-          COALESCE(SUM(total_amount), 0) as revenue
-        FROM orders
-        WHERE created_at >= ${start.toISOString()} AND created_at <= ${end.toISOString()}
-        GROUP BY TO_CHAR(created_at, 'YYYY-MM-DD')
-        ORDER BY date ASC`
-  ) as any[];
+  // Run all 8 dashboard queries in PARALLEL instead of sequentially
+  const startISO = start.toISOString();
+  const endISO = end.toISOString();
 
-  // 2. Revenue by order status (pie chart)
-  const revenueByStatus = await db.execute(
-    sql`SELECT
-          os.name as status_name,
-          os.label as status_label,
-          os.color as status_color,
-          COUNT(o.id) as order_count,
-          COALESCE(SUM(o.total_amount), 0) as revenue
-        FROM orders o
-        LEFT JOIN order_statuses os ON o.status_id = os.id
-        WHERE o.created_at >= ${start.toISOString()} AND o.created_at <= ${end.toISOString()}
-        GROUP BY os.name, os.label, os.color
-        ORDER BY revenue DESC`
-  ) as any[];
+  const [
+    salesByDay,
+    revenueByStatus,
+    inventoryByCategory,
+    invoiceStats,
+    topCustomers,
+    topProducts,
+    lowStockResult,
+    paymentStats,
+  ] = await Promise.all([
+    // 1. Sales by day (line chart)
+    db.execute(
+      sql`SELECT
+            TO_CHAR(created_at, 'YYYY-MM-DD') as date,
+            COUNT(*) as order_count,
+            COALESCE(SUM(total_amount), 0) as revenue
+          FROM orders
+          WHERE created_at >= ${startISO} AND created_at <= ${endISO}
+          GROUP BY TO_CHAR(created_at, 'YYYY-MM-DD')
+          ORDER BY date ASC`
+    ) as Promise<any[]>,
 
-  // 3. Inventory by category (bar chart)
-  const inventoryByCategory = await db.execute(
-    sql`SELECT
-          c.name as category_name,
-          COUNT(DISTINCT i.product_id) as product_count,
-          COALESCE(SUM(i.quantity), 0) as total_qty,
-          COALESCE(SUM(i.quantity * CAST(p.price AS NUMERIC)), 0) as total_value
-        FROM inventory i
-        INNER JOIN products p ON i.product_id = p.id
-        LEFT JOIN categories c ON p.category_id = c.id
-        WHERE p.is_active = true
-        GROUP BY c.name
-        ORDER BY total_value DESC`
-  ) as any[];
+    // 2. Revenue by order status (pie chart)
+    db.execute(
+      sql`SELECT
+            os.name as status_name,
+            os.label as status_label,
+            os.color as status_color,
+            COUNT(o.id) as order_count,
+            COALESCE(SUM(o.total_amount), 0) as revenue
+          FROM orders o
+          LEFT JOIN order_statuses os ON o.status_id = os.id
+          WHERE o.created_at >= ${startISO} AND o.created_at <= ${endISO}
+          GROUP BY os.name, os.label, os.color
+          ORDER BY revenue DESC`
+    ) as Promise<any[]>,
 
-  // 4. Invoice receivables (bar chart - paid vs outstanding)
-  const invoiceStats = await db.execute(
-    sql`SELECT
-          status,
-          COUNT(*) as invoice_count,
-          COALESCE(SUM(total_amount), 0) as total_billed,
-          COALESCE(SUM(paid_amount), 0) as total_paid,
-          COALESCE(SUM(total_amount - paid_amount), 0) as outstanding
-        FROM invoices
-        WHERE created_at >= ${start.toISOString()} AND created_at <= ${end.toISOString()}
-        GROUP BY status
-        ORDER BY total_billed DESC`
-  ) as any[];
+    // 3. Inventory by category (bar chart)
+    db.execute(
+      sql`SELECT
+            c.name as category_name,
+            COUNT(DISTINCT i.product_id) as product_count,
+            COALESCE(SUM(i.quantity), 0) as total_qty,
+            COALESCE(SUM(i.quantity * CAST(p.price AS NUMERIC)), 0) as total_value
+          FROM inventory i
+          INNER JOIN products p ON i.product_id = p.id
+          LEFT JOIN categories c ON p.category_id = c.id
+          WHERE p.is_active = true
+          GROUP BY c.name
+          ORDER BY total_value DESC`
+    ) as Promise<any[]>,
 
-  // 5. Top customers by revenue (bar chart)
-  const topCustomers = await db.execute(
-    sql`SELECT
-          cu.name as customer_name,
-          COUNT(o.id) as order_count,
-          COALESCE(SUM(o.total_amount), 0) as revenue
-        FROM orders o
-        INNER JOIN customers cu ON o.customer_id = cu.id
-        WHERE o.created_at >= ${start.toISOString()} AND o.created_at <= ${end.toISOString()}
-        GROUP BY cu.name
-        ORDER BY revenue DESC
-        LIMIT 10`
-  ) as any[];
+    // 4. Invoice receivables
+    db.execute(
+      sql`SELECT
+            status,
+            COUNT(*) as invoice_count,
+            COALESCE(SUM(total_amount), 0) as total_billed,
+            COALESCE(SUM(paid_amount), 0) as total_paid,
+            COALESCE(SUM(total_amount - paid_amount), 0) as outstanding
+          FROM invoices
+          WHERE created_at >= ${startISO} AND created_at <= ${endISO}
+          GROUP BY status
+          ORDER BY total_billed DESC`
+    ) as Promise<any[]>,
 
-  // 6. Top selling products (bar chart)
-  const topProducts = await db.execute(
-    sql`SELECT
-          p.name as product_name,
-          p.sku,
-          COALESCE(SUM(oi.quantity), 0) as units_sold,
-          COALESCE(SUM(oi.total_amount), 0) as revenue
-        FROM order_items oi
-        INNER JOIN products p ON oi.product_id = p.id
-        INNER JOIN orders o ON oi.order_id = o.id
-        WHERE o.created_at >= ${start.toISOString()} AND o.created_at <= ${end.toISOString()}
-        GROUP BY p.name, p.sku
-        ORDER BY revenue DESC
-        LIMIT 10`
-  ) as any[];
+    // 5. Top customers by revenue
+    db.execute(
+      sql`SELECT
+            cu.name as customer_name,
+            COUNT(o.id) as order_count,
+            COALESCE(SUM(o.total_amount), 0) as revenue
+          FROM orders o
+          INNER JOIN customers cu ON o.customer_id = cu.id
+          WHERE o.created_at >= ${startISO} AND o.created_at <= ${endISO}
+          GROUP BY cu.name
+          ORDER BY revenue DESC
+          LIMIT 10`
+    ) as Promise<any[]>,
 
-  // 7. Low stock count
-  const [{ lowStockCount }] = await db.execute(
-    sql`SELECT COUNT(*) as "lowStockCount"
-        FROM inventory i
-        INNER JOIN products p ON i.product_id = p.id
-        WHERE i.quantity <= COALESCE(p.reorder_point, p.min_stock_level, 0)
-          AND COALESCE(p.reorder_point, p.min_stock_level, 0) > 0`
-  ) as any;
+    // 6. Top selling products
+    db.execute(
+      sql`SELECT
+            p.name as product_name,
+            p.sku,
+            COALESCE(SUM(oi.quantity), 0) as units_sold,
+            COALESCE(SUM(oi.total_amount), 0) as revenue
+          FROM order_items oi
+          INNER JOIN products p ON oi.product_id = p.id
+          INNER JOIN orders o ON oi.order_id = o.id
+          WHERE o.created_at >= ${startISO} AND o.created_at <= ${endISO}
+          GROUP BY p.name, p.sku
+          ORDER BY revenue DESC
+          LIMIT 10`
+    ) as Promise<any[]>,
 
-  // 8. Payment collection (for the period)
-  const paymentStats = await db.execute(
-    sql`SELECT
-          COALESCE(SUM(CASE WHEN i.status = 'paid' THEN i.total_amount ELSE 0 END), 0) as fully_paid,
-          COALESCE(SUM(CASE WHEN i.status = 'partial' THEN i.paid_amount ELSE 0 END), 0) as partially_paid,
-          COALESCE(SUM(CASE WHEN i.status IN ('sent', 'draft', 'overdue') THEN i.total_amount - i.paid_amount ELSE 0 END), 0) as unpaid
-        FROM invoices i
-        WHERE i.created_at >= ${start.toISOString()} AND i.created_at <= ${end.toISOString()}`
-  ) as any[];
+    // 7. Low stock count
+    db.execute(
+      sql`SELECT COUNT(*) as "lowStockCount"
+          FROM inventory i
+          INNER JOIN products p ON i.product_id = p.id
+          WHERE i.quantity <= COALESCE(p.reorder_point, p.min_stock_level, 0)
+            AND COALESCE(p.reorder_point, p.min_stock_level, 0) > 0`
+    ) as Promise<any>,
+
+    // 8. Payment collection
+    db.execute(
+      sql`SELECT
+            COALESCE(SUM(CASE WHEN i.status = 'paid' THEN i.total_amount ELSE 0 END), 0) as fully_paid,
+            COALESCE(SUM(CASE WHEN i.status = 'partial' THEN i.paid_amount ELSE 0 END), 0) as partially_paid,
+            COALESCE(SUM(CASE WHEN i.status IN ('sent', 'draft', 'overdue') THEN i.total_amount - i.paid_amount ELSE 0 END), 0) as unpaid
+          FROM invoices i
+          WHERE i.created_at >= ${startISO} AND i.created_at <= ${endISO}`
+    ) as Promise<any[]>,
+  ]);
+
+  const lowStockCount = (lowStockResult as any)[0]?.lowStockCount ?? 0;
 
   // Fill missing dates in salesByDay so the chart draws a continuous line
   const salesByDayMap = new Map(salesByDay.map((r: any) => [r.date, r]));

@@ -68,6 +68,10 @@ export const products = pgTable(
     taxRate: numeric("tax_rate", { precision: 5, scale: 4 }),
     barcode: varchar("barcode", { length: 100 }),
     imageUrl: text("image_url"),
+    /** Whether this item is consumed during operations (water, snacks, fuel) */
+    isConsumable: boolean("is_consumable").notNull().default(false),
+    /** Whether this item is sold to customers (merchandise, retail) */
+    isSellable: boolean("is_sellable").notNull().default(true),
     isActive: boolean("is_active").notNull().default(true),
     minStockLevel: integer("min_stock_level").default(0),
     maxStockLevel: integer("max_stock_level"),
@@ -228,7 +232,7 @@ export const orders = pgTable(
   ]
 );
 
-/** Order Items — line items within an order */
+/** Order Items — polymorphic line items (stock products OR services) */
 export const orderItems = pgTable(
   "order_items",
   {
@@ -236,9 +240,15 @@ export const orderItems = pgTable(
     orderId: uuid("order_id")
       .notNull()
       .references(() => orders.id, { onDelete: "cascade" }),
+    /** Line item type: 'stock' for physical products, 'service' for bookable services */
+    itemType: varchar("item_type", { length: 20 }).notNull().default("stock"),
+    /** FK to products — set when itemType = 'stock' */
     productId: uuid("product_id")
-      .notNull()
       .references(() => products.id),
+    /** FK to services — set when itemType = 'service' */
+    serviceId: uuid("service_id"),
+    /** Human-readable description (auto-filled from product/service name) */
+    description: text("description"),
     quantity: integer("quantity").notNull(),
     unitPrice: numeric("unit_price", { precision: 12, scale: 2 }).notNull(),
     taxRate: numeric("tax_rate", { precision: 5, scale: 4 })
@@ -251,12 +261,18 @@ export const orderItems = pgTable(
       .notNull()
       .default("0"),
     totalAmount: numeric("total_amount", { precision: 12, scale: 2 }).notNull(),
+    /** Booking start date (for service line items) */
+    startDate: timestamp("start_date", { withTimezone: true }),
+    /** Booking end date (for service line items) */
+    endDate: timestamp("end_date", { withTimezone: true }),
     metadata: metadata(),
     ...timestamps(),
   },
   (t) => [
     index("idx_order_items_order").on(t.orderId),
     index("idx_order_items_product").on(t.productId),
+    index("idx_order_items_service").on(t.serviceId),
+    index("idx_order_items_type").on(t.itemType),
   ]
 );
 
@@ -428,6 +444,185 @@ export const taxRules = pgTable("tax_rules", {
 });
 
 // ============================================================
+// Asset Tables — long-term reusable equipment & resources
+// ============================================================
+
+/** Asset Categories — groups assets (vehicles, camping gear, electronics, etc.) */
+export const assetCategories = pgTable("asset_categories", {
+  id: id(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  metadata: metadata(),
+  ...timestamps(),
+});
+
+/** Assets — durable, reusable equipment assigned to operations */
+export const assets = pgTable(
+  "assets",
+  {
+    id: id(),
+    /** Unique internal code (e.g., VEH-001, TENT-012) */
+    assetCode: varchar("asset_code", { length: 50 }).notNull().unique(),
+    name: varchar("name", { length: 255 }).notNull(),
+    categoryId: uuid("category_id")
+      .notNull()
+      .references(() => assetCategories.id),
+    purchaseDate: timestamp("purchase_date", { withTimezone: true }),
+    purchaseCost: numeric("purchase_cost", { precision: 12, scale: 2 }),
+    /** Estimated current value (for depreciation tracking) */
+    currentValue: numeric("current_value", { precision: 12, scale: 2 }),
+    /** Condition: excellent | good | fair | needs_repair | decommissioned */
+    conditionStatus: varchar("condition_status", { length: 30 })
+      .notNull()
+      .default("good"),
+    /** Physical location or warehouse */
+    location: varchar("location", { length: 255 }),
+    /** Staff member currently responsible for this asset */
+    assignedToStaffId: uuid("assigned_to_staff_id").references(() => users.id),
+    notes: text("notes"),
+    isActive: boolean("is_active").notNull().default(true),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_assets_category").on(t.categoryId),
+    index("idx_assets_condition").on(t.conditionStatus),
+    index("idx_assets_staff").on(t.assignedToStaffId),
+    index("idx_assets_active").on(t.isActive),
+  ]
+);
+
+// ============================================================
+// Service Tables — bookable offerings & scheduling
+// ============================================================
+
+/** Service Categories — groups services (transport, tours, activities, etc.) */
+export const serviceCategories = pgTable("service_categories", {
+  id: id(),
+  name: varchar("name", { length: 255 }).notNull(),
+  /** Example services in this category for reference */
+  examples: text("examples"),
+  metadata: metadata(),
+  ...timestamps(),
+});
+
+/** Services — bookable offerings with pricing & capacity */
+export const services = pgTable(
+  "services",
+  {
+    id: id(),
+    /** Unique internal code (e.g., SVC-GD-001) */
+    serviceCode: varchar("service_code", { length: 50 }).notNull().unique(),
+    name: varchar("name", { length: 255 }).notNull(),
+    categoryId: uuid("category_id")
+      .notNull()
+      .references(() => serviceCategories.id),
+    description: text("description"),
+    /** Default price (interpretation depends on pricingModel) */
+    basePrice: numeric("base_price", { precision: 12, scale: 2 }).notNull(),
+    /** How this service is priced: per_person | per_day | fixed | tiered */
+    pricingModel: varchar("pricing_model", { length: 30 })
+      .notNull()
+      .default("fixed"),
+    /** Max concurrent participants / units (null = unlimited) */
+    capacityLimit: integer("capacity_limit"),
+    /** Does this service need asset allocation? (vehicles, tents, etc.) */
+    requiresAsset: boolean("requires_asset").notNull().default(false),
+    /** Does this service need stock allocation? (water, snacks, fuel, etc.) */
+    requiresStock: boolean("requires_stock").notNull().default(false),
+    isActive: boolean("is_active").notNull().default(true),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_services_category").on(t.categoryId),
+    index("idx_services_pricing").on(t.pricingModel),
+    index("idx_services_active").on(t.isActive),
+  ]
+);
+
+// ============================================================
+// Booking Tables — operational scheduling & resource allocation
+// ============================================================
+
+/** Service Bookings — operational scheduling for a service order line */
+export const serviceBookings = pgTable(
+  "service_bookings",
+  {
+    id: id(),
+    /** The order line item this booking fulfils */
+    orderItemId: uuid("order_item_id")
+      .notNull()
+      .references(() => orderItems.id, { onDelete: "cascade" }),
+    serviceDate: timestamp("service_date", { withTimezone: true }).notNull(),
+    startTime: timestamp("start_time", { withTimezone: true }),
+    endTime: timestamp("end_time", { withTimezone: true }),
+    /** Booking status: scheduled | in_progress | completed | cancelled */
+    status: varchar("status", { length: 30 }).notNull().default("scheduled"),
+    /** Guide / operator assigned */
+    assignedGuideId: uuid("assigned_guide_id").references(() => users.id),
+    /** Vehicle or primary asset (convenience FK — detailed allocation in booking_assets) */
+    assignedVehicleId: uuid("assigned_vehicle_id").references(() => assets.id),
+    notes: text("notes"),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_bookings_order_item").on(t.orderItemId),
+    index("idx_bookings_date").on(t.serviceDate),
+    index("idx_bookings_status").on(t.status),
+    index("idx_bookings_guide").on(t.assignedGuideId),
+    index("idx_bookings_vehicle").on(t.assignedVehicleId),
+  ]
+);
+
+/** Booking Assets — which assets are allocated to a booking */
+export const bookingAssets = pgTable(
+  "booking_assets",
+  {
+    id: id(),
+    bookingId: uuid("booking_id")
+      .notNull()
+      .references(() => serviceBookings.id, { onDelete: "cascade" }),
+    assetId: uuid("asset_id")
+      .notNull()
+      .references(() => assets.id),
+    assignedFrom: timestamp("assigned_from", { withTimezone: true }).notNull(),
+    assignedUntil: timestamp("assigned_until", { withTimezone: true }).notNull(),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_booking_assets_booking").on(t.bookingId),
+    index("idx_booking_assets_asset").on(t.assetId),
+    index("idx_booking_assets_range").on(t.assignedFrom, t.assignedUntil),
+  ]
+);
+
+/** Booking Stock Allocations — consumable stock reserved / used for a booking */
+export const bookingStockAllocations = pgTable(
+  "booking_stock_allocations",
+  {
+    id: id(),
+    bookingId: uuid("booking_id")
+      .notNull()
+      .references(() => serviceBookings.id, { onDelete: "cascade" }),
+    /** FK to products (stock item) */
+    stockItemId: uuid("stock_item_id")
+      .notNull()
+      .references(() => products.id),
+    quantityReserved: integer("quantity_reserved").notNull().default(0),
+    quantityUsed: integer("quantity_used").notNull().default(0),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_booking_stock_booking").on(t.bookingId),
+    index("idx_booking_stock_item").on(t.stockItemId),
+  ]
+);
+
+// ============================================================
 // Chat Tables (Phase 8 — Intelligent Business Chatbot)
 // ============================================================
 
@@ -494,6 +689,7 @@ export const productsRelations = relations(products, ({ one, many }) => ({
   inventory: many(inventory),
   inventoryTransactions: many(inventoryTransactions),
   orderItems: many(orderItems),
+  bookingStockAllocations: many(bookingStockAllocations),
 }));
 
 export const warehousesRelations = relations(warehouses, ({ many }) => ({
@@ -549,7 +745,7 @@ export const ordersRelations = relations(orders, ({ one, many }) => ({
   invoices: many(invoices),
 }));
 
-export const orderItemsRelations = relations(orderItems, ({ one }) => ({
+export const orderItemsRelations = relations(orderItems, ({ one, many }) => ({
   order: one(orders, {
     fields: [orderItems.orderId],
     references: [orders.id],
@@ -558,6 +754,11 @@ export const orderItemsRelations = relations(orderItems, ({ one }) => ({
     fields: [orderItems.productId],
     references: [products.id],
   }),
+  service: one(services, {
+    fields: [orderItems.serviceId],
+    references: [services.id],
+  }),
+  serviceBookings: many(serviceBookings),
 }));
 
 export const invoicesRelations = relations(invoices, ({ one, many }) => ({
@@ -583,6 +784,8 @@ export const usersRelations = relations(users, ({ many }) => ({
   auditLogs: many(auditLog),
   notifications: many(notifications),
   chatSessions: many(chatSessions),
+  assignedAssets: many(assets),
+  guidedBookings: many(serviceBookings),
 }));
 
 export const auditLogRelations = relations(auditLog, ({ one }) => ({
@@ -598,6 +801,82 @@ export const notificationsRelations = relations(notifications, ({ one }) => ({
     references: [users.id],
   }),
 }));
+
+// ============================================================
+// Asset & Service Relations
+// ============================================================
+
+export const assetCategoriesRelations = relations(assetCategories, ({ many }) => ({
+  assets: many(assets),
+}));
+
+export const assetsRelations = relations(assets, ({ one, many }) => ({
+  category: one(assetCategories, {
+    fields: [assets.categoryId],
+    references: [assetCategories.id],
+  }),
+  assignedTo: one(users, {
+    fields: [assets.assignedToStaffId],
+    references: [users.id],
+  }),
+  bookingAssets: many(bookingAssets),
+  assignedBookings: many(serviceBookings),
+}));
+
+export const serviceCategoriesRelations = relations(serviceCategories, ({ many }) => ({
+  services: many(services),
+}));
+
+export const servicesRelations = relations(services, ({ one, many }) => ({
+  category: one(serviceCategories, {
+    fields: [services.categoryId],
+    references: [serviceCategories.id],
+  }),
+  orderItems: many(orderItems),
+}));
+
+export const serviceBookingsRelations = relations(serviceBookings, ({ one, many }) => ({
+  orderItem: one(orderItems, {
+    fields: [serviceBookings.orderItemId],
+    references: [orderItems.id],
+  }),
+  assignedGuide: one(users, {
+    fields: [serviceBookings.assignedGuideId],
+    references: [users.id],
+  }),
+  assignedVehicle: one(assets, {
+    fields: [serviceBookings.assignedVehicleId],
+    references: [assets.id],
+  }),
+  allocatedAssets: many(bookingAssets),
+  stockAllocations: many(bookingStockAllocations),
+}));
+
+export const bookingAssetsRelations = relations(bookingAssets, ({ one }) => ({
+  booking: one(serviceBookings, {
+    fields: [bookingAssets.bookingId],
+    references: [serviceBookings.id],
+  }),
+  asset: one(assets, {
+    fields: [bookingAssets.assetId],
+    references: [assets.id],
+  }),
+}));
+
+export const bookingStockAllocationsRelations = relations(bookingStockAllocations, ({ one }) => ({
+  booking: one(serviceBookings, {
+    fields: [bookingStockAllocations.bookingId],
+    references: [serviceBookings.id],
+  }),
+  stockItem: one(products, {
+    fields: [bookingStockAllocations.stockItemId],
+    references: [products.id],
+  }),
+}));
+
+// ============================================================
+// Chat Relations
+// ============================================================
 
 export const chatSessionsRelations = relations(chatSessions, ({ one, many }) => ({
   user: one(users, {

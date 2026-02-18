@@ -89,8 +89,8 @@ IMPORTANT: The database is PostgreSQL (NOT MySQL). You MUST use PostgreSQL synta
 - Type casting: column::text or CAST(column AS text)
 - String agg: STRING_AGG(col, ',') (NOT GROUP_CONCAT)
 - Current date: CURRENT_DATE, CURRENT_TIMESTAMP, NOW()
-Available tables: products, categories, warehouses, inventory, inventory_transactions, customers, orders, order_items, order_statuses, invoices, payments, users, notifications, tax_rules.
-Key columns: products(id, sku, name, price, cost_price, unit, category_id, is_active), orders(id, order_number, customer_id, status_id, total_amount, created_at), order_items(order_id, product_id, quantity, unit_price, total_amount), inventory(product_id, warehouse_id, quantity), customers(id, name, email, phone), invoices(id, invoice_number, total_amount, paid_amount, status).
+Available tables: products, categories, warehouses, inventory, inventory_transactions, customers, orders, order_items, order_statuses, invoices, payments, users, notifications, tax_rules, asset_categories, assets, service_categories, services, service_bookings, booking_assets, booking_stock_allocations.
+Key columns: products(id, sku, name, price, cost_price, unit, category_id, is_active, is_consumable, is_sellable), orders(id, order_number, customer_id, status_id, total_amount, created_at), order_items(order_id, item_type, product_id, service_id, description, quantity, unit_price, total_amount, start_date, end_date), inventory(product_id, warehouse_id, quantity), customers(id, name, email, phone), invoices(id, invoice_number, total_amount, paid_amount, status), assets(id, asset_code, name, category_id, condition_status, location, assigned_to_staff_id, is_active), services(id, service_code, name, category_id, base_price, pricing_model, capacity_limit, requires_asset, requires_stock), service_bookings(id, order_item_id, service_date, start_time, end_time, status, assigned_guide_id, assigned_vehicle_id).
 Always use SELECT only. Use aggregations, JOINs, and GROUP BY as needed.`,
   parameters: z.object({
     query: z.string().describe("SQL SELECT query to execute"),

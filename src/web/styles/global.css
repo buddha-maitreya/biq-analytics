@@ -1121,26 +1121,128 @@ textarea {
   width: 180px;
 }
 
+/* ===== MOBILE HEADER (hidden on desktop) ===== */
+
+.mobile-header {
+  display: none; /* shown via media query */
+  align-items: center;
+  gap: 12px;
+  padding: 0 0 16px;
+  position: sticky;
+  top: 0;
+  z-index: 90;
+}
+.mobile-header-title {
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--color-text);
+}
+.hamburger-btn {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  width: 38px;
+  height: 38px;
+  padding: 8px 7px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.hamburger-btn span {
+  display: block;
+  width: 100%;
+  height: 2px;
+  background: var(--color-text);
+  border-radius: 2px;
+}
+
+/* Sidebar close button (hidden on desktop) */
+.sidebar-close-btn {
+  display: none; /* shown via media query */
+  position: absolute;
+  top: 16px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+}
+.sidebar-close-btn:hover {
+  background: rgba(255,255,255,0.2);
+}
+
+/* Sidebar overlay backdrop (hidden on desktop) */
+.sidebar-overlay {
+  display: none; /* shown via media query */
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 999;
+}
+
 /* ===== RESPONSIVE ===== */
 
+/* ── Tablet & Small Desktop (≤ 768px) ── */
 @media (max-width: 768px) {
-  .sidebar {
-    width: 60px;
+  /* Mobile header visible */
+  .mobile-header {
+    display: flex;
   }
 
+  /* Sidebar becomes off-canvas drawer */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    width: 280px;
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+  }
+  .sidebar.sidebar-open {
+    transform: translateX(0);
+  }
+
+  /* Show overlay when open */
+  .sidebar-overlay {
+    display: block;
+  }
+
+  /* Show close button */
+  .sidebar-close-btn {
+    display: flex;
+  }
+
+  /* Show labels / footer inside drawer (undo old 60px collapse) */
   .nav-label,
   .sidebar-title,
   .sidebar-footer {
-    display: none;
+    display: revert;
+  }
+  .sidebar-header {
+    position: relative;
   }
 
   .nav-item {
-    justify-content: center;
-    padding: 12px;
+    padding: 12px 14px;
+    font-size: 15px;
+    min-height: 44px; /* touch target */
   }
 
   .main-content {
     padding: 16px;
+    max-height: none;
+    overflow-y: visible;
   }
 
   .stat-grid {
@@ -1161,6 +1263,212 @@ textarea {
 
   .suggestion-grid {
     grid-template-columns: 1fr;
+  }
+
+  /* Admin tabs → horizontal scroll */
+  .admin-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+    scrollbar-width: none;
+  }
+  .admin-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .tab-btn {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* Settings tabs → wrap */
+  .settings-tabs {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+    scrollbar-width: none;
+  }
+  .settings-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .settings-tab {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  /* Buttons — larger touch targets */
+  .btn {
+    min-height: 40px;
+    padding: 10px 16px;
+  }
+
+  /* Inputs/selects — larger for touch */
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="search"],
+  input[type="date"],
+  textarea,
+  select {
+    min-height: 42px;
+    font-size: 16px; /* prevents iOS zoom */
+  }
+
+  /* Data tables — horizontal scroll for all containers */
+  .table-card,
+  .chart-card,
+  .warehouse-categories,
+  .card {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .data-table {
+    min-width: 600px; /* force table to be scrollable */
+  }
+
+  /* Filter bar wraps */
+  .filter-bar {
+    flex-wrap: wrap;
+  }
+  .filter-bar select {
+    width: 100%;
+  }
+
+  /* Page header actions wrap */
+  .page-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* Modals — full width on mobile */
+  .modal-content,
+  .rbac-modal {
+    max-width: 100%;
+    margin: 10px;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+}
+
+/* ── Phone (≤ 480px) ── */
+@media (max-width: 480px) {
+  .main-content {
+    padding: 12px;
+  }
+
+  .stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .summary-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-row {
+    grid-template-columns: 1fr;
+  }
+
+  .report-type-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Dashboard date filter stacks */
+  .dashboard-date-filter {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .dashboard-date-filter .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* KB quick actions: 2 → 1 col */
+  .kb-quick-actions {
+    grid-template-columns: 1fr;
+  }
+
+  /* Form grids single column */
+  .form-grid.cols-4 {
+    grid-template-columns: 1fr;
+  }
+
+  /* Email layout */
+  .email-layout {
+    grid-template-columns: 1fr;
+  }
+  .email-list {
+    max-height: 300px;
+  }
+
+  /* POS layout */
+  .pos-layout {
+    grid-template-columns: 1fr;
+  }
+  .pos-grid {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  }
+  .pos-cart {
+    border-left: none;
+    border-top: 1px solid var(--color-border);
+  }
+
+  /* Invoice checker stacks */
+  .checker-layout {
+    grid-template-columns: 1fr;
+  }
+  .checker-form {
+    flex-direction: column;
+  }
+
+  /* Order entry stacks */
+  .order-entry-layout {
+    grid-template-columns: 1fr;
+  }
+
+  /* Payment method grid */
+  .payment-method-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  /* Pie chart wraps */
+  .pie-chart-container {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  /* Login card padding */
+  .login-header {
+    padding: 28px 20px 20px;
+  }
+  .login-form {
+    padding: 24px 20px 16px;
+  }
+  .login-title {
+    font-size: 20px;
+  }
+
+  /* About page */
+  .about-hero-title {
+    font-size: 22px;
+  }
+  .about-stats-grid {
+    grid-template-columns: 1fr;
+  }
+  .about-capabilities-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Assistant chat */
+  .chat-messages {
+    padding: 12px;
+  }
+  .chat-input-row {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .chat-input-row .btn {
+    width: 100%;
   }
 }
 

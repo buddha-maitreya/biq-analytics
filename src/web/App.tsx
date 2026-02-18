@@ -20,11 +20,30 @@ import type { Page, AppConfig, AuthUser } from "./types";
 
 export type { Page, AppConfig, AuthUser };
 
+/** Page title labels for mobile header */
+const PAGE_TITLES: Record<Page, string> = {
+  dashboard: "Dashboard",
+  products: "Products",
+  orders: "Orders",
+  customers: "Customers",
+  inventory: "Inventory",
+  invoices: "Invoices",
+  assistant: "AI Assistant",
+  reports: "Reports",
+  pos: "New Order",
+  invoice_checker: "Invoice Checker",
+  admin: "Admin",
+  settings: "Settings",
+  email: "Email",
+  about: "About",
+};
+
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
   const [configVersion, setConfigVersion] = useState(0);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const { data: appConfig, refetch } = useAPI<AppConfig>("GET /api/config");
 
   // Check existing session on mount
@@ -146,8 +165,25 @@ export default function App() {
 
   return (
     <div className="app-layout">
-      <Sidebar config={cfg} currentPage={page} onNavigate={setPage} user={user} onLogout={handleLogout} />
-      <main className="main-content">{renderPage()}</main>
+      <Sidebar
+        config={cfg}
+        currentPage={page}
+        onNavigate={setPage}
+        user={user}
+        onLogout={handleLogout}
+        mobileOpen={sidebarOpen}
+        onCloseMobile={() => setSidebarOpen(false)}
+      />
+      <main className="main-content">
+        {/* Mobile top bar — only visible on small screens via CSS */}
+        <div className="mobile-header">
+          <button className="hamburger-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
+            <span /><span /><span />
+          </button>
+          <span className="mobile-header-title">{PAGE_TITLES[page] || "Business IQ"}</span>
+        </div>
+        {renderPage()}
+      </main>
     </div>
   );
 }

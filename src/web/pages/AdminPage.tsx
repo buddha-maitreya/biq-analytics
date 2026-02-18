@@ -3,9 +3,10 @@ import type { AppConfig } from "../types";
 
 interface AdminPageProps {
   config: AppConfig;
+  onSaved?: () => void;
 }
 
-type AdminTab = "users" | "statuses" | "tax" | "documents";
+type AdminTab = "users" | "statuses" | "tax" | "knowledge" | "settings";
 
 /* ---------- Sub-types ---------- */
 interface RBACConfig {
@@ -61,6 +62,32 @@ interface KBDocument {
   chunkCount: number;
 }
 
+// Payment config defaults (for Settings tab)
+const PAYMENT_DEFAULTS: Record<string, string> = {
+  paystackEnabled: "false",
+  paystackPublicKey: "",
+  paystackSecretKey: "",
+  paystackCurrency: "KES",
+  mpesaEnabled: "false",
+  mpesaEnvironment: "sandbox",
+  mpesaConsumerKey: "",
+  mpesaConsumerSecret: "",
+  mpesaShortcode: "",
+  mpesaPasskey: "",
+  mpesaPaymentType: "till",
+  mpesaTillNumber: "",
+  mpesaPaybillNumber: "",
+  mpesaAccountReference: "",
+  mpesaCallbackUrl: "",
+  kraEnabled: "false",
+  kraEnvironment: "sandbox",
+  kraClientId: "",
+  kraClientSecret: "",
+  kraBusinessPin: "",
+  kraEtimsDeviceSerial: "",
+  kraBranchId: "00",
+};
+
 const ROLE_COLORS: Record<string, string> = {
   super_admin: "#7c3aed",
   admin: "#2563eb",
@@ -91,21 +118,22 @@ const PERM_LABELS: Record<string, { icon: string; label: string; desc: string }>
 };
 
 /* =============================== */
-export default function AdminPage({ config }: AdminPageProps) {
+export default function AdminPage({ config, onSaved }: AdminPageProps) {
   const [tab, setTab] = useState<AdminTab>("users");
 
   const tabs: { key: AdminTab; label: string; icon: string }[] = [
     { key: "users", label: "Users & Access", icon: "🔐" },
     { key: "statuses", label: `${config.labels.order} Statuses`, icon: "🏷️" },
     { key: "tax", label: "Tax Rules", icon: "💲" },
-    { key: "documents", label: "Knowledge Base", icon: "📄" },
+    { key: "knowledge", label: "Knowledge Base", icon: "🧠" },
+    { key: "settings", label: "Settings", icon: "🎨" },
   ];
 
   return (
     <div className="page admin-page">
       <div className="page-header">
         <h2>⚙️ Admin Console</h2>
-        <span className="text-muted">Role-based access control, configuration & documents</span>
+        <span className="text-muted">System administration, configuration & intelligence</span>
       </div>
 
       <div className="admin-tabs">
@@ -124,7 +152,8 @@ export default function AdminPage({ config }: AdminPageProps) {
         {tab === "users" && <UsersAccessTab />}
         {tab === "statuses" && <OrderStatusesTab config={config} />}
         {tab === "tax" && <TaxRulesTab />}
-        {tab === "documents" && <DocumentsTab />}
+        {tab === "knowledge" && <KnowledgeBaseTab />}
+        {tab === "settings" && <SettingsTab config={config} onSaved={onSaved} />}
       </div>
     </div>
   );
@@ -750,33 +779,71 @@ function TaxRulesTab() {
   );
 }
 
-/* ===== DOCUMENTS / KNOWLEDGE BASE TAB ===== */
-function DocumentsTab() {
+/* ===== KNOWLEDGE BASE TAB (Enhanced) ===== */
+function KnowledgeBaseTab() {
   const [docs, setDocs] = useState<KBDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [queryText, setQueryText] = useState("");
-  const [queryResult, setQueryResult] = useState<string | null>(null);
-  const [querying, setQuerying] = useState(false);
+  const [activeAction, setActiveAction] = useState<"upload" | "url" | "text" | null>(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  // Upload form
   const [uploadForm, setUploadForm] = useState({
     title: "",
     filename: "",
     category: "general",
     content: "",
+    url: "",
   });
+
+  // KB Settings
+  const [kbSettings, setKbSettings] = useState({
+    elevenLabsAgentId: "",
+    elevenLabsApiKey: "",
+    chunkSize: "512",
+    topKResults: "5",
+  });
+  const [savingKb, setSavingKb] = useState(false);
+
+  // Query
+  const [queryText, setQueryText] = useState("");
+  const [queryResult, setQueryResult] = useState<string | null>(null);
+  const [querying, setQuerying] = useState(false);
 
   const load = async () => {
     setLoading(true);
-    const res = await fetch("/api/admin/documents");
-    const data = await res.json();
-    setDocs(data.data ?? []);
+    const [docsRes, settingsRes] = await Promise.all([
+      fetch("/api/admin/documents"),
+      fetch("/api/settings"),
+    ]);
+    const docsData = await docsRes.json();
+    setDocs(docsData.data ?? []);
+    try {
+      const settingsData = await settingsRes.json();
+      if (settingsData.data) {
+        setKbSettings((prev) => ({
+          ...prev,
+          elevenLabsAgentId: settingsData.data.elevenLabsAgentId || "",
+          elevenLabsApiKey: settingsData.data.elevenLabsApiKey || "",
+          chunkSize: settingsData.data.kbChunkSize || "512",
+          topKResults: settingsData.data.kbTopK || "5",
+        }));
+      }
+    } catch { /* use defaults */ }
     setLoading(false);
   };
 
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { load(); }, []);
+
+  const flash = (type: "success" | "error", text: string) => {
+    setMessage({ type, text });
+    setTimeout(() => setMessage(null), 4000);
+  };
+
+  const resetForm = () => {
+    setUploadForm({ title: "", filename: "", category: "general", content: "", url: "" });
+    setActiveAction(null);
+  };
 
   const upload = async () => {
     if (!uploadForm.content.trim() || !uploadForm.title.trim()) return;
@@ -793,10 +860,37 @@ function DocumentsTab() {
         }),
       });
       if (!res.ok) throw new Error("Upload failed");
-      setUploadForm({ title: "", filename: "", category: "general", content: "" });
+      flash("success", `"${uploadForm.title}" uploaded and indexed successfully.`);
+      resetForm();
       load();
     } catch {
-      alert("Failed to upload document");
+      flash("error", "Failed to upload document.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const addUrl = async () => {
+    if (!uploadForm.url.trim() || !uploadForm.title.trim()) return;
+    setUploading(true);
+    try {
+      const res = await fetch("/api/admin/documents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: uploadForm.title,
+          filename: uploadForm.url.replace(/[^a-zA-Z0-9.-]/g, "_").slice(0, 60) + ".url",
+          category: uploadForm.category,
+          content: `[URL Source: ${uploadForm.url}]\n\nContent fetched from URL.`,
+          sourceUrl: uploadForm.url,
+        }),
+      });
+      if (!res.ok) throw new Error("URL add failed");
+      flash("success", "URL added and indexed.");
+      resetForm();
+      load();
+    } catch {
+      flash("error", "Failed to add URL.");
     } finally {
       setUploading(false);
     }
@@ -814,10 +908,43 @@ function DocumentsTab() {
     }));
   };
 
+  const handleReindex = async () => {
+    if (!confirm("Re-index all documents? This may take a moment.")) return;
+    flash("success", "Re-indexing started…");
+    try {
+      await fetch("/api/admin/documents/reindex", { method: "POST" });
+      flash("success", "Re-indexing complete.");
+      load();
+    } catch {
+      flash("error", "Re-index failed.");
+    }
+  };
+
   const remove = async (filename: string) => {
     if (!confirm(`Remove "${filename}" from knowledge base?`)) return;
     await fetch(`/api/admin/documents/${encodeURIComponent(filename)}`, { method: "DELETE" });
     load();
+  };
+
+  const saveKbSettings = async () => {
+    setSavingKb(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          elevenLabsAgentId: kbSettings.elevenLabsAgentId,
+          elevenLabsApiKey: kbSettings.elevenLabsApiKey,
+          kbChunkSize: kbSettings.chunkSize,
+          kbTopK: kbSettings.topKResults,
+        }),
+      });
+      flash(res.ok ? "success" : "error", res.ok ? "KB settings saved." : "Failed to save.");
+    } catch {
+      flash("error", "Network error saving settings.");
+    } finally {
+      setSavingKb(false);
+    }
   };
 
   const query = async () => {
@@ -839,99 +966,163 @@ function DocumentsTab() {
     }
   };
 
+  if (loading) return <div className="loading-state"><div className="spinner" />Loading knowledge base…</div>;
+
   return (
     <div>
-      <div className="section-header">
-        <h3>📄 Knowledge Base Documents</h3>
-        <span className="text-muted">Upload documents for the RAG-powered AI assistant</span>
+      {message && (
+        <div className={`alert alert-${message.type}`} style={{ marginBottom: 16 }}>
+          {message.type === "success" ? "✅" : "❌"} {message.text}
+        </div>
+      )}
+
+      {/* ── Quick Actions ── */}
+      <div className="kb-quick-actions">
+        <button
+          className={`kb-action-card ${activeAction === "upload" ? "kb-action-active" : ""}`}
+          onClick={() => setActiveAction(activeAction === "upload" ? null : "upload")}
+        >
+          <span className="kb-action-icon">📤</span>
+          <span className="kb-action-title">Upload Document</span>
+          <span className="kb-action-desc">PDF, TXT, MD, CSV files</span>
+        </button>
+        <button
+          className={`kb-action-card ${activeAction === "url" ? "kb-action-active" : ""}`}
+          onClick={() => setActiveAction(activeAction === "url" ? null : "url")}
+        >
+          <span className="kb-action-icon">🔗</span>
+          <span className="kb-action-title">Add URL</span>
+          <span className="kb-action-desc">Index a webpage</span>
+        </button>
+        <button
+          className={`kb-action-card ${activeAction === "text" ? "kb-action-active" : ""}`}
+          onClick={() => setActiveAction(activeAction === "text" ? null : "text")}
+        >
+          <span className="kb-action-icon">📝</span>
+          <span className="kb-action-title">Add Text Content</span>
+          <span className="kb-action-desc">Paste raw text</span>
+        </button>
+        <button className="kb-action-card" onClick={handleReindex}>
+          <span className="kb-action-icon">🔄</span>
+          <span className="kb-action-title">Re-index All</span>
+          <span className="kb-action-desc">Rebuild search index</span>
+        </button>
       </div>
 
-      {/* Upload section */}
-      <div className="card upload-section">
-        <h4>Upload Document</h4>
-        <div className="form-grid cols-2">
-          <label>
-            Title
-            <input
-              value={uploadForm.title}
-              onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
-              placeholder="Document title"
-            />
-          </label>
-          <label>
-            Category
-            <select
-              value={uploadForm.category}
-              onChange={(e) => setUploadForm({ ...uploadForm, category: e.target.value })}
+      {/* ── Action Form ── */}
+      {activeAction && (
+        <div className="card kb-form-card">
+          <h4 style={{ marginBottom: 12 }}>
+            {activeAction === "upload" && "📤 Upload Document"}
+            {activeAction === "url" && "🔗 Add URL Source"}
+            {activeAction === "text" && "📝 Add Text Content"}
+          </h4>
+          <div className="form-grid cols-2">
+            <label>
+              <span className="form-label">Title</span>
+              <input
+                value={uploadForm.title}
+                onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
+                placeholder="Document title"
+              />
+            </label>
+            <label>
+              <span className="form-label">Category</span>
+              <select
+                value={uploadForm.category}
+                onChange={(e) => setUploadForm({ ...uploadForm, category: e.target.value })}
+              >
+                <option value="general">General</option>
+                <option value="policy">Policies</option>
+                <option value="procedure">Procedures</option>
+                <option value="product-info">Product Information</option>
+                <option value="training">Training Material</option>
+                <option value="legal">Legal / Compliance</option>
+                <option value="faq">FAQ</option>
+              </select>
+            </label>
+          </div>
+
+          {activeAction === "upload" && (
+            <>
+              <label style={{ marginTop: 12 }}>
+                <span className="form-label">Select File</span>
+                <input type="file" accept=".txt,.md,.csv,.json,.xml,.html,.pdf,.doc,.docx" onChange={handleFileSelect} />
+              </label>
+              {uploadForm.content && (
+                <p className="form-hint" style={{ marginTop: 4 }}>✅ {uploadForm.filename} loaded — {uploadForm.content.length.toLocaleString()} characters</p>
+              )}
+            </>
+          )}
+
+          {activeAction === "url" && (
+            <label style={{ marginTop: 12 }}>
+              <span className="form-label">URL</span>
+              <input
+                type="url"
+                value={uploadForm.url}
+                onChange={(e) => setUploadForm({ ...uploadForm, url: e.target.value })}
+                placeholder="https://example.com/page"
+              />
+            </label>
+          )}
+
+          {activeAction === "text" && (
+            <label style={{ marginTop: 12 }}>
+              <span className="form-label">Content</span>
+              <textarea
+                rows={5}
+                value={uploadForm.content}
+                onChange={(e) => setUploadForm({ ...uploadForm, content: e.target.value })}
+                placeholder="Paste document text here…"
+              />
+            </label>
+          )}
+
+          <div className="form-actions" style={{ marginTop: 12 }}>
+            <button
+              className="btn btn-primary"
+              onClick={activeAction === "url" ? addUrl : upload}
+              disabled={uploading || (!uploadForm.title.trim()) || (activeAction === "url" ? !uploadForm.url.trim() : !uploadForm.content.trim())}
             >
-              <option value="general">General</option>
-              <option value="policy">Policies</option>
-              <option value="procedure">Procedures</option>
-              <option value="product-info">Product Information</option>
-              <option value="training">Training Material</option>
-              <option value="legal">Legal / Compliance</option>
-              <option value="faq">FAQ</option>
-            </select>
-          </label>
+              {uploading ? "Processing…" : activeAction === "url" ? "Add & Index" : "Upload & Index"}
+            </button>
+            <button className="btn btn-secondary" onClick={resetForm}>Cancel</button>
+          </div>
         </div>
+      )}
 
-        <label>
-          File (txt, md, csv)
-          <input type="file" accept=".txt,.md,.csv,.json,.xml,.html" onChange={handleFileSelect} />
-        </label>
-
-        <label>
-          Or paste content directly
-          <textarea
-            rows={6}
-            value={uploadForm.content}
-            onChange={(e) => setUploadForm({ ...uploadForm, content: e.target.value })}
-            placeholder="Paste document text here..."
-          />
-        </label>
-
-        <div className="form-actions">
-          <button
-            className="btn btn-primary"
-            onClick={upload}
-            disabled={!uploadForm.content.trim() || !uploadForm.title.trim() || uploading}
-          >
-            {uploading ? "Uploading & Indexing..." : "Upload & Index"}
-          </button>
+      {/* ── Indexed Documents ── */}
+      <div className="card" style={{ marginTop: 16 }}>
+        <div className="section-header" style={{ marginBottom: 12 }}>
+          <h4>📚 Indexed Documents</h4>
+          <span className="badge">{docs.length} document{docs.length !== 1 ? "s" : ""}</span>
         </div>
-      </div>
-
-      {/* Documents list */}
-      <div className="card">
-        <h4>Indexed Documents</h4>
-        {loading ? (
-          <p>Loading…</p>
-        ) : docs.length === 0 ? (
-          <p className="text-muted">No documents uploaded yet. Upload documents above to enable RAG-powered Q&A.</p>
+        {docs.length === 0 ? (
+          <p className="text-muted">No documents yet. Use Quick Actions above to add content to your knowledge base.</p>
         ) : (
           <table className="data-table">
             <thead>
               <tr>
                 <th>Title</th>
-                <th>Filename</th>
                 <th>Category</th>
                 <th>Chunks</th>
                 <th>Uploaded</th>
-                <th>Actions</th>
+                <th style={{ textAlign: "right" }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {docs.map((d) => (
                 <tr key={d.filename}>
-                  <td>{d.title}</td>
-                  <td className="text-mono">{d.filename}</td>
+                  <td>
+                    <div className="cell-main">{d.title}</div>
+                    <div className="cell-sub">{d.filename}</div>
+                  </td>
                   <td><span className="category-badge">{d.category}</span></td>
                   <td>{d.chunkCount}</td>
                   <td>{new Date(d.uploadedAt).toLocaleDateString()}</td>
-                  <td>
-                    <button className="btn btn-xs btn-danger" onClick={() => remove(d.filename)}>
-                      Remove
-                    </button>
+                  <td style={{ textAlign: "right" }}>
+                    <button className="btn btn-xs btn-danger" onClick={() => remove(d.filename)}>Remove</button>
                   </td>
                 </tr>
               ))}
@@ -940,27 +1131,399 @@ function DocumentsTab() {
         )}
       </div>
 
-      {/* Query section */}
-      <div className="card query-section">
-        <h4>🔍 Test Knowledge Base Query</h4>
+      {/* ── KB Settings ── */}
+      <div className="card" style={{ marginTop: 16 }}>
+        <h4 style={{ marginBottom: 16 }}>⚙️ Knowledge Base Settings</h4>
+        <div className="kb-settings-grid">
+          {/* ElevenLabs Integration */}
+          <div className="kb-settings-group">
+            <h5>🎙️ ElevenLabs Integration</h5>
+            <p className="text-muted" style={{ fontSize: "0.8rem", marginBottom: 12 }}>Connect your ElevenLabs conversational AI agent</p>
+            <label>
+              <span className="form-label">Agent ID</span>
+              <input
+                type="text"
+                value={kbSettings.elevenLabsAgentId}
+                onChange={(e) => setKbSettings({ ...kbSettings, elevenLabsAgentId: e.target.value })}
+                placeholder="agent_xxxxxxxx"
+              />
+            </label>
+            <label style={{ marginTop: 8 }}>
+              <span className="form-label">API Key</span>
+              <input
+                type="password"
+                value={kbSettings.elevenLabsApiKey}
+                onChange={(e) => setKbSettings({ ...kbSettings, elevenLabsApiKey: e.target.value })}
+                placeholder="xi-api-key-xxxxxxxx"
+              />
+            </label>
+          </div>
+
+          {/* Retrieval Settings */}
+          <div className="kb-settings-group">
+            <h5>🔍 Retrieval Settings</h5>
+            <p className="text-muted" style={{ fontSize: "0.8rem", marginBottom: 12 }}>Fine-tune how documents are chunked and retrieved</p>
+            <label>
+              <span className="form-label">Chunk Size (tokens)</span>
+              <input
+                type="number"
+                value={kbSettings.chunkSize}
+                onChange={(e) => setKbSettings({ ...kbSettings, chunkSize: e.target.value })}
+                min={128}
+                max={4096}
+                step={128}
+              />
+              <span className="form-hint">Recommended: 512. Larger chunks = more context, smaller = more precise.</span>
+            </label>
+            <label style={{ marginTop: 8 }}>
+              <span className="form-label">Top K Results</span>
+              <input
+                type="number"
+                value={kbSettings.topKResults}
+                onChange={(e) => setKbSettings({ ...kbSettings, topKResults: e.target.value })}
+                min={1}
+                max={20}
+              />
+              <span className="form-hint">Number of document chunks retrieved per query (default: 5).</span>
+            </label>
+          </div>
+        </div>
+        <div className="form-actions" style={{ marginTop: 16 }}>
+          <button className="btn btn-primary" onClick={saveKbSettings} disabled={savingKb}>
+            {savingKb ? "Saving…" : "💾 Save KB Settings"}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Query Test ── */}
+      <div className="card" style={{ marginTop: 16 }}>
+        <h4>🔍 Test Knowledge Base</h4>
+        <p className="text-muted" style={{ fontSize: "0.8rem", marginBottom: 12 }}>Ask a question to test your indexed documents</p>
         <div className="query-input">
           <input
             type="text"
             value={queryText}
             onChange={(e) => setQueryText(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && query()}
-            placeholder="Ask a question about your uploaded documents..."
+            placeholder="Ask a question about your documents…"
           />
           <button className="btn btn-primary" onClick={query} disabled={querying || !queryText.trim()}>
-            {querying ? "Searching..." : "Query"}
+            {querying ? "Searching…" : "Query"}
           </button>
         </div>
-
         {queryResult && (
           <div className="query-result">
             <p>{queryResult}</p>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ===== SETTINGS TAB (merged from SettingsPage) ===== */
+function SettingsTab({ config, onSaved }: { config: AppConfig; onSaved?: () => void }) {
+  const [settings, setSettings] = useState<Record<string, string>>({
+    businessName: "",
+    businessLogoUrl: "",
+    businessTagline: "",
+    primaryColor: "#3b82f6",
+    ...PAYMENT_DEFAULTS,
+  });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [section, setSection] = useState<"business" | "payments" | "tax">("business");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/settings");
+        const json = await res.json();
+        if (json.data) {
+          setSettings((prev) => ({
+            ...prev,
+            businessName: json.data.businessName || "",
+            businessLogoUrl: json.data.businessLogoUrl || "",
+            businessTagline: json.data.businessTagline || "",
+            primaryColor: json.data.primaryColor || "#3b82f6",
+            ...Object.fromEntries(
+              Object.keys(PAYMENT_DEFAULTS).map((k) => [k, json.data[k] ?? PAYMENT_DEFAULTS[k]])
+            ),
+          }));
+        }
+      } catch { /* use defaults */ }
+      setLoading(false);
+    })();
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+      });
+      if (res.ok) {
+        setMessage({ type: "success", text: "Settings saved!" });
+        onSaved?.();
+      } else {
+        setMessage({ type: "error", text: "Failed to save." });
+      }
+    } catch {
+      setMessage({ type: "error", text: "Network error." });
+    }
+    setSaving(false);
+  };
+
+  if (loading) return <div className="loading-state"><div className="spinner" />Loading settings…</div>;
+
+  const upd = (key: string, val: string) => setSettings((p) => ({ ...p, [key]: val }));
+
+  return (
+    <div>
+      {message && (
+        <div className={`alert alert-${message.type}`} style={{ marginBottom: 16 }}>
+          {message.type === "success" ? "✅" : "❌"} {message.text}
+        </div>
+      )}
+
+      {/* Sub-tabs */}
+      <div className="settings-sub-tabs">
+        <button className={`sub-tab ${section === "business" ? "active" : ""}`} onClick={() => setSection("business")}>
+          🏢 Business Identity
+        </button>
+        <button className={`sub-tab ${section === "payments" ? "active" : ""}`} onClick={() => setSection("payments")}>
+          💳 Payment Providers
+        </button>
+        <button className={`sub-tab ${section === "tax" ? "active" : ""}`} onClick={() => setSection("tax")}>
+          🏛️ Tax & Compliance
+        </button>
+      </div>
+
+      {/* ── Business Identity ── */}
+      {section === "business" && (
+        <div className="settings-grid">
+          <div className="card settings-card">
+            <h4>🏢 Business Identity</h4>
+            <p className="text-muted" style={{ marginBottom: 16, fontSize: "0.8rem" }}>Appears in the sidebar and throughout the app.</p>
+            <div className="form-grid" style={{ gap: 12 }}>
+              <label>
+                <span className="form-label">Business Name</span>
+                <input type="text" placeholder="e.g. Safari Adventures Kenya" value={settings.businessName} onChange={(e) => upd("businessName", e.target.value)} />
+              </label>
+              <label>
+                <span className="form-label">Tagline</span>
+                <input type="text" placeholder="e.g. Your Gateway to African Wildlife" value={settings.businessTagline} onChange={(e) => upd("businessTagline", e.target.value)} />
+              </label>
+              <label>
+                <span className="form-label">Logo URL</span>
+                <input type="text" placeholder="https://example.com/logo.png" value={settings.businessLogoUrl} onChange={(e) => upd("businessLogoUrl", e.target.value)} />
+              </label>
+              <label>
+                <span className="form-label">Primary Color</span>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input type="color" value={settings.primaryColor} onChange={(e) => upd("primaryColor", e.target.value)} style={{ width: 48, height: 36, padding: 2, cursor: "pointer" }} />
+                  <input type="text" value={settings.primaryColor} onChange={(e) => upd("primaryColor", e.target.value)} style={{ width: 120 }} />
+                </div>
+              </label>
+            </div>
+
+            {/* Preview */}
+            <div className="settings-preview" style={{ marginTop: 16 }}>
+              <span className="preview-label">Preview</span>
+              <div className="preview-sidebar">
+                {settings.businessLogoUrl && (
+                  <img src={settings.businessLogoUrl} alt="" className="preview-logo" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                )}
+                <div className="preview-text">
+                  <strong>{settings.businessName || "Business IQ"}</strong>
+                  {settings.businessTagline && <span className="preview-tagline">{settings.businessTagline}</span>}
+                </div>
+                <span className="preview-powered">Powered by Business IQ</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="card settings-card">
+            <h4>📋 Environment Configuration</h4>
+            <p className="text-muted" style={{ marginBottom: 16, fontSize: "0.8rem" }}>Set by your administrator via environment variables.</p>
+            <div className="config-table">
+              <div className="config-row"><span className="config-key">Currency</span><span className="config-value">{config.currency}</span></div>
+              <div className="config-row"><span className="config-key">Timezone</span><span className="config-value">{config.timezone}</span></div>
+              <div className="config-row"><span className="config-key">{config.labels.product} Label</span><span className="config-value">{config.labels.product} / {config.labels.productPlural}</span></div>
+              <div className="config-row"><span className="config-key">{config.labels.order} Label</span><span className="config-value">{config.labels.order} / {config.labels.orderPlural}</span></div>
+              <div className="config-row"><span className="config-key">{config.labels.customer} Label</span><span className="config-value">{config.labels.customer} / {config.labels.customerPlural}</span></div>
+              <div className="config-row"><span className="config-key">Default Unit</span><span className="config-value">{config.labels.unitDefault}</span></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Payment Providers ── */}
+      {section === "payments" && (
+        <div className="settings-grid">
+          {/* Paystack */}
+          <div className="card settings-card payment-card">
+            <div className="payment-card-header">
+              <div>
+                <h4>💳 Paystack — Card Payments</h4>
+                <p className="text-muted" style={{ fontSize: "0.8rem" }}>Accept Visa, Mastercard, and bank payments via Paystack</p>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={settings.paystackEnabled === "true"} onChange={(e) => upd("paystackEnabled", e.target.checked ? "true" : "false")} />
+                <span className="toggle-slider" />
+                <span className="toggle-label">{settings.paystackEnabled === "true" ? "On" : "Off"}</span>
+              </label>
+            </div>
+            {settings.paystackEnabled === "true" && (
+              <div className="payment-fields">
+                <div className="form-field"><label>Public Key</label><input type="text" placeholder="pk_live_xxxx" value={settings.paystackPublicKey} onChange={(e) => upd("paystackPublicKey", e.target.value)} /></div>
+                <div className="form-field"><label>Secret Key</label><input type="password" placeholder="sk_live_xxxx" value={settings.paystackSecretKey} onChange={(e) => upd("paystackSecretKey", e.target.value)} /></div>
+                <div className="form-field"><label>Currency</label>
+                  <select value={settings.paystackCurrency} onChange={(e) => upd("paystackCurrency", e.target.value)}>
+                    <option value="KES">KES</option><option value="NGN">NGN</option><option value="GHS">GHS</option><option value="ZAR">ZAR</option><option value="USD">USD</option>
+                  </select>
+                </div>
+                <div className="payment-status-bar">
+                  {settings.paystackPublicKey && settings.paystackSecretKey
+                    ? <span className="status-pill" style={{ background: "#dcfce7", color: "#166534" }}>✅ Keys configured</span>
+                    : <span className="status-pill" style={{ background: "#fef3c7", color: "#92400e" }}>⚠️ Enter both keys</span>
+                  }
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* M-Pesa */}
+          <div className="card settings-card payment-card">
+            <div className="payment-card-header">
+              <div>
+                <h4>📱 M-Pesa — Mobile Money</h4>
+                <p className="text-muted" style={{ fontSize: "0.8rem" }}>Safaricom Daraja API (STK Push, Till, Paybill)</p>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={settings.mpesaEnabled === "true"} onChange={(e) => upd("mpesaEnabled", e.target.checked ? "true" : "false")} />
+                <span className="toggle-slider" />
+                <span className="toggle-label">{settings.mpesaEnabled === "true" ? "On" : "Off"}</span>
+              </label>
+            </div>
+            {settings.mpesaEnabled === "true" && (
+              <div className="payment-fields">
+                <div className="form-field">
+                  <label>Environment</label>
+                  <div className="env-toggle">
+                    <button className={`env-btn ${settings.mpesaEnvironment === "sandbox" ? "active" : ""}`} onClick={() => upd("mpesaEnvironment", "sandbox")}>🧪 Sandbox</button>
+                    <button className={`env-btn ${settings.mpesaEnvironment === "production" ? "active" : ""}`} onClick={() => upd("mpesaEnvironment", "production")}>🚀 Production</button>
+                  </div>
+                </div>
+                <div className="payment-subsection">
+                  <h5>🔑 API Credentials</h5>
+                  <div className="form-field"><label>Consumer Key</label><input type="text" placeholder="From Daraja portal" value={settings.mpesaConsumerKey} onChange={(e) => upd("mpesaConsumerKey", e.target.value)} /></div>
+                  <div className="form-field"><label>Consumer Secret</label><input type="password" placeholder="From Daraja portal" value={settings.mpesaConsumerSecret} onChange={(e) => upd("mpesaConsumerSecret", e.target.value)} /></div>
+                  <div className="form-field"><label>Business Shortcode</label><input type="text" placeholder="e.g. 174379" value={settings.mpesaShortcode} onChange={(e) => upd("mpesaShortcode", e.target.value)} /></div>
+                  <div className="form-field"><label>Passkey</label><input type="password" placeholder="Lipa Na M-Pesa passkey" value={settings.mpesaPasskey} onChange={(e) => upd("mpesaPasskey", e.target.value)} /></div>
+                </div>
+                <div className="payment-subsection">
+                  <h5>💰 Payment Type</h5>
+                  <div className="payment-type-grid">
+                    <button
+                      className={`payment-type-card ${settings.mpesaPaymentType === "till" || settings.mpesaPaymentType === "both" ? "active" : ""}`}
+                      onClick={() => upd("mpesaPaymentType", settings.mpesaPaymentType === "both" ? "paybill" : settings.mpesaPaymentType === "till" ? "both" : "till")}
+                    >
+                      <span className="payment-type-icon">🏪</span>
+                      <span className="payment-type-title">Buy Goods (Till)</span>
+                    </button>
+                    <button
+                      className={`payment-type-card ${settings.mpesaPaymentType === "paybill" || settings.mpesaPaymentType === "both" ? "active" : ""}`}
+                      onClick={() => upd("mpesaPaymentType", settings.mpesaPaymentType === "both" ? "till" : settings.mpesaPaymentType === "paybill" ? "both" : "paybill")}
+                    >
+                      <span className="payment-type-icon">🏦</span>
+                      <span className="payment-type-title">Paybill</span>
+                    </button>
+                  </div>
+                </div>
+                {(settings.mpesaPaymentType === "till" || settings.mpesaPaymentType === "both") && (
+                  <div className="form-field"><label>Till Number</label><input type="text" placeholder="e.g. 5001234" value={settings.mpesaTillNumber} onChange={(e) => upd("mpesaTillNumber", e.target.value)} /></div>
+                )}
+                {(settings.mpesaPaymentType === "paybill" || settings.mpesaPaymentType === "both") && (
+                  <>
+                    <div className="form-field"><label>Paybill Number</label><input type="text" placeholder="e.g. 888880" value={settings.mpesaPaybillNumber} onChange={(e) => upd("mpesaPaybillNumber", e.target.value)} /></div>
+                    <div className="form-field"><label>Account Reference</label><input type="text" placeholder="e.g. INV001" value={settings.mpesaAccountReference} onChange={(e) => upd("mpesaAccountReference", e.target.value)} /></div>
+                  </>
+                )}
+                <div className="form-field"><label>Callback URL</label><input type="text" placeholder="https://your-app.agentuity.run/api/payments/mpesa/callback" value={settings.mpesaCallbackUrl} onChange={(e) => upd("mpesaCallbackUrl", e.target.value)} /></div>
+                <div className="payment-status-bar">
+                  {settings.mpesaConsumerKey && settings.mpesaConsumerSecret && settings.mpesaShortcode
+                    ? <span className="status-pill" style={{ background: "#dcfce7", color: "#166534" }}>✅ Configured</span>
+                    : <span className="status-pill" style={{ background: "#fef3c7", color: "#92400e" }}>⚠️ Enter credentials</span>
+                  }
+                  <span className="status-pill" style={{ background: settings.mpesaEnvironment === "production" ? "#fef3c7" : "#e0e7ff", color: settings.mpesaEnvironment === "production" ? "#92400e" : "#3730a3" }}>
+                    {settings.mpesaEnvironment === "production" ? "🚀 Live" : "🧪 Sandbox"}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Tax & Compliance ── */}
+      {section === "tax" && (
+        <div className="settings-grid">
+          <div className="card settings-card payment-card">
+            <div className="payment-card-header">
+              <div>
+                <h4>🏛️ KRA eTIMS — Tax Compliance</h4>
+                <p className="text-muted" style={{ fontSize: "0.8rem" }}>Kenya Revenue Authority electronic Tax Invoice Management</p>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={settings.kraEnabled === "true"} onChange={(e) => upd("kraEnabled", e.target.checked ? "true" : "false")} />
+                <span className="toggle-slider" />
+                <span className="toggle-label">{settings.kraEnabled === "true" ? "On" : "Off"}</span>
+              </label>
+            </div>
+            {settings.kraEnabled === "true" && (
+              <div className="payment-fields">
+                <div className="form-field">
+                  <label>Environment</label>
+                  <div className="env-toggle">
+                    <button className={`env-btn ${settings.kraEnvironment === "sandbox" ? "active" : ""}`} onClick={() => upd("kraEnvironment", "sandbox")}>🧪 Sandbox</button>
+                    <button className={`env-btn ${settings.kraEnvironment === "production" ? "active" : ""}`} onClick={() => upd("kraEnvironment", "production")}>🚀 Production</button>
+                  </div>
+                </div>
+                <div className="payment-subsection">
+                  <h5>🔑 API Credentials</h5>
+                  <div className="form-field"><label>Client ID</label><input type="text" placeholder="From KRA eTIMS portal" value={settings.kraClientId} onChange={(e) => upd("kraClientId", e.target.value)} /></div>
+                  <div className="form-field"><label>Client Secret</label><input type="password" placeholder="From KRA eTIMS portal" value={settings.kraClientSecret} onChange={(e) => upd("kraClientSecret", e.target.value)} /></div>
+                </div>
+                <div className="payment-subsection">
+                  <h5>🏢 Business Details</h5>
+                  <div className="form-field"><label>KRA PIN</label><input type="text" placeholder="e.g. A123456789B" value={settings.kraBusinessPin} onChange={(e) => upd("kraBusinessPin", e.target.value)} /></div>
+                  <div className="form-field"><label>Device Serial (cmcKey)</label><input type="text" placeholder="e.g. KRAICD000000001" value={settings.kraEtimsDeviceSerial} onChange={(e) => upd("kraEtimsDeviceSerial", e.target.value)} /></div>
+                  <div className="form-field"><label>Branch ID</label><input type="text" placeholder="00" value={settings.kraBranchId} onChange={(e) => upd("kraBranchId", e.target.value)} /></div>
+                </div>
+                <div className="payment-status-bar">
+                  {settings.kraClientId && settings.kraClientSecret && settings.kraBusinessPin
+                    ? <span className="status-pill" style={{ background: "#dcfce7", color: "#166534" }}>✅ Configured</span>
+                    : <span className="status-pill" style={{ background: "#fef3c7", color: "#92400e" }}>⚠️ Enter credentials</span>
+                  }
+                  <span className="status-pill" style={{ background: settings.kraEnvironment === "production" ? "#fef3c7" : "#e0e7ff", color: settings.kraEnvironment === "production" ? "#92400e" : "#3730a3" }}>
+                    {settings.kraEnvironment === "production" ? "🚀 Live" : "🧪 Sandbox"}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 16 }}>
+        <button className="btn btn-primary btn-lg" onClick={handleSave} disabled={saving}>
+          {saving ? "Saving…" : "💾 Save All Settings"}
+        </button>
       </div>
     </div>
   );

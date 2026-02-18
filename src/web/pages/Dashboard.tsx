@@ -8,7 +8,7 @@ interface DashboardProps {
 
 /* ── Tiny SVG Chart Components (no external deps) ── */
 
-function BarChart({ data, labelKey, valueKey, color = "#3b82f6", height = 220 }: {
+function BarChart({ data, labelKey, valueKey, color = "#3b82f6", height = 160 }: {
   data: any[]; labelKey: string; valueKey: string; color?: string; height?: number;
 }) {
   if (!data.length) return <div className="chart-empty">No data</div>;
@@ -41,15 +41,22 @@ function BarChart({ data, labelKey, valueKey, color = "#3b82f6", height = 220 }:
   );
 }
 
-function LineChart({ data, xKey, yKey, color = "#3b82f6", height = 200 }: {
-  data: any[]; xKey: string; yKey: string; color?: string; height?: number;
+function LineChart({ data, xKey, yKey, color = "#3b82f6", height = 160, xLabel = "", yLabel = "" }: {
+  data: any[]; xKey: string; yKey: string; color?: string; height?: number; xLabel?: string; yLabel?: string;
 }) {
   if (!data.length) return <div className="chart-empty">No data</div>;
   const max = Math.max(...data.map((d) => Number(d[yKey]) || 0), 1);
   const w = Math.max(400, data.length * 50);
-  const pad = { top: 10, right: 20, bottom: 30, left: 20 };
+  const pad = { top: 10, right: 20, bottom: 36, left: 52 };
   const plotW = w - pad.left - pad.right;
   const plotH = height - pad.top - pad.bottom;
+
+  // Y-axis ticks (5 ticks)
+  const yTicks = Array.from({ length: 5 }, (_, i) => {
+    const val = (max / 4) * i;
+    return { val, y: pad.top + plotH - (val / max) * plotH };
+  });
+  const fmtTick = (v: number) => v >= 1000000 ? `${(v / 1000000).toFixed(1)}M` : v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v.toFixed(0);
 
   const points = data.map((d, i) => ({
     x: pad.left + (i / Math.max(data.length - 1, 1)) * plotW,
@@ -70,11 +77,22 @@ function LineChart({ data, xKey, yKey, color = "#3b82f6", height = 200 }: {
             <stop offset="100%" stopColor={color} stopOpacity={0.02} />
           </linearGradient>
         </defs>
+        {/* Y-axis ticks + grid lines */}
+        {yTicks.map((t, i) => (
+          <g key={`yt-${i}`}>
+            <line x1={pad.left} y1={t.y} x2={pad.left + plotW} y2={t.y} stroke="#e2e8f0" strokeWidth={1} strokeDasharray={i === 0 ? "0" : "4,3"} />
+            <text x={pad.left - 6} y={t.y + 3} textAnchor="end" fontSize={9} fill="#94a3b8">{fmtTick(t.val)}</text>
+          </g>
+        ))}
+        {/* Y-axis label */}
+        {yLabel && (
+          <text x={12} y={pad.top + plotH / 2} textAnchor="middle" fontSize={9} fill="#94a3b8" transform={`rotate(-90, 12, ${pad.top + plotH / 2})`}>{yLabel}</text>
+        )}
         <path d={areaPath} fill="url(#lineGrad)" />
         <path d={linePath} fill="none" stroke={color} strokeWidth={2.5} strokeLinejoin="round" />
         {points.map((p, i) => (
           <g key={i}>
-            <circle cx={p.x} cy={p.y} r={4} fill="#fff" stroke={color} strokeWidth={2}>
+            <circle cx={p.x} cy={p.y} r={3.5} fill="#fff" stroke={color} strokeWidth={2}>
               <title>{p.label}: {p.value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</title>
             </circle>
             {data.length <= 15 && (
@@ -84,20 +102,24 @@ function LineChart({ data, xKey, yKey, color = "#3b82f6", height = 200 }: {
             )}
           </g>
         ))}
+        {/* X-axis label */}
+        {xLabel && (
+          <text x={pad.left + plotW / 2} y={height - 2} textAnchor="middle" fontSize={9} fill="#94a3b8">{xLabel}</text>
+        )}
       </svg>
     </div>
   );
 }
 
-function PieChart({ data, labelKey, valueKey, height = 220 }: {
-  data: any[]; labelKey: string; valueKey: string; height?: number;
+function PieChart({ data, labelKey, valueKey, size = 150 }: {
+  data: any[]; labelKey: string; valueKey: string; size?: number;
 }) {
   if (!data.length) return <div className="chart-empty">No data</div>;
   const total = data.reduce((s, d) => s + (Number(d[valueKey]) || 0), 0);
   if (total === 0) return <div className="chart-empty">No data</div>;
 
   const COLORS = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#6b7280"];
-  const cx = 110, cy = 110, r = 90;
+  const cx = size / 2, cy = size / 2, r = size / 2 - 6;
   let cumAngle = -Math.PI / 2;
 
   const slices = data.map((d, i) => {
@@ -117,7 +139,7 @@ function PieChart({ data, labelKey, valueKey, height = 220 }: {
 
   return (
     <div className="pie-chart-container">
-      <svg width={220} height={height} className="chart-svg">
+      <svg width={size} height={size} className="chart-svg" style={{ flexShrink: 0 }}>
         {slices.map((s, i) => (
           <path key={i} d={s.path} fill={s.color} opacity={0.85} stroke="#fff" strokeWidth={2}>
             <title>{s.label}: {s.value.toLocaleString(undefined, { maximumFractionDigits: 2 })} ({s.pct}%)</title>
@@ -229,7 +251,7 @@ export default function Dashboard({ config }: DashboardProps) {
             <div className="chart-card">
               <h3>📈 Sales Trend</h3>
               <p className="chart-subtitle">Daily revenue for selected period</p>
-              <LineChart data={cd.salesByDay} xKey="date" yKey="revenue" color="#3b82f6" />
+              <LineChart data={cd.salesByDay} xKey="date" yKey="revenue" color="#3b82f6" xLabel="Date" yLabel={`Revenue (${config.currency})`} />
             </div>
             <div className="chart-card">
               <h3>🥧 Revenue by Status</h3>

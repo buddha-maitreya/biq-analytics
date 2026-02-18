@@ -12,7 +12,8 @@ import ReportsPage from "./pages/ReportsPage";
 import AdminPage from "./pages/AdminPage";
 import POSPage from "./pages/POSPage";
 import InvoiceCheckerPage from "./pages/InvoiceCheckerPage";
-import SettingsPage from "./pages/SettingsPage";
+import AboutPage from "./pages/AboutPage";
+import EmailPage from "./pages/EmailPage";
 import LoginPage from "./pages/LoginPage";
 import "./styles/global.css";
 import type { Page, AppConfig, AuthUser } from "./types";
@@ -133,9 +134,13 @@ export default function App() {
       case "invoice_checker":
         return <InvoiceCheckerPage config={cfg} />;
       case "admin":
-        return <AdminPage config={cfg} />;
+        return <AdminPage config={cfg} onSaved={refreshConfig} />;
       case "settings":
-        return <SettingsPage config={cfg} onSaved={refreshConfig} />;
+        return <AdminPage config={cfg} onSaved={refreshConfig} />;
+      case "email":
+        return <EmailPage config={cfg} user={user} />;
+      case "about":
+        return <AboutPage config={cfg} />;
     }
   };
 

@@ -30,14 +30,16 @@ const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"]
   { page: "pos", icon: "➕", labelKey: null, fallback: "New Order" },
   { page: "invoice_checker", icon: "🔍", labelKey: null, fallback: "Invoice Checker" },
   { page: "admin", icon: "⚙️", labelKey: null, fallback: "Admin" },
-  { page: "settings", icon: "🎨", labelKey: null, fallback: "Settings" },
+  { page: "email", icon: "📧", labelKey: null, fallback: "Email" },
+  { page: "about", icon: "ℹ️", labelKey: null, fallback: "About" },
 ];
 
 /** Pages restricted by role */
 const ROLE_VISIBLE: Record<string, Page[]> = {
-  viewer: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports"],
-  staff: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "assistant", "reports", "pos", "invoice_checker"],
-  manager: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "assistant", "reports", "pos", "invoice_checker"],
+  viewer: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "about"],
+  staff: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "assistant", "reports", "pos", "invoice_checker", "about"],
+  manager: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "assistant", "reports", "pos", "invoice_checker", "about"],
+  admin: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "assistant", "reports", "pos", "invoice_checker", "admin", "about"],
 };
 
 export default function Sidebar({ config, currentPage, onNavigate, user, onLogout }: SidebarProps) {

@@ -375,12 +375,12 @@ export async function getDashboardChartData(startDate?: string, endDate?: string
   // 1. Sales by day (line chart)
   const salesByDay = await db.execute(
     sql`SELECT
-          DATE(created_at) as date,
+          TO_CHAR(created_at, 'YYYY-MM-DD') as date,
           COUNT(*) as order_count,
           COALESCE(SUM(total_amount), 0) as revenue
         FROM orders
         WHERE created_at >= ${start.toISOString()} AND created_at <= ${end.toISOString()}
-        GROUP BY DATE(created_at)
+        GROUP BY TO_CHAR(created_at, 'YYYY-MM-DD')
         ORDER BY date ASC`
   ) as any[];
 

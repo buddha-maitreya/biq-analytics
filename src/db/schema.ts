@@ -428,6 +428,67 @@ export const taxRules = pgTable("tax_rules", {
 });
 
 // ============================================================
+// Chat Tables (Phase 8 — Intelligent Business Chatbot)
+// ============================================================
+
+/** Chat Sessions — persistent conversation threads */
+export const chatSessions = pgTable(
+  "chat_sessions",
+  {
+    id: id(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    title: varchar("title", { length: 200 }),
+    status: varchar("status", { length: 20 }).notNull().default("active"), // active | archived
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_chat_sessions_user").on(t.userId),
+    index("idx_chat_sessions_status").on(t.status),
+    index("idx_chat_sessions_updated").on(t.updatedAt),
+  ]
+);
+
+/** Chat Messages — individual messages within a session */
+export const chatMessages = pgTable(
+  "chat_messages",
+  {
+    id: id(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    role: varchar("role", { length: 20 }).notNull(), // user | assistant | tool | system
+    content: text("content"),
+    toolCalls: jsonb("tool_calls").$type<
+      Array<{
+        id: string;
+        name: string;
+        input: Record<string, unknown>;
+        output?: unknown;
+        status: "pending" | "running" | "completed" | "error";
+        startedAt?: string;
+        completedAt?: string;
+      }>
+    >(),
+    metadata: jsonb("metadata").$type<{
+      model?: string;
+      tokens?: { prompt: number; completion: number };
+      latencyMs?: number;
+      delegatedAgent?: string;
+      feedbackRating?: "up" | "down";
+    }>(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_chat_messages_session").on(t.sessionId),
+    index("idx_chat_messages_role").on(t.role),
+    index("idx_chat_messages_created").on(t.createdAt),
+  ]
+);
+
+// ============================================================
 // Relations
 // ============================================================
 
@@ -537,6 +598,7 @@ export const paymentsRelations = relations(payments, ({ one }) => ({
 export const usersRelations = relations(users, ({ many }) => ({
   auditLogs: many(auditLog),
   notifications: many(notifications),
+  chatSessions: many(chatSessions),
 }));
 
 export const auditLogRelations = relations(auditLog, ({ one }) => ({
@@ -550,5 +612,20 @@ export const notificationsRelations = relations(notifications, ({ one }) => ({
   user: one(users, {
     fields: [notifications.userId],
     references: [users.id],
+  }),
+}));
+
+export const chatSessionsRelations = relations(chatSessions, ({ one, many }) => ({
+  user: one(users, {
+    fields: [chatSessions.userId],
+    references: [users.id],
+  }),
+  messages: many(chatMessages),
+}));
+
+export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
+  session: one(chatSessions, {
+    fields: [chatMessages.sessionId],
+    references: [chatSessions.id],
   }),
 }));

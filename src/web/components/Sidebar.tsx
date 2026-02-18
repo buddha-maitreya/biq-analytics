@@ -9,6 +9,8 @@ interface SidebarProps {
   onLogout: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
+  theme: "light" | "dark";
+  onToggleTheme: () => void;
 }
 
 /** Role display labels */
@@ -44,7 +46,7 @@ const ROLE_VISIBLE: Record<string, Page[]> = {
   admin: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "assistant", "reports", "pos", "invoice_checker", "admin", "about"],
 };
 
-export default function Sidebar({ config, currentPage, onNavigate, user, onLogout, mobileOpen, onCloseMobile }: SidebarProps) {
+export default function Sidebar({ config, currentPage, onNavigate, user, onLogout, mobileOpen, onCloseMobile, theme, onToggleTheme }: SidebarProps) {
   // super_admin and admin see everything; others see role-specific pages
   const visiblePages = ROLE_VISIBLE[user.role] ?? null; // null = all pages
 
@@ -90,6 +92,22 @@ export default function Sidebar({ config, currentPage, onNavigate, user, onLogou
             ))}
         </nav>
         <div className="sidebar-footer">
+          <div className="theme-toggle-row">
+            <button
+              className={`theme-toggle-btn ${theme === "light" ? "active" : ""}`}
+              onClick={theme !== "light" ? onToggleTheme : undefined}
+              title="Light mode"
+            >
+              ☀️
+            </button>
+            <button
+              className={`theme-toggle-btn ${theme === "dark" ? "active" : ""}`}
+              onClick={theme !== "dark" ? onToggleTheme : undefined}
+              title="Dark mode"
+            >
+              🌙
+            </button>
+          </div>
           <div className="sidebar-user">
             <div className="sidebar-user-avatar">
               {user.name.charAt(0).toUpperCase()}

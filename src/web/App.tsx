@@ -44,7 +44,22 @@ export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    const saved = localStorage.getItem("biq_theme");
+    if (saved === "dark" || saved === "light") return saved;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
   const { data: appConfig, refetch } = useAPI<AppConfig>("GET /api/config");
+
+  // Apply theme to document
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("biq_theme", theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((t) => (t === "light" ? "dark" : "light"));
+  }, []);
 
   // Check existing session on mount
   useEffect(() => {
@@ -173,6 +188,8 @@ export default function App() {
         onLogout={handleLogout}
         mobileOpen={sidebarOpen}
         onCloseMobile={() => setSidebarOpen(false)}
+        theme={theme}
+        onToggleTheme={toggleTheme}
       />
       <main className="main-content">
         {/* Mobile top bar — only visible on small screens via CSS */}

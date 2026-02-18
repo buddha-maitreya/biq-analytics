@@ -3,9 +3,7 @@
   "projectId": "proj_679d3caf6d456524695889309f44aded",
   "orgId": "org_39hottyMau3fIKUOChR1QIZJtPF",
   "deployment": {
-    "domains": [
-      "hasora-ke.com"
-    ],
+    "domains": [],
     "resources": {
       "memory": "500Mi",
       "cpu": "500m",

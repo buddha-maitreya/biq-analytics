@@ -54,6 +54,14 @@ const DEFAULTS: Record<string, string> = {
 
   /** Custom greeting/welcome message for new chat sessions */
   aiWelcomeMessage: "",
+
+  // ── AI Model Configuration ────────────────────────────────
+  /** AI provider: "openai" | "anthropic" | "groq" */
+  aiModelProvider: "openai",
+  /** Model identifier (e.g. "gpt-4o-mini", "claude-sonnet-4-20250514") */
+  aiModelName: "gpt-4o-mini",
+  /** Provider API key (stored encrypted in DB) */
+  aiModelApiKey: "",
 };
 
 /** Get a single setting by key */

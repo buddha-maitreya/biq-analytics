@@ -44,9 +44,22 @@ function BarChart({ data, labelKey, valueKey, color = "#3b82f6", height = 160 }:
 function LineChart({ data, xKey, yKey, color = "#3b82f6", height = 160, xLabel = "", yLabel = "" }: {
   data: any[]; xKey: string; yKey: string; color?: string; height?: number; xLabel?: string; yLabel?: string;
 }) {
-  if (!data.length) return <div className="chart-empty">No data</div>;
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const [containerW, setContainerW] = React.useState(0);
+  React.useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) setContainerW(e.contentRect.width);
+    });
+    ro.observe(el);
+    setContainerW(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+  if (!data.length) return <div ref={containerRef} className="chart-empty">No data</div>;
   const max = Math.max(...data.map((d) => Number(d[yKey]) || 0), 1);
-  const w = Math.max(400, data.length * 50);
+  // Use container width if available, otherwise fall back to a reasonable default
+  const w = containerW > 0 ? containerW : Math.min(500, Math.max(400, data.length * 50));
   const pad = { top: 10, right: 20, bottom: 36, left: 52 };
   const plotW = w - pad.left - pad.right;
   const plotH = height - pad.top - pad.bottom;
@@ -69,7 +82,7 @@ function LineChart({ data, xKey, yKey, color = "#3b82f6", height = 160, xLabel =
   const areaPath = `${linePath} L${points[points.length - 1].x},${pad.top + plotH} L${points[0].x},${pad.top + plotH} Z`;
 
   return (
-    <div className="chart-scroll">
+    <div ref={containerRef} className="chart-scroll" style={{ overflow: 'hidden' }}>
       <svg width={w} height={height} className="chart-svg">
         <defs>
           <linearGradient id="lineGrad" x1="0" y1="0" x2="0" y2="1">

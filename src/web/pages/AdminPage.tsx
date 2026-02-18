@@ -6,7 +6,7 @@ interface AdminPageProps {
   onSaved?: () => void;
 }
 
-type AdminTab = "users" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools";
+type AdminTab = "users" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools" | "model";
 
 /* ---------- Sub-types ---------- */
 interface RBACConfig {
@@ -120,14 +120,15 @@ const PERM_LABELS: Record<string, { icon: string; label: string; desc: string }>
 
 /* =============================== */
 export default function AdminPage({ config, onSaved }: AdminPageProps) {
-  const [tab, setTab] = useState<AdminTab>("users");
+  const [tab, setTab] = useState<AdminTab>("knowledge");
 
   const tabs: { key: AdminTab; label: string; icon: string }[] = [
-    { key: "users", label: "Users & Access", icon: "🔐" },
     { key: "knowledge", label: "Knowledge Base", icon: "🧠" },
-    { key: "settings", label: "Settings", icon: "🎨" },
+    { key: "model", label: "AI Model", icon: "🤖" },
     { key: "ai", label: "Prompt Engineering", icon: "✍️" },
     { key: "tools", label: "Custom Tools", icon: "🧩" },
+    { key: "users", label: "Users & Access", icon: "🔐" },
+    { key: "settings", label: "Profile", icon: "🏢" },
   ];
 
   return (
@@ -152,9 +153,10 @@ export default function AdminPage({ config, onSaved }: AdminPageProps) {
       <div className="admin-content">
         {tab === "users" && <UsersAccessTab />}
         {tab === "knowledge" && <KnowledgeBaseTab />}
-        {tab === "settings" && <SettingsTab config={config} onSaved={onSaved} />}
+        {tab === "model" && <AIModelTab onSaved={onSaved} />}
         {tab === "ai" && <AIConfigTab config={config} onSaved={onSaved} />}
         {tab === "tools" && <CustomToolsTab />}
+        {tab === "settings" && <SettingsTab config={config} onSaved={onSaved} />}
       </div>
     </div>
   );
@@ -1153,6 +1155,269 @@ function KnowledgeBaseTab() {
             <p>{queryResult}</p>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ===== AI MODEL TAB ===== */
+
+const AI_PROVIDERS = [
+  {
+    id: "openai",
+    name: "OpenAI",
+    icon: "🟢",
+    models: [
+      { id: "gpt-4o", name: "GPT-4o", desc: "Most capable — vision, reasoning, tools" },
+      { id: "gpt-4o-mini", name: "GPT-4o Mini", desc: "Fast & cost-effective" },
+      { id: "gpt-4.1", name: "GPT-4.1", desc: "Latest flagship model" },
+      { id: "gpt-4.1-mini", name: "GPT-4.1 Mini", desc: "Balanced performance" },
+      { id: "gpt-4.1-nano", name: "GPT-4.1 Nano", desc: "Fastest, lowest cost" },
+      { id: "o3-mini", name: "o3-mini", desc: "Advanced reasoning" },
+    ],
+    keyPlaceholder: "sk-...",
+    keyPrefix: "sk-",
+    docsUrl: "https://platform.openai.com/api-keys",
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    icon: "🟤",
+    models: [
+      { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", desc: "Best balance of speed & intelligence" },
+      { id: "claude-opus-4-20250514", name: "Claude Opus 4", desc: "Most capable" },
+      { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", desc: "Fastest, lowest cost" },
+    ],
+    keyPlaceholder: "sk-ant-...",
+    keyPrefix: "sk-ant-",
+    docsUrl: "https://console.anthropic.com/settings/keys",
+  },
+  {
+    id: "groq",
+    name: "Groq",
+    icon: "⚡",
+    models: [
+      { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B", desc: "High quality, fast inference" },
+      { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B", desc: "Ultra-fast, lightweight" },
+      { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B", desc: "Strong open-source MoE" },
+      { id: "gemma2-9b-it", name: "Gemma 2 9B", desc: "Google's open model on Groq" },
+    ],
+    keyPlaceholder: "gsk_...",
+    keyPrefix: "gsk_",
+    docsUrl: "https://console.groq.com/keys",
+  },
+];
+
+function AIModelTab({ onSaved }: { onSaved?: () => void }) {
+  const [provider, setProvider] = useState("openai");
+  const [model, setModel] = useState("gpt-4o-mini");
+  const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const providerConfig = AI_PROVIDERS.find((p) => p.id === provider) ?? AI_PROVIDERS[0];
+
+  // Load saved settings
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/settings");
+        const json = await res.json();
+        if (json.data) {
+          if (json.data.aiModelProvider) setProvider(json.data.aiModelProvider);
+          if (json.data.aiModelName) setModel(json.data.aiModelName);
+          if (json.data.aiModelApiKey) setApiKey(json.data.aiModelApiKey);
+        }
+      } catch { /* use defaults */ }
+      setLoading(false);
+    })();
+  }, []);
+
+  // When provider changes, reset model to first of that provider
+  const handleProviderChange = (newProvider: string) => {
+    setProvider(newProvider);
+    const prov = AI_PROVIDERS.find((p) => p.id === newProvider);
+    if (prov && prov.models.length > 0) {
+      setModel(prov.models[0].id);
+    }
+    setTestResult(null);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          aiModelProvider: provider,
+          aiModelName: model,
+          aiModelApiKey: apiKey,
+        }),
+      });
+      if (res.ok) {
+        setMessage({ type: "success", text: "AI model configuration saved!" });
+        onSaved?.();
+      } else {
+        setMessage({ type: "error", text: "Failed to save." });
+      }
+    } catch {
+      setMessage({ type: "error", text: "Network error." });
+    }
+    setSaving(false);
+  };
+
+  const handleTestConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch("/api/settings/test-model", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider,
+          model,
+          apiKey,
+        }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setTestResult({ ok: true, text: json.message || "Connection successful!" });
+      } else {
+        setTestResult({ ok: false, text: json.error || "Connection failed." });
+      }
+    } catch {
+      setTestResult({ ok: false, text: "Network error — could not reach server." });
+    }
+    setTesting(false);
+  };
+
+  if (loading) return <div className="loading-state"><div className="spinner" />Loading AI model config…</div>;
+
+  const selectedModel = providerConfig.models.find((m) => m.id === model);
+
+  return (
+    <div>
+      {message && (
+        <div className={`alert alert-${message.type}`} style={{ marginBottom: 16 }}>
+          {message.type === "success" ? "✅" : "❌"} {message.text}
+        </div>
+      )}
+
+      {/* Provider Selection */}
+      <div className="settings-grid">
+        <div className="card settings-card">
+          <h4>🏢 AI Provider</h4>
+          <p className="text-muted" style={{ marginBottom: 16, fontSize: "0.8rem" }}>
+            Select which AI provider powers your business assistant.
+          </p>
+          <div className="ai-provider-grid">
+            {AI_PROVIDERS.map((p) => (
+              <button
+                key={p.id}
+                className={`ai-provider-card ${provider === p.id ? "active" : ""}`}
+                onClick={() => handleProviderChange(p.id)}
+              >
+                <span className="ai-provider-icon">{p.icon}</span>
+                <span className="ai-provider-name">{p.name}</span>
+                <span className="ai-provider-models">{p.models.length} models</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Model Selection */}
+      <div className="settings-grid" style={{ marginTop: 16 }}>
+        <div className="card settings-card">
+          <h4>🧠 Model</h4>
+          <p className="text-muted" style={{ marginBottom: 16, fontSize: "0.8rem" }}>
+            Choose the specific model for {providerConfig.name}. Higher-end models are more capable but cost more per request.
+          </p>
+          <div className="ai-model-grid">
+            {providerConfig.models.map((m) => (
+              <button
+                key={m.id}
+                className={`ai-model-card ${model === m.id ? "active" : ""}`}
+                onClick={() => { setModel(m.id); setTestResult(null); }}
+              >
+                <span className="ai-model-name">{m.name}</span>
+                <span className="ai-model-desc">{m.desc}</span>
+                <code className="ai-model-id">{m.id}</code>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* API Key */}
+      <div className="settings-grid" style={{ marginTop: 16 }}>
+        <div className="card settings-card">
+          <h4>🔑 API Key</h4>
+          <p className="text-muted" style={{ marginBottom: 16, fontSize: "0.8rem" }}>
+            Your {providerConfig.name} API key.{" "}
+            <a href={providerConfig.docsUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--primary)" }}>
+              Get one here →
+            </a>
+          </p>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              type={showKey ? "text" : "password"}
+              placeholder={providerConfig.keyPlaceholder}
+              value={apiKey}
+              onChange={(e) => { setApiKey(e.target.value); setTestResult(null); }}
+              style={{ flex: 1, fontFamily: "monospace" }}
+            />
+            <button
+              className="btn btn-sm"
+              onClick={() => setShowKey(!showKey)}
+              title={showKey ? "Hide" : "Show"}
+              style={{ minWidth: 40 }}
+            >
+              {showKey ? "🙈" : "👁️"}
+            </button>
+          </div>
+
+          {/* Test Connection */}
+          <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              className="btn btn-sm"
+              onClick={handleTestConnection}
+              disabled={testing || !apiKey}
+              style={{ background: "var(--surface-alt)", border: "1px solid var(--border)" }}
+            >
+              {testing ? "⏳ Testing…" : "🔌 Test Connection"}
+            </button>
+            {testResult && (
+              <span style={{ fontSize: "0.85rem", color: testResult.ok ? "var(--success)" : "var(--danger)" }}>
+                {testResult.ok ? "✅" : "❌"} {testResult.text}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Summary */}
+      <div className="settings-grid" style={{ marginTop: 16 }}>
+        <div className="card settings-card" style={{ background: "var(--surface-alt)", border: "1px dashed var(--border)" }}>
+          <h4 style={{ marginBottom: 8 }}>📋 Current Configuration</h4>
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", fontSize: "0.9rem" }}>
+            <div><strong>Provider:</strong> {providerConfig.icon} {providerConfig.name}</div>
+            <div><strong>Model:</strong> {selectedModel?.name || model}</div>
+            <div><strong>API Key:</strong> {apiKey ? "••••" + apiKey.slice(-4) : <span className="text-muted">Not set</span>}</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <button className="btn btn-primary btn-lg" onClick={handleSave} disabled={saving}>
+          {saving ? "Saving…" : "💾 Save AI Model Config"}
+        </button>
       </div>
     </div>
   );

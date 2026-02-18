@@ -166,7 +166,7 @@ Use the deployment's terminology: products are called "${config.labels.product}"
     }
 
     const { object } = await generateObject({
-      model: getModel(),
+      model: await getModel(),
       schema: z.object({
         insights: z.array(insightSchema),
         summary: z.string(),

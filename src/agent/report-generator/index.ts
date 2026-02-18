@@ -204,7 +204,7 @@ export default createAgent("report-generator", {
       : "";
 
     const { text } = await generateText({
-      model: getModel(),
+      model: await getModel(),
       system: `You are a professional business report writer for ${config.companyName}.
 Generate a clear, actionable business report based on the data provided.
 

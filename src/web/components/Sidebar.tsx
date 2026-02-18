@@ -30,7 +30,7 @@ const ROLE_EMOJIS: Record<string, string> = {
 };
 
 const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"] | null; fallback: string }[] = [
-  { page: "assistant", icon: "🤖", labelKey: null, fallback: "Executive AI Assistant" },
+  { page: "assistant", icon: "🤖", labelKey: null, fallback: "AI Assistant" },
   { page: "dashboard", icon: "📊", labelKey: null, fallback: "Dashboard" },
   { page: "products", icon: "📦", labelKey: "productPlural", fallback: "Products / Services" },
   { page: "orders", icon: "🛒", labelKey: "orderPlural", fallback: "Orders" },

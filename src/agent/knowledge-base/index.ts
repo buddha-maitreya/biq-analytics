@@ -114,7 +114,7 @@ export default createAgent("knowledge-base", {
           .filter((v, i, a) => a.indexOf(v) === i); // dedupe
 
         const { text } = await generateText({
-          model: getModel(),
+          model: await getModel(),
           system: `You are ${config.companyName}'s knowledge base assistant.
 Answer the question using ONLY the provided context from uploaded documents.
 If the context doesn't contain enough information, say so — never make things up.

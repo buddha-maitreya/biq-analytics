@@ -3099,7 +3099,7 @@ textarea {
 
 .chart-row {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 16px;
   margin-bottom: 16px;
 }
@@ -4325,6 +4325,108 @@ textarea {
 .payment-type-check.checked {
   background: var(--primary, #2563eb);
   border-color: var(--primary, #2563eb);
+}
+
+
+/* ═══════════════════════════════════════════════════
+   AI MODEL TAB — Provider & Model Selection Cards
+   ═══════════════════════════════════════════════════ */
+
+.ai-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+.ai-provider-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 20px 14px;
+  border: 2px solid var(--border, #e5e5e5);
+  border-radius: 12px;
+  background: var(--bg, white);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.ai-provider-card:hover {
+  border-color: var(--primary, #2563eb);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.ai-provider-card.active {
+  border-color: var(--primary, #2563eb);
+  background: rgba(37, 99, 235, 0.04);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.10);
+}
+[data-theme="dark"] .ai-provider-card {
+  background: var(--surface, #1e1e1e);
+}
+[data-theme="dark"] .ai-provider-card.active {
+  background: rgba(96, 165, 250, 0.08);
+}
+.ai-provider-icon {
+  font-size: 1.8rem;
+}
+.ai-provider-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.ai-provider-models {
+  font-size: 0.75rem;
+  color: var(--text-secondary, #888);
+}
+
+.ai-model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+.ai-model-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px;
+  border: 2px solid var(--border, #e5e5e5);
+  border-radius: 10px;
+  background: var(--bg, white);
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+}
+.ai-model-card:hover {
+  border-color: var(--primary, #2563eb);
+}
+.ai-model-card.active {
+  border-color: var(--primary, #2563eb);
+  background: rgba(37, 99, 235, 0.04);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.10);
+}
+[data-theme="dark"] .ai-model-card {
+  background: var(--surface, #1e1e1e);
+}
+[data-theme="dark"] .ai-model-card.active {
+  background: rgba(96, 165, 250, 0.08);
+}
+.ai-model-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.ai-model-desc {
+  font-size: 0.78rem;
+  color: var(--text-secondary, #888);
+}
+.ai-model-id {
+  font-size: 0.7rem;
+  color: var(--text-muted, #aaa);
+  background: var(--surface-alt, #f6f6f6);
+  padding: 2px 6px;
+  border-radius: 4px;
+  width: fit-content;
+  margin-top: 4px;
+}
+[data-theme="dark"] .ai-model-id {
+  background: rgba(255,255,255,0.06);
 }
 
 

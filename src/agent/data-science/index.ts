@@ -651,7 +651,7 @@ export async function maybeCompressSummary(
 
   try {
     const { text } = await generateText({
-      model: getModel("gpt-4o-mini"),
+      model: await getModel("gpt-4o-mini"),
       prompt: compressPrompt,
     });
 
@@ -695,7 +695,7 @@ export default createAgent("data-science", {
     messages.push({ role: "user" as const, content: input.message });
 
     const result = await generateText({
-      model: getModel("gpt-4o"),
+      model: await getModel("gpt-4o"),
       system: buildSystemPrompt(undefined, aiSettings, customToolsSection),
       messages,
       tools: allTools,
@@ -794,7 +794,7 @@ export async function streamChat(
   messages.push({ role: "user", content: message });
 
   return streamText({
-    model: getModel("gpt-4o"),
+    model: await getModel("gpt-4o"),
     system: buildSystemPrompt(conversationSummary, aiSettings, customToolsSection),
     messages,
     tools: allTools,

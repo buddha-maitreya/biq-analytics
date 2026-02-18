@@ -161,8 +161,6 @@ export default function AboutPage({ config }: AboutPageProps) {
         <div className="about-version">
           <span>Business IQ Enterprise v1.0.0</span>
           <span className="about-separator">·</span>
-          <span>Powered by Ruskins AI</span>
-          <span className="about-separator">·</span>
           <span>© 2026 Ruskins AI Consulting LTD</span>
         </div>
       </section>

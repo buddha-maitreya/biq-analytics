@@ -757,6 +757,60 @@ export const chatMessages = pgTable(
 );
 
 // ============================================================
+// Agent Configuration Tables
+// ============================================================
+
+/** Agent Configs — per-agent settings configurable from the Admin Console.
+ *
+ *  Each row configures one AI agent (The Brain, The Analyst, The Writer,
+ *  The Librarian). Universal columns cover model, temperature, steps,
+ *  timeout, and custom instructions. The `config` JSONB holds agent-specific
+ *  settings (sandbox limits, topK, report format, etc.) without schema changes.
+ */
+export const agentConfigs = pgTable(
+  "agent_configs",
+  {
+    id: id(),
+    /** Machine identifier — matches the agent folder name: data-science, insights-analyzer, etc. */
+    agentName: varchar("agent_name", { length: 50 }).notNull().unique(),
+    /** Human-friendly label shown in the admin UI */
+    displayName: varchar("display_name", { length: 100 }).notNull(),
+    /** What this agent does — shown as help text in admin */
+    description: text("description"),
+    /** Enable / disable this agent. Disabled agents are skipped by the orchestrator. */
+    isActive: boolean("is_active").notNull().default(true),
+    /** Override the default LLM model for this agent (e.g. gpt-4o-mini, claude-3-haiku) */
+    modelOverride: varchar("model_override", { length: 100 }),
+    /** LLM temperature (0.00 = deterministic, 2.00 = very creative). Null = use system default. */
+    temperature: numeric("temperature", { precision: 3, scale: 2 }),
+    /** Maximum tool-calling rounds per request. Null = use agent default. */
+    maxSteps: integer("max_steps"),
+    /** Execution timeout in milliseconds. Null = use agent default. */
+    timeoutMs: integer("timeout_ms"),
+    /** Business-specific instructions appended to the agent's system prompt.
+     *  Use this to customize agent behavior per-deployment without code changes. */
+    customInstructions: text("custom_instructions"),
+    /** Routing priority — lower numbers are tried first by the orchestrator (0 = highest). */
+    executionPriority: integer("execution_priority").notNull().default(0),
+    /** Agent-specific settings (JSONB).
+     *  Examples:
+     *    The Analyst: { "structuringModel": "gpt-4o-mini", "sandboxMemoryMb": 256, "sandboxTimeoutMs": 30000 }
+     *    The Writer:  { "defaultFormat": "markdown", "maxSqlSteps": 6 }
+     *    The Librarian: { "topK": 5, "similarityThreshold": 0.7 }
+     *    The Brain: { "enableSandbox": true, "compressionThreshold": 20 }
+     */
+    config: jsonb("config").$type<Record<string, unknown>>(),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_agent_configs_name").on(t.agentName),
+    index("idx_agent_configs_active").on(t.isActive),
+    index("idx_agent_configs_priority").on(t.executionPriority),
+  ]
+);
+
+// ============================================================
 // Relations
 // ============================================================
 

@@ -28,22 +28,25 @@ import reportGenerator from "@agent/report-generator";
 import knowledgeBase from "@agent/knowledge-base";
 
 /**
- * Data Science Assistant — the orchestrator ("Brain of the Business").
+ * Data Science Assistant — "The Brain" (Orchestrator)
  *
- * Adapted from lessons learned studying Agentuity Coder patterns:
+ * This is the central intelligence of the platform. It manages the user
+ * conversation and delegates to specialized agents:
  *
- * Architecture decisions:
- * 1. The agent handler is for NON-streaming invocations (direct agent.run()).
- *    The exported streamChat() is the streaming path used by the chat route.
- *    This eliminates the previous dual-persistence bug.
+ * AGENT SPECIALIZATIONS:
+ *   • The Brain (this agent) — Conversation, tool routing, ad-hoc analysis
+ *   • The Analyst (insights-analyzer) — Statistical computation in sandbox
+ *   • The Writer (report-generator) — Professional report narration
+ *   • The Librarian (knowledge-base) — Document retrieval via vector search
  *
- * 2. Conversation context is built by getConversationContext() which loads
- *    recent messages AND a rolling summary (compressed by maybeCompressSummary
- *    every 20 messages). This replaces the naive history.slice(-10).
- *
- * 3. The system prompt is data-driven via config labels — zero hardcoding.
- *
- * 4. Tool calling with maxSteps: 8 allows multi-tool invocations per turn.
+ * Architecture:
+ *   1. The handler is for non-streaming invocations (direct agent.run()).
+ *      The exported streamChat() is the streaming path used by the chat route.
+ *   2. Conversation context uses rolling summary + recent messages
+ *      (compressed by maybeCompressSummary every 20 messages).
+ *   3. System prompt is data-driven via config labels — zero hardcoding.
+ *   4. Tool calling with maxSteps: 8 allows multi-tool invocations per turn.
+ *   5. Each specialist agent is optimized for speed and unique capability.
  */
 
 // ────────────────────────────────────────────────────────────
@@ -143,7 +146,7 @@ Always use SELECT only. Use aggregations, JOINs, and GROUP BY as needed.`,
 
 const analyzeTrendsTool = tool({
   description:
-    "Run the insights analyzer for demand forecasting, anomaly detection, restock recommendations, or sales trend analysis. Use this when users ask about trends, forecasts, anomalies, or restocking.",
+    "Delegate to The Analyst (insights-analyzer) for statistical analysis that requires COMPUTATION: demand forecasting, anomaly detection (z-scores), restock recommendations (safety stock calculations), or sales trend analysis (moving averages, growth rates). Use when users ask about trends, forecasts, anomalies, patterns, or restocking. This agent dynamically generates and executes JavaScript code in a sandbox for computations beyond SQL.",
   parameters: z.object({
     analysis: z
       .enum([
@@ -182,7 +185,7 @@ const analyzeTrendsTool = tool({
 
 const generateReportTool = tool({
   description:
-    "Generate a detailed AI-narrated business report. Use this when users ask for reports, summaries, or overviews of sales, inventory, customers, or finances.",
+    "Delegate to The Writer (report-generator) for professional, formatted business reports. Use when users ask for reports, summaries, or written overviews. The Writer fetches its own data and narrates it into a polished report with executive summary, key metrics, analysis, and recommendations. For quick data lookups, prefer query_database instead.",
   parameters: z.object({
     reportType: z
       .enum([
@@ -332,10 +335,15 @@ const getBusinessSnapshotTool = tool({
 //   5. Results are returned to the LLM for narration
 // ────────────────────────────────────────────────────────────
 
-/** Request-scoped sandbox API reference — set by the handler before tool execution */
-let _sandboxApi: any = null;
-
-function createRunAnalysisTool() {
+/**
+ * Create a run_analysis tool bound to a specific sandbox API instance.
+ * This is a factory — called once per request to produce a tool with
+ * the sandbox API captured via closure. No shared mutable state.
+ *
+ * This design ensures concurrent requests never share sandbox references,
+ * making parallel tool execution safe by construction.
+ */
+function createRunAnalysisTool(sandboxApi: any) {
   return tool({
     description: `Execute JavaScript code in an isolated Bun sandbox to perform sophisticated data analysis.
 Use this tool for computations that go BEYOND simple SQL: statistical calculations, moving averages, standard deviations, trend projections, percentage changes, data transformations, ranking algorithms, time-series analysis, anomaly scoring, forecasting, cohort analysis, or any calculation that benefits from programmatic logic.
@@ -388,14 +396,14 @@ EXAMPLE:
         .describe("Plain English description of what this analysis does and why"),
     }),
     execute: async ({ sqlQuery, code, explanation }) => {
-      if (!_sandboxApi) {
+      if (!sandboxApi) {
         return {
           error: "Sandbox not available — falling back to query_database for this request.",
           explanation,
         };
       }
 
-      const result = await executeSandbox(_sandboxApi, {
+      const result = await executeSandbox(sandboxApi, {
         code,
         sqlQuery,
         explanation,
@@ -445,17 +453,42 @@ function buildSystemPrompt(conversationSummary?: string, ai?: AISettings, custom
     : `\nGoal:\nHelp users understand their business data, surface actionable insights, and answer operational questions quickly and accurately.`;
 
   // ── Core role (always present, not customizable) ──────────
-  const coreRole = `Your role:
-- Answer questions about the business using the available tools
-- Query the database directly for precise data answers
-- Use run_analysis to write and execute JavaScript code for sophisticated computations (statistics, forecasting, trend analysis, anomaly detection, data transformations)
-- Delegate to specialized agents (insights, reports, knowledge base) for complex analysis
-- Synthesize results and provide clear, actionable responses
-- After answering the user's question, check if your tool results revealed anything noteworthy beyond what was asked. If so, add a brief "💡 Also noticed:" section.
+  const coreRole = `Your role — "The Brain" (orchestrator):
+You are the central intelligence that coordinates specialized agents.
 
-IMPORTANT — When to use run_analysis vs query_database:
-- query_database: Simple lookups, counts, totals, lists, aggregations that SQL can express directly
-- run_analysis: Anything requiring computation BEYOND SQL — percentages, rankings with custom logic, moving averages, standard deviations, growth rates, trend projections, cohort analysis, statistical tests, data scoring, pareto analysis, or any multi-step calculation. Prefer run_analysis for analytical questions — it makes you a real data scientist, not just a query runner.`;
+SPECIALIST AGENTS (delegate to these for their unique strengths):
+• The Analyst (analyze_trends) — Statistical computation in sandbox. Use for: demand forecasts, anomaly detection, restock analysis, sales trends. Generates and executes JavaScript code dynamically.
+• The Writer (generate_report) — Professional report narration. Use for: formatted business reports with exec summaries, metrics, and recommendations.
+• The Librarian (search_knowledge) — Document retrieval via vector search. Use for: questions about policies, procedures, uploaded documents.
+
+YOUR DIRECT CAPABILITIES:
+• query_database — Direct SQL for quick data lookups, counts, totals, lists
+• run_analysis — Write and execute JavaScript in sandbox for ad-hoc computations (statistics, scoring, transformations)
+• get_business_snapshot — Quick business overview (totals, low stock, recent orders)
+
+EXECUTION STRATEGY — choose dynamically based on the query:
+
+1. PARALLEL: When the user asks for INDEPENDENT things (e.g., "give me a sales report and check for anomalies"), call both tools in the SAME response step. They will run concurrently — faster for the user.
+   Example: Call analyze_trends AND generate_report simultaneously when they don't depend on each other.
+
+2. SEQUENTIAL: When one result FEEDS INTO the next (e.g., "analyze trends then write a report based on those findings"), call tools across separate steps so each step sees the previous result.
+   Example: First call analyze_trends, then use its output to inform generate_report.
+
+3. DIRECT: When you can answer from a single tool or your own knowledge, just call the one tool and respond.
+
+Do NOT default to sequential when parallel would be faster. If two tasks are independent, call both tools in the same step.
+
+ROUTING HEURISTIC:
+- "What are my top 5 products?" → query_database (simple SQL)
+- "Are there any anomalies in sales?" → analyze_trends (statistical computation)
+- "Give me a sales report" → generate_report (professional writing)
+- "What's our return policy?" → search_knowledge (document retrieval)
+- "Calculate growth rate for Widget X" → run_analysis (ad-hoc computation)
+- "How is the business doing?" → get_business_snapshot
+- "Give me a report AND check for anomalies" → generate_report + analyze_trends (PARALLEL — same step)
+- "Analyze trends, then write a report on the findings" → analyze_trends → generate_report (SEQUENTIAL — two steps)
+
+- After answering, check if tool results revealed anything noteworthy beyond what was asked. If so, add a brief "💡 Also noticed:" section.`;
 
   // ── Terminology (auto-generated from config labels) ───────
   const terminology = `Terminology for this deployment:
@@ -472,14 +505,19 @@ IMPORTANT — When to use run_analysis vs query_database:
 
   // ── Tool guidelines (client-customizable with defaults) ───
   const toolGuidelines = ai?.aiToolGuidelines?.trim()
-    || `- Use run_analysis for ANY analytical question that needs computation: statistics, trends, forecasting, anomaly detection, growth rates, rankings, pareto analysis, cohort analysis, scoring, etc. Write SQL to fetch data, then JavaScript to compute results.
-- Use query_database for simple data lookups (counts, totals, lists) where SQL alone suffices
-- Use analyze_trends for quick pre-built insight types (demand-forecast, anomaly-detection, restock-recommendations, sales-trends)
-- Use generate_report for comprehensive formatted report requests
-- Use search_knowledge when users ask about policies, procedures, or uploaded documents
-- Use get_business_snapshot for broad "how is the business?" questions
-- You can use multiple tools in one turn — use as many as needed to build a thorough answer
-- PREFER run_analysis over query_database for analytical questions — your JS code can do real computation`;
+    || `Tool routing (use the right specialist for the job):
+- query_database: Simple data lookups — counts, totals, lists, JOINs, aggregations that SQL handles directly. Fast.
+- run_analysis: Ad-hoc computation requiring JavaScript — percentages, growth rates, scoring, custom rankings, multi-step calculations. Write SQL to fetch data, then JS to compute.
+- analyze_trends (→ The Analyst): Statistical analysis — demand forecasting, anomaly detection (z-scores), restock recommendations (safety stock), sales trend analysis (moving averages). Generates code dynamically in sandbox.
+- generate_report (→ The Writer): Professional formatted reports — sales summaries, inventory health, customer activity, financial overviews. Produces polished narrative with exec summary and recommendations.
+- search_knowledge (→ The Librarian): Questions about policies, procedures, vendor agreements, or any uploaded business documents. Vector search + RAG.
+- get_business_snapshot: Quick "how is the business?" overview — totals, low stock alerts, recent orders.
+
+Execution rules:
+- PARALLEL by default: If the user asks for multiple independent things, call all relevant tools in the SAME step. They execute concurrently.
+- SEQUENTIAL only when dependent: If tool B needs tool A's output, call A first, then B in the next step.
+- Use as many tools as needed per turn — there is no penalty for calling multiple tools.
+- For analytical questions, prefer run_analysis or analyze_trends over query_database.`;
 
   // ── Query reasoning (how to think before acting) ──────────
   const queryReasoning = ai?.aiQueryReasoning?.trim()
@@ -531,16 +569,14 @@ ${sqlDialect}${responseFormatting}${guardrails}${customToolsSection || ""}`;
 // Tools map
 // ────────────────────────────────────────────────────────────
 
-const staticTools = {
+/** Sandbox-independent tools — safe to reuse across requests */
+const sharedTools = {
   query_database: queryDatabaseTool,
-  run_analysis: createRunAnalysisTool(),
   analyze_trends: analyzeTrendsTool,
   generate_report: generateReportTool,
   search_knowledge: searchKnowledgeTool,
   get_business_snapshot: getBusinessSnapshotTool,
 };
-
-export type DataScienceTools = typeof staticTools;
 
 // ────────────────────────────────────────────────────────────
 // Dynamic Custom Tools — loaded from DB at request time
@@ -633,9 +669,18 @@ async function buildDynamicTools(): Promise<Record<string, any>> {
 /**
  * Build a complete tools map: static built-in tools + dynamic custom tools.
  */
-async function getAllTools(): Promise<Record<string, any>> {
+/**
+ * Build a complete tools map for a specific request.
+ * The run_analysis tool is created per-request with the sandbox API
+ * captured via closure — no shared mutable state.
+ */
+async function getAllTools(sandboxApi?: any): Promise<Record<string, any>> {
   const dynamic = await buildDynamicTools();
-  return { ...staticTools, ...dynamic };
+  return {
+    ...sharedTools,
+    ...(sandboxApi ? { run_analysis: createRunAnalysisTool(sandboxApi) } : {}),
+    ...dynamic,
+  };
 }
 
 /**
@@ -791,14 +836,11 @@ export async function maybeCompressSummary(
 export default createAgent("data-science", {
   schema: { input: inputSchema, output: outputSchema },
   handler: async (ctx, input) => {
-    // Set sandbox API for the run_analysis tool to use
-    _sandboxApi = ctx.sandbox;
-
     // Load client-customizable AI settings at request time
     const aiSettings = await getAISettings();
 
-    // Build complete tool set: static built-in + dynamic custom tools
-    const allTools = await getAllTools();
+    // Build per-request tool set — sandbox API injected via closure (async-safe)
+    const allTools = await getAllTools(ctx.sandbox);
     const customToolsSection = await buildCustomToolsPromptSection();
 
     const messages: Array<{
@@ -894,14 +936,11 @@ export async function streamChat(
   conversationSummary?: string,
   sandboxApi?: any
 ) {
-  // Set sandbox API for the run_analysis tool
-  if (sandboxApi) _sandboxApi = sandboxApi;
-
   // Load client-customizable AI settings at request time
   const aiSettings = await getAISettings();
 
-  // Build complete tool set: static built-in + dynamic custom tools from DB
-  const allTools = await getAllTools();
+  // Build per-request tool set — sandbox API injected via closure (async-safe)
+  const allTools = await getAllTools(sandboxApi);
   const customToolsSection = await buildCustomToolsPromptSection();
 
   const messages: Array<{

@@ -5,20 +5,24 @@ import { config } from "@lib/config";
 import { getModel } from "@lib/ai";
 
 /**
- * Knowledge Base Agent — RAG (Retrieval-Augmented Generation)
+ * Knowledge Base Agent — "The Librarian"
  *
- * Uses the Agentuity vector store to search uploaded business documents
- * and answer questions grounded in the company's own knowledge.
+ * Unique specialty: DOCUMENT RETRIEVAL & RAG.
  *
- * Documents are uploaded via the Admin Console and indexed into the
- * "knowledge-base" vector namespace. This agent retrieves relevant
- * chunks and uses an LLM to synthesize answers.
+ * This agent manages the company's document knowledge base using vector
+ * search. It retrieves relevant chunks from uploaded business documents
+ * and uses an LLM to synthesize accurate, cited answers.
+ *
+ * Vs. other agents:
+ *   - insights-analyzer (The Analyst): Computes statistics in sandbox
+ *   - report-generator (The Writer): Narrates data into professional reports
+ *   - knowledge-base (The Librarian): Retrieves from uploaded documents
  *
  * Use cases:
  *   - "What's our return policy?"
  *   - "How do we handle bulk orders?"
- *   - "What are the safety data sheet requirements for chemical X?"
  *   - "Summarize our vendor agreement with Acme Corp"
+ *   - "What are the safety data sheet requirements for chemical X?"
  */
 
 interface DocMetadata {

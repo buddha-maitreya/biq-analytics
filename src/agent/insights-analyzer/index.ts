@@ -1,33 +1,44 @@
-import { createAgent } from "@agentuity/runtime";
-import { generateObject } from "ai";
+﻿import { createAgent } from "@agentuity/runtime";
+import { generateText, generateObject, tool } from "ai";
 import { z } from "zod";
-import { db } from "@db/index";
-import { sql } from "drizzle-orm";
 import { config } from "@lib/config";
 import { getModel } from "@lib/ai";
 import { executeSandbox } from "@lib/sandbox";
-import type { SandboxResult } from "@lib/sandbox";
 import { getAISettings } from "@services/settings";
 
 /**
- * Insights Analyzer Agent — AI + Sandbox-powered business intelligence.
+ * Insights Analyzer Agent — "The Analyst"
  *
- * Architecture (v2 — sandbox-powered):
- *   1. Fetch raw data from DB using efficient SQL queries
- *   2. Execute statistical analysis JavaScript in an isolated Bun sandbox
- *      (moving averages, standard deviations, trend projections, anomaly scoring,
- *       velocity calculations, reorder point optimization, etc.)
- *   3. Feed the computed analytics TO the LLM for human-readable interpretation
+ * Unique specialty: COMPUTATIONAL INTELLIGENCE.
  *
- * This is a REAL analytical agent — the sandbox does genuine computation
- * that LLMs can't reliably do (math, statistics, precise calculations),
- * while the LLM provides expert business interpretation of the results.
+ * This agent is the platform's data scientist. It uses the Agentuity
+ * sandbox to execute dynamically-generated JavaScript code for
+ * statistical analysis that goes BEYOND what SQL can express:
+ * z-scores, moving averages, trend projections, anomaly scoring,
+ * demand forecasting, pareto analysis, cohort comparisons, etc.
  *
- * Capabilities:
- *   - Demand forecasting: moving averages, velocity projections, stockout ETAs
- *   - Anomaly detection: z-score analysis, IQR outliers, spike detection
- *   - Restock recommendations: velocity-based EOQ, safety stock calculations
- *   - Sales trends: growth rates, momentum scoring, seasonality detection
+ * Vs. other agents:
+ *   - insights-analyzer (The Analyst): Computes statistics in sandbox
+ *   - report-generator (The Writer): Narrates data into reports (no sandbox)
+ *   - knowledge-base (The Librarian): Retrieves from uploaded documents
+ *
+ * Speed optimizations:
+ *   - Uses gpt-4o-mini for the structuring step (fast, cheap)
+ *   - Main model for code generation (needs quality)
+ *   - maxSteps: 5 limits tool-calling rounds
+ *
+ * Original Insights Analyzer Agent â€” AI + Sandbox-powered business intelligence.
+ *
+ * Architecture (v3 â€” fully dynamic, LLM-generated code):
+ *   1. The LLM receives the analysis request and database schema
+ *   2. The LLM WRITES its own SQL query to fetch relevant data
+ *   3. The LLM WRITES JavaScript code to perform statistical analysis
+ *   4. The sandbox executes the LLM-generated code in isolated bun:1
+ *   5. The LLM interprets the computed results into business insights
+ *
+ * The code is generated ON THE FLY â€” not from templates. This means the
+ * agent can adapt its analysis approach to any data shape, any question,
+ * and any business context. It's a real data scientist, not a template runner.
  */
 
 const inputSchema = z.object({
@@ -59,518 +70,206 @@ const outputSchema = z.object({
   summary: z.string(),
 });
 
-// ────────────────────────────────────────────────────────────
-// Sandbox analysis code for each analysis type
-// ────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Database schema reference (injected into LLM prompt)
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-/** Demand forecasting — moving averages, velocity, stockout projections */
-const DEMAND_FORECAST_CODE = `
-// DATA = { dailySales, stockLevels }
-const { dailySales, stockLevels } = DATA;
+const DB_SCHEMA = `PostgreSQL database schema:
 
-// Group daily sales by product
-const byProduct = {};
-for (const row of dailySales) {
-  if (!byProduct[row.product_name]) byProduct[row.product_name] = { sku: row.sku, days: {} };
-  byProduct[row.product_name].days[row.date] = (byProduct[row.product_name].days[row.date] || 0) + Number(row.quantity);
-}
+Tables:
+- products(id uuid, sku varchar, name varchar, description text, category_id uuid, unit varchar, price numeric, cost_price numeric, tax_rate numeric, barcode varchar, is_consumable boolean, is_sellable boolean, is_active boolean, min_stock_level int, max_stock_level int, reorder_point int, metadata jsonb, created_at timestamptz, updated_at timestamptz)
+- categories(id uuid, name varchar, description text, parent_id uuid, sort_order int, is_active boolean)
+- warehouses(id uuid, name varchar, code varchar, address text, is_active boolean, is_default boolean)
+- inventory(id uuid, product_id uuid FK->products, warehouse_id uuid FK->warehouses, quantity int, metadata jsonb)
+- inventory_transactions(id uuid, product_id uuid FK->products, warehouse_id uuid FK->warehouses, type varchar, quantity int, reference_type varchar, reference_id uuid, notes text, created_at timestamptz)
+- customers(id uuid, name varchar, email varchar, phone varchar, address text, is_active boolean, metadata jsonb, created_at timestamptz)
+- orders(id uuid, order_number varchar, customer_id uuid FK->customers, status_id uuid FK->order_statuses, total_amount numeric, tax_amount numeric, discount_amount numeric, notes text, metadata jsonb, created_at timestamptz)
+- order_items(id uuid, order_id uuid FK->orders, item_type varchar, product_id uuid FK->products, service_id uuid, description text, quantity numeric, unit_price numeric, total_amount numeric)
+- order_statuses(id uuid, name varchar, color varchar, sort_order int, is_default boolean, is_final boolean)
+- invoices(id uuid, invoice_number varchar, order_id uuid FK->orders, customer_id uuid FK->customers, total_amount numeric, paid_amount numeric, status varchar, due_date timestamptz, created_at timestamptz)
+- payments(id uuid, invoice_id uuid FK->invoices, amount numeric, payment_method varchar, reference varchar, created_at timestamptz)
 
-// Build stock lookup
-const stockMap = {};
-for (const s of stockLevels) stockMap[s.product_name] = { qty: Number(s.quantity), reorder: Number(s.reorder_point) || 0 };
+Key relationships:
+- order_items.product_id -> products.id (what was sold)
+- order_items.order_id -> orders.id (which order)
+- orders.customer_id -> customers.id (who bought)
+- inventory.product_id -> products.id (stock levels)
+- inventory_transactions tracks all stock movements
 
-// Analyze each product
-const forecasts = [];
-for (const [name, data] of Object.entries(byProduct)) {
-  const dates = Object.keys(data.days).sort();
-  const values = dates.map(d => data.days[d]);
-  const totalDays = dates.length || 1;
+SQL DIALECT: PostgreSQL. Use INTERVAL, ILIKE, STRING_AGG, EXTRACT, date_trunc, etc. NEVER MySQL syntax.`;
 
-  // Simple moving average (7-day and 14-day)
-  const last7 = values.slice(-7);
-  const last14 = values.slice(-14);
-  const avg7 = last7.reduce((a, b) => a + b, 0) / (last7.length || 1);
-  const avg14 = last14.reduce((a, b) => a + b, 0) / (last14.length || 1);
-  const totalAvg = values.reduce((a, b) => a + b, 0) / totalDays;
-
-  // Velocity trend
-  const velocityChange = last7.length >= 2 && last14.length >= 2 ? ((avg7 - avg14) / (avg14 || 1)) * 100 : 0;
-
-  // Current stock and days until stockout
-  const stock = stockMap[name] || { qty: 0, reorder: 0 };
-  const daysUntilStockout = avg7 > 0 ? Math.floor(stock.qty / avg7) : Infinity;
-  const daysUntilReorder = avg7 > 0 ? Math.max(0, Math.floor((stock.qty - stock.reorder) / avg7)) : Infinity;
-
-  // Standard deviation for variability
-  const mean = totalAvg;
-  const variance = values.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / (totalDays || 1);
-  const stdDev = Math.sqrt(variance);
-  const cv = mean > 0 ? (stdDev / mean) * 100 : 0;
-
-  forecasts.push({
-    product: name, sku: data.sku,
-    avgDailyDemand: Math.round(totalAvg * 100) / 100,
-    avg7Day: Math.round(avg7 * 100) / 100,
-    avg14Day: Math.round(avg14 * 100) / 100,
-    velocityChangePct: Math.round(velocityChange * 10) / 10,
-    demandVariability: Math.round(cv * 10) / 10,
-    currentStock: stock.qty, reorderPoint: stock.reorder,
-    daysUntilStockout: daysUntilStockout === Infinity ? null : daysUntilStockout,
-    daysUntilReorder: daysUntilReorder === Infinity ? null : daysUntilReorder,
-    riskLevel: daysUntilStockout <= 3 ? 'critical' : daysUntilStockout <= 7 ? 'warning' : 'ok',
-  });
-}
-
-// Sort by risk (critical first), then by days until stockout
-forecasts.sort((a, b) => {
-  const riskOrder = { critical: 0, warning: 1, ok: 2 };
-  if (riskOrder[a.riskLevel] !== riskOrder[b.riskLevel]) return riskOrder[a.riskLevel] - riskOrder[b.riskLevel];
-  return (a.daysUntilStockout ?? 999) - (b.daysUntilStockout ?? 999);
-});
-
-return {
-  type: 'demand-forecast',
-  productCount: forecasts.length,
-  criticalCount: forecasts.filter(f => f.riskLevel === 'critical').length,
-  warningCount: forecasts.filter(f => f.riskLevel === 'warning').length,
-  forecasts: forecasts.slice(0, 20),
-};
-`;
-
-/** Anomaly detection — z-score analysis, IQR outliers */
-const ANOMALY_DETECTION_CODE = `
-// DATA = { dailyOrders, productSales }
-const { dailyOrders, productSales } = DATA;
-
-const anomalies = [];
-const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
-const stdDev = (arr) => {
-  const m = mean(arr);
-  return Math.sqrt(arr.reduce((s, v) => s + Math.pow(v - m, 2), 0) / arr.length);
-};
-
-// --- Daily order anomalies (z-score method) ---
-if (dailyOrders.length >= 7) {
-  const counts = dailyOrders.map(d => Number(d.order_count));
-  const revenues = dailyOrders.map(d => Number(d.total_revenue));
-  const countMean = mean(counts), countStd = stdDev(counts);
-  const revMean = mean(revenues), revStd = stdDev(revenues);
-
-  for (const day of dailyOrders) {
-    const countZ = countStd > 0 ? (Number(day.order_count) - countMean) / countStd : 0;
-    const revZ = revStd > 0 ? (Number(day.total_revenue) - revMean) / revStd : 0;
-    if (Math.abs(countZ) > 2) {
-      anomalies.push({ type: 'order_volume', date: day.date, value: Number(day.order_count), expected: Math.round(countMean), zScore: Math.round(countZ * 100) / 100, direction: countZ > 0 ? 'spike' : 'drop', severity: Math.abs(countZ) > 3 ? 'critical' : 'warning' });
-    }
-    if (Math.abs(revZ) > 2) {
-      anomalies.push({ type: 'revenue', date: day.date, value: Number(day.total_revenue), expected: Math.round(revMean), zScore: Math.round(revZ * 100) / 100, direction: revZ > 0 ? 'spike' : 'drop', severity: Math.abs(revZ) > 3 ? 'critical' : 'warning' });
-    }
-  }
-}
-
-// --- Product-level anomalies (IQR method for pricing) ---
-if (productSales.length >= 5) {
-  const prices = productSales.map(p => Number(p.avg_price)).sort((a, b) => a - b);
-  const q1 = prices[Math.floor(prices.length * 0.25)];
-  const q3 = prices[Math.floor(prices.length * 0.75)];
-  const iqr = q3 - q1;
-
-  for (const p of productSales) {
-    const price = Number(p.avg_price);
-    if (price < q1 - 1.5 * iqr || price > q3 + 1.5 * iqr) {
-      anomalies.push({ type: 'pricing', product: p.product_name, sku: p.sku, avgPrice: price, priceRange: { q1, q3 }, direction: price > q3 + 1.5 * iqr ? 'high' : 'low', severity: 'warning' });
-    }
-  }
-
-  // Volume anomalies (IQR on quantity)
-  const quantities = productSales.map(p => Number(p.total_quantity)).sort((a, b) => a - b);
-  const qtyQ1 = quantities[Math.floor(quantities.length * 0.25)];
-  const qtyQ3 = quantities[Math.floor(quantities.length * 0.75)];
-  const qtyIqr = qtyQ3 - qtyQ1;
-
-  for (const p of productSales) {
-    const qty = Number(p.total_quantity);
-    if (qty > qtyQ3 + 2 * qtyIqr && qty > 10) {
-      anomalies.push({ type: 'sales_volume', product: p.product_name, sku: p.sku, quantity: qty, expectedRange: { q1: qtyQ1, q3: qtyQ3 }, severity: 'info', direction: 'unusually high' });
-    }
-  }
-}
-
-const sevOrder = { critical: 0, warning: 1, info: 2 };
-anomalies.sort((a, b) => (sevOrder[a.severity] || 2) - (sevOrder[b.severity] || 2));
-
-return { type: 'anomaly-detection', totalAnomalies: anomalies.length, criticalCount: anomalies.filter(a => a.severity === 'critical').length, warningCount: anomalies.filter(a => a.severity === 'warning').length, anomalies: anomalies.slice(0, 25) };
-`;
-
-/** Restock recommendations — velocity-based EOQ, safety stock */
-const RESTOCK_CODE = `
-// DATA = { salesVelocity, stock }
-const { salesVelocity, stock } = DATA;
-
-const stockMap = {};
-for (const s of stock) stockMap[s.product_name] = s;
-
-const recommendations = [];
-for (const item of salesVelocity) {
-  const s = stockMap[item.product_name];
-  if (!s) continue;
-
-  const currentQty = Number(s.quantity);
-  const reorderPt = Number(s.reorder_point) || 0;
-  const minStock = Number(s.min_stock) || 0;
-  const maxStock = Number(s.max_stock) || 0;
-  const dailyVelocity = Number(item.total_sold) / 30;
-  const leadTimeDays = 7;
-  const safetyStock = Math.ceil(dailyVelocity * leadTimeDays * 1.5);
-  const targetStock = maxStock > 0 ? maxStock : Math.ceil(dailyVelocity * 30 + safetyStock);
-  const orderQty = Math.max(0, targetStock - currentQty);
-  const daysRemaining = dailyVelocity > 0 ? currentQty / dailyVelocity : Infinity;
-
-  let urgency = 'low';
-  if (currentQty <= 0) urgency = 'out-of-stock';
-  else if (currentQty <= reorderPt || daysRemaining <= 3) urgency = 'critical';
-  else if (currentQty <= minStock || daysRemaining <= 7) urgency = 'high';
-  else if (daysRemaining <= 14) urgency = 'medium';
-
-  if (orderQty > 0 || urgency !== 'low') {
-    recommendations.push({ product: item.product_name, sku: item.sku, currentStock: currentQty, dailyVelocity: Math.round(dailyVelocity * 100) / 100, daysRemaining: daysRemaining === Infinity ? null : Math.round(daysRemaining), safetyStock, reorderPoint: reorderPt, suggestedOrderQty: orderQty, targetStock, urgency, orderCount: Number(item.order_count) });
-  }
-}
-
-const urgencyOrder = { 'out-of-stock': 0, critical: 1, high: 2, medium: 3, low: 4 };
-recommendations.sort((a, b) => (urgencyOrder[a.urgency] || 4) - (urgencyOrder[b.urgency] || 4));
-
-return { type: 'restock-recommendations', totalRecommendations: recommendations.length, outOfStock: recommendations.filter(r => r.urgency === 'out-of-stock').length, criticalCount: recommendations.filter(r => r.urgency === 'critical').length, highCount: recommendations.filter(r => r.urgency === 'high').length, recommendations: recommendations.slice(0, 20) };
-`;
-
-/** Sales trends — growth rates, momentum, seasonality */
-const SALES_TRENDS_CODE = `
-// DATA = { weeklyRevenue, productTrends, dailyRevenue }
-const { weeklyRevenue, productTrends, dailyRevenue } = DATA;
-
-// --- Overall trend ---
-const weeks = weeklyRevenue.map(w => ({ week: w.week, revenue: Number(w.revenue), orders: Number(w.order_count) }));
-let overallGrowth = 0;
-let revenueDirection = 'flat';
-if (weeks.length >= 2) {
-  const firstHalf = weeks.slice(0, Math.floor(weeks.length / 2));
-  const secondHalf = weeks.slice(Math.floor(weeks.length / 2));
-  const firstAvg = firstHalf.reduce((s, w) => s + w.revenue, 0) / firstHalf.length;
-  const secondAvg = secondHalf.reduce((s, w) => s + w.revenue, 0) / secondHalf.length;
-  overallGrowth = firstAvg > 0 ? ((secondAvg - firstAvg) / firstAvg) * 100 : 0;
-  revenueDirection = overallGrowth > 5 ? 'growing' : overallGrowth < -5 ? 'declining' : 'stable';
-}
-
-const totalRevenue = weeks.reduce((s, w) => s + w.revenue, 0);
-const totalOrders = weeks.reduce((s, w) => s + w.orders, 0);
-const avgWeeklyRevenue = weeks.length > 0 ? totalRevenue / weeks.length : 0;
-const peakWeek = weeks.reduce((max, w) => w.revenue > max.revenue ? w : max, weeks[0] || { week: 'N/A', revenue: 0 });
-
-// --- Product momentum ---
-const productMomentum = productTrends.map(p => {
-  const w = [Number(p.week1_qty), Number(p.week2_qty), Number(p.week3_qty), Number(p.week4_qty)].filter(v => !isNaN(v));
-  const recent = w.slice(-2);
-  const earlier = w.slice(0, 2);
-  const recentAvg = recent.reduce((a, b) => a + b, 0) / (recent.length || 1);
-  const earlierAvg = earlier.reduce((a, b) => a + b, 0) / (earlier.length || 1);
-  const momentum = earlierAvg > 0 ? ((recentAvg - earlierAvg) / earlierAvg) * 100 : 0;
-  return { product: p.product_name, sku: p.sku, totalRevenue: Number(p.total_revenue), momentumPct: Math.round(momentum * 10) / 10, trend: momentum > 15 ? 'accelerating' : momentum < -15 ? 'decelerating' : 'steady', weeklyUnits: w };
-});
-
-const sorted = [...productMomentum].sort((a, b) => b.momentumPct - a.momentumPct);
-const topGrowers = sorted.filter(p => p.trend === 'accelerating').slice(0, 5);
-const topDecliners = sorted.filter(p => p.trend === 'decelerating').slice(0, 5);
-
-// --- Day-of-week pattern ---
-const dayTotals = {};
-for (const d of dailyRevenue) {
-  const day = new Date(d.date).toLocaleDateString('en-US', { weekday: 'long' });
-  dayTotals[day] = (dayTotals[day] || 0) + Number(d.revenue);
-}
-const dayPattern = Object.entries(dayTotals).map(([day, rev]) => ({ day, revenue: Math.round(rev * 100) / 100 })).sort((a, b) => b.revenue - a.revenue);
-
-return { type: 'sales-trends', overall: { totalRevenue: Math.round(totalRevenue * 100) / 100, totalOrders, avgWeeklyRevenue: Math.round(avgWeeklyRevenue * 100) / 100, growthPct: Math.round(overallGrowth * 10) / 10, direction: revenueDirection, peakWeek: peakWeek?.week, peakRevenue: Math.round((peakWeek?.revenue || 0) * 100) / 100 }, topGrowers, topDecliners, dayOfWeekPattern: dayPattern, weeklyBreakdown: weeks };
-`;
-
-// ────────────────────────────────────────────────────────────
-// SQL queries for each analysis type
-// ────────────────────────────────────────────────────────────
-
-function getDemandForecastSQL(days: number): string {
-  return `
-    SELECT json_build_object(
-      'dailySales', (
-        SELECT COALESCE(json_agg(row_to_json(t)), '[]')
-        FROM (
-          SELECT o.created_at::date as date, p.name as product_name, p.sku,
-                 SUM(oi.quantity) as quantity, SUM(oi.total_amount) as revenue
-          FROM order_items oi
-          JOIN products p ON oi.product_id = p.id
-          JOIN orders o ON oi.order_id = o.id
-          WHERE o.created_at >= NOW() - INTERVAL '${days} days'
-          GROUP BY o.created_at::date, p.name, p.sku
-          ORDER BY date, product_name
-        ) t
-      ),
-      'stockLevels', (
-        SELECT COALESCE(json_agg(row_to_json(t)), '[]')
-        FROM (
-          SELECT p.name as product_name, p.sku, i.quantity, p.reorder_point
-          FROM inventory i
-          JOIN products p ON i.product_id = p.id
-          WHERE p.is_active = true
-        ) t
-      )
-    ) as data`;
-}
-
-function getAnomalyDetectionSQL(days: number): string {
-  return `
-    SELECT json_build_object(
-      'dailyOrders', (
-        SELECT COALESCE(json_agg(row_to_json(t)), '[]')
-        FROM (
-          SELECT created_at::date as date, COUNT(*) as order_count,
-                 SUM(total_amount) as total_revenue
-          FROM orders
-          WHERE created_at >= NOW() - INTERVAL '${days} days'
-          GROUP BY created_at::date
-          ORDER BY date
-        ) t
-      ),
-      'productSales', (
-        SELECT COALESCE(json_agg(row_to_json(t)), '[]')
-        FROM (
-          SELECT p.name as product_name, p.sku, SUM(oi.quantity) as total_quantity,
-                 SUM(oi.total_amount) as total_revenue, COUNT(DISTINCT oi.order_id) as order_count,
-                 AVG(oi.unit_price) as avg_price
-          FROM order_items oi
-          JOIN products p ON oi.product_id = p.id
-          JOIN orders o ON oi.order_id = o.id
-          WHERE o.created_at >= NOW() - INTERVAL '${days} days'
-          GROUP BY p.name, p.sku
-          HAVING SUM(oi.quantity) > 0
-        ) t
-      )
-    ) as data`;
-}
-
-function getRestockSQL(days: number): string {
-  return `
-    SELECT json_build_object(
-      'salesVelocity', (
-        SELECT COALESCE(json_agg(row_to_json(t)), '[]')
-        FROM (
-          SELECT p.name as product_name, p.sku, SUM(oi.quantity) as total_sold,
-                 COUNT(DISTINCT oi.order_id) as order_count, AVG(oi.quantity) as avg_per_order
-          FROM order_items oi
-          JOIN products p ON oi.product_id = p.id
-          JOIN orders o ON oi.order_id = o.id
-          WHERE o.created_at >= NOW() - INTERVAL '${days} days'
-          GROUP BY p.name, p.sku
-          ORDER BY SUM(oi.quantity) DESC
-          LIMIT 50
-        ) t
-      ),
-      'stock', (
-        SELECT COALESCE(json_agg(row_to_json(t)), '[]')
-        FROM (
-          SELECT p.name as product_name, p.sku, i.quantity,
-                 p.reorder_point, p.min_stock_level as min_stock, p.max_stock_level as max_stock
-          FROM inventory i
-          JOIN products p ON i.product_id = p.id
-          WHERE p.is_active = true
-        ) t
-      )
-    ) as data`;
-}
-
-function getSalesTrendsSQL(days: number): string {
-  return `
-    SELECT json_build_object(
-      'weeklyRevenue', (
-        SELECT COALESCE(json_agg(row_to_json(t)), '[]')
-        FROM (
-          SELECT date_trunc('week', created_at)::date as week,
-                 SUM(total_amount) as revenue, COUNT(*) as order_count
-          FROM orders
-          WHERE created_at >= NOW() - INTERVAL '${days} days'
-          GROUP BY week ORDER BY week
-        ) t
-      ),
-      'productTrends', (
-        SELECT COALESCE(json_agg(row_to_json(t)), '[]')
-        FROM (
-          SELECT p.name as product_name, p.sku,
-                 SUM(CASE WHEN o.created_at >= NOW() - INTERVAL '7 days' THEN oi.quantity ELSE 0 END) as week1_qty,
-                 SUM(CASE WHEN o.created_at >= NOW() - INTERVAL '14 days' AND o.created_at < NOW() - INTERVAL '7 days' THEN oi.quantity ELSE 0 END) as week2_qty,
-                 SUM(CASE WHEN o.created_at >= NOW() - INTERVAL '21 days' AND o.created_at < NOW() - INTERVAL '14 days' THEN oi.quantity ELSE 0 END) as week3_qty,
-                 SUM(CASE WHEN o.created_at >= NOW() - INTERVAL '${days} days' AND o.created_at < NOW() - INTERVAL '21 days' THEN oi.quantity ELSE 0 END) as week4_qty,
-                 SUM(oi.total_amount) as total_revenue
-          FROM order_items oi
-          JOIN products p ON oi.product_id = p.id
-          JOIN orders o ON oi.order_id = o.id
-          WHERE o.created_at >= NOW() - INTERVAL '${days} days'
-          GROUP BY p.name, p.sku
-          HAVING SUM(oi.quantity) > 0
-          ORDER BY SUM(oi.total_amount) DESC
-          LIMIT 30
-        ) t
-      ),
-      'dailyRevenue', (
-        SELECT COALESCE(json_agg(row_to_json(t)), '[]')
-        FROM (
-          SELECT created_at::date as date, SUM(total_amount) as revenue
-          FROM orders
-          WHERE created_at >= NOW() - INTERVAL '${days} days'
-          GROUP BY date ORDER BY date
-        ) t
-      )
-    ) as data`;
-}
-
-// ────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Agent definition
-// ────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export default createAgent("insights-analyzer", {
   schema: { input: inputSchema, output: outputSchema },
   handler: async (ctx, input) => {
-    // Load client-customizable AI settings
     const aiSettings = await getAISettings();
 
-    // Select the right SQL and analysis code
-    const sqlQueries: Record<string, string> = {
-      "demand-forecast": getDemandForecastSQL(input.timeframeDays),
-      "anomaly-detection": getAnomalyDetectionSQL(input.timeframeDays),
-      "restock-recommendations": getRestockSQL(input.timeframeDays),
-      "sales-trends": getSalesTrendsSQL(input.timeframeDays),
+    // â”€â”€ Build the sandbox tool (closes over ctx.sandbox) â”€â”€â”€â”€â”€â”€
+    const runAnalysisTool = tool({
+      description: `Execute a data analysis pipeline: run a SQL query to fetch data, then execute JavaScript code in a sandboxed Bun runtime to compute statistical results.
+The SQL results become the DATA variable (array of row objects) in the JavaScript code.
+Your JavaScript code MUST return a result object with the computed analysis.
+You have NO npm packages â€” use built-in JS/Bun APIs only (Math, Date, Array methods, etc).
+The sandbox has NO network access and a 30-second timeout.`,
+      parameters: z.object({
+        sqlQuery: z.string().describe("PostgreSQL SELECT query to fetch the data needed for analysis"),
+        code: z.string().describe("JavaScript code to analyze the data. DATA is the array of SQL result rows. Must RETURN a result object."),
+        explanation: z.string().describe("What this analysis step does"),
+      }),
+      execute: async ({ sqlQuery, code, explanation }) => {
+        const result = await executeSandbox(ctx.sandbox, {
+          code,
+          sqlQuery,
+          explanation,
+          timeoutMs: 30000,
+        });
+
+        if (!result.success) {
+          return { error: result.error, stderr: result.stderr, explanation };
+        }
+
+        return { result: result.result, dataRowCount: result.dataRowCount, explanation };
+      },
+    });
+
+    // â”€â”€ Analysis-specific prompts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const analysisPrompts: Record<string, string> = {
+      "demand-forecast": `Perform DEMAND FORECASTING analysis:
+- Fetch daily sales data and current stock levels for the last ${input.timeframeDays} days
+- Write JavaScript to compute: moving averages (7-day, 14-day), sales velocity, velocity acceleration/deceleration, days until stockout, demand variability (coefficient of variation)
+- Identify products at risk of stockout and products with accelerating/decelerating demand
+- Return structured data with per-product forecasts sorted by risk level`,
+
+      "anomaly-detection": `Perform ANOMALY DETECTION analysis:
+- Fetch daily order volumes, revenue, and per-product sales data for the last ${input.timeframeDays} days
+- Write JavaScript to compute: z-scores for daily volumes/revenue, IQR analysis for pricing outliers, volume spike detection
+- Flag any data point with |z-score| > 2 as anomalous
+- Return structured anomaly data with severity ratings, directions (spike/drop), and affected entities`,
+
+      "restock-recommendations": `Perform RESTOCK RECOMMENDATIONS analysis:
+- Fetch sales velocity data and current stock levels for the last ${input.timeframeDays} days
+- Write JavaScript to compute: daily velocity per product, safety stock (1.5x lead time buffer assuming 7-day lead time), optimal reorder quantities, days of stock remaining, urgency classification
+- Prioritize by urgency: out-of-stock > critical (â‰¤3 days) > high (â‰¤7 days) > medium (â‰¤14 days) > low
+- Return structured recommendations sorted by urgency`,
+
+      "sales-trends": `Perform SALES TRENDS analysis:
+- Fetch weekly revenue, daily revenue, and per-product weekly breakdown for the last ${input.timeframeDays} days
+- Write JavaScript to compute: overall growth rate (first half vs second half), product momentum scoring (recent vs earlier periods), day-of-week revenue patterns, peak identification
+- Classify products as accelerating (>15% momentum), decelerating (<-15%), or steady
+- Return structured trend data with overall metrics, top growers, top decliners, and day patterns`,
     };
 
-    const analysisCode: Record<string, string> = {
-      "demand-forecast": DEMAND_FORECAST_CODE,
-      "anomaly-detection": ANOMALY_DETECTION_CODE,
-      "restock-recommendations": RESTOCK_CODE,
-      "sales-trends": SALES_TRENDS_CODE,
-    };
+    // â”€â”€ Custom analysis instructions if configured â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const customInstructions = aiSettings.aiInsightsInstructions?.trim()
+      ? `\n\nAdditional business-specific instructions:\n${aiSettings.aiInsightsInstructions.trim()}`
+      : "";
 
-    const sqlQuery = sqlQueries[input.analysis];
-    const code = analysisCode[input.analysis];
+    const businessContext = aiSettings.aiBusinessContext?.trim()
+      ? `\n\nBusiness context:\n${aiSettings.aiBusinessContext.trim()}`
+      : "";
 
-    // ── Step 1: Fetch data from DB ────────────────────────────
-    let rawData: unknown;
-    try {
-      const result = await db.execute(sql.raw(sqlQuery));
-      const rows = Array.isArray(result) ? result : (result as any).rows ?? [];
-      rawData = rows[0]?.data || rows[0] || {};
-    } catch (err: any) {
-      ctx.logger.error(`SQL query failed for ${input.analysis}: ${err.message}`);
-      return {
-        analysisType: input.analysis,
-        generatedAt: new Date().toISOString(),
-        insights: [{
-          title: "Data Retrieval Error",
-          severity: "warning" as const,
-          description: `Could not fetch data for analysis: ${err.message}`,
-          recommendation: "Check database connectivity and table permissions.",
-          confidence: 1,
-        }],
-        summary: "Analysis could not be completed due to a data retrieval error.",
-      };
-    }
+    // â”€â”€ Step 1 & 2: LLM generates code, sandbox executes it â”€â”€
+    const { text: analysisNarrative, steps } = await generateText({
+      model: await getModel(),
+      system: `You are an expert data scientist and business analyst for ${config.companyName}.
+You have access to a tool that lets you:
+1. Write a SQL query to fetch data from the business database
+2. Write JavaScript code to perform statistical analysis on that data
+3. The code runs in an isolated Bun sandbox (no packages, no network â€” pure JS/Bun APIs)
 
-    // ── Step 2: Execute analysis in sandbox ───────────────────
-    let sandboxResult: SandboxResult;
-    try {
-      sandboxResult = await executeSandbox(ctx.sandbox, {
-        code,
-        explanation: `${input.analysis} analysis over ${input.timeframeDays} days`,
-        data: rawData,
-        timeoutMs: 30000,
-      });
-    } catch (err: any) {
-      ctx.logger.error(`Sandbox execution failed for ${input.analysis}: ${err.message}`);
-      return {
-        analysisType: input.analysis,
-        generatedAt: new Date().toISOString(),
-        insights: [{
-          title: "Analysis Engine Error",
-          severity: "warning" as const,
-          description: `Sandbox computation failed: ${err.message}`,
-          recommendation: "This is a system error. The analysis will be retried automatically.",
-          confidence: 1,
-        }],
-        summary: "Analysis computation could not be completed.",
-      };
-    }
+${DB_SCHEMA}
 
-    if (!sandboxResult.success) {
-      ctx.logger.warn(`Sandbox analysis returned error: ${sandboxResult.error}`);
-      return {
-        analysisType: input.analysis,
-        generatedAt: new Date().toISOString(),
-        insights: [{
-          title: "Analysis Computation Error",
-          severity: "warning" as const,
-          description: `Analysis computation error: ${sandboxResult.error}`,
-          recommendation: "The analysis code encountered an error. Some data may be insufficient for this analysis type.",
-          confidence: 0.5,
-        }],
-        summary: `${input.analysis} analysis could not be completed: ${sandboxResult.error}`,
-      };
-    }
+Terminology: Products are "${config.labels.product}" (plural: "${config.labels.productPlural}"), orders are "${config.labels.order}", customers are "${config.labels.customer}".
+Currency: ${config.currency}${businessContext}${customInstructions}
 
-    // ── Step 3: LLM interprets the computed analytics ─────────
-    const computedData = JSON.stringify(sandboxResult.result, null, 2);
+WORKFLOW:
+1. Use the run_analysis tool to fetch data and compute statistics. You may call it MULTIPLE times if needed (e.g., first fetch and analyze sales data, then fetch and analyze inventory data).
+2. After getting computed results, provide your expert interpretation as structured insights.
 
-    const defaultPrompts: Record<string, string> = {
-      "demand-forecast": `Interpret this demand forecast analysis. The data includes moving averages (7-day and 14-day), velocity trends, stockout projections, and demand variability scores. Focus on products at risk of stockout and provide specific, actionable restocking advice.`,
-      "anomaly-detection": `Interpret these detected anomalies. Z-scores and IQR analysis have been performed on order volumes, revenue, and pricing. Explain WHAT each anomaly means in business terms (not statistics), WHY it might have happened, and WHAT to do about it.`,
-      "restock-recommendations": `Interpret these restock recommendations. Velocity-based analysis with safety stock calculations has been performed. Prioritize by urgency. For each recommendation, explain why and suggest a specific action (quantity, timing).`,
-      "sales-trends": `Interpret these sales trend analytics. Growth rates, product momentum scoring, and day-of-week patterns have been calculated. Identify the key story: is the business growing? Which products are driving/dragging? Any seasonal patterns?`,
-    };
+IMPORTANT for your JavaScript code:
+- DATA is the array of SQL result row objects
+- You MUST return a result object (use \`return { ... }\`)
+- Use only built-in JS: Math, Date, Array methods, Object methods, etc.
+- Handle edge cases: empty arrays, zero denominators, null values
+- Convert numeric strings with Number()`,
+      prompt: `${analysisPrompts[input.analysis]}
 
-    const analysisPrompt = aiSettings.aiInsightsInstructions?.trim()
-      ? `${aiSettings.aiInsightsInstructions.trim()}\n\nAnalysis type: ${input.analysis}\nTimeframe: last ${input.timeframeDays} days`
-      : defaultPrompts[input.analysis];
+${input.productId ? `Focus on product ID: ${input.productId}` : "Analyze all active products."}
 
-    let systemPrompt = `You are an expert business intelligence analyst for ${config.companyName}.
-You are interpreting PRE-COMPUTED statistical analysis results (not raw data). The heavy computation has already been done — your job is to:
-1. Explain what the numbers mean in plain business language
-2. Identify the most important findings
-3. Provide specific, actionable recommendations
-4. Rate your confidence based on data quality
+After running your analysis, provide a comprehensive interpretation with:
+- Clear title for each finding
+- Severity (info/warning/critical)
+- Business-language description (not technical stats jargon)
+- Specific, actionable recommendation
+- Confidence level (0-1) based on data quality and sample size
+- Reference affected product names/SKUs where applicable`,
+      tools: { run_analysis: runAnalysisTool },
+      maxSteps: 5,
+    });
 
-Be specific — reference product names, SKUs, and exact numbers from the analysis.
-Use the deployment's terminology: products are called "${config.labels.product}", orders are "${config.labels.order}".
-Currency: ${config.currency}`;
-
-    if (aiSettings.aiBusinessContext?.trim()) {
-      systemPrompt += `\n\nBusiness context:\n${aiSettings.aiBusinessContext.trim()}`;
-    }
+    // â”€â”€ Step 3: Parse the LLM's structured response â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // The LLM provided narrative text after running tools. Now we
+    // ask it to structure the insights formally.
+    const toolResults = steps
+      .flatMap((s) => s.toolResults || [])
+      .map((tr: any) => tr.result)
+      .filter(Boolean);
 
     const { object } = await generateObject({
-      model: await getModel(),
+      model: await getModel("gpt-4o-mini"), // Fast model for structuring — saves 2-3s
       schema: z.object({
         insights: z.array(insightSchema),
         summary: z.string(),
       }),
-      system: systemPrompt,
-      prompt: `${analysisPrompt}
+      system: `You are formatting business insights into a structured JSON format.
+Use the analysis results and narrative below to produce structured insights.
+Each insight needs: title, severity (info/warning/critical), description, recommendation, affectedItems (product names/SKUs), confidence (0-1), and optional dataPoints.
+Also provide an overall summary paragraph.`,
+      prompt: `Analysis type: ${input.analysis}
+Timeframe: ${input.timeframeDays} days
 
-Computed analysis results:
-${computedData}`,
+Tool results:
+${JSON.stringify(toolResults, null, 2)}
+
+Narrative interpretation:
+${analysisNarrative}`,
     });
 
+    // Handle both the experimental_output path and fallback
+    const parsed = object ?? parseInsightsFromText(analysisNarrative);
+
     ctx.logger.info(
-      `Insights analysis complete (sandbox-powered): ${input.analysis}, ${object.insights.length} insights generated`
+      `Insights analysis complete (dynamic sandbox): ${input.analysis}, ${parsed.insights?.length ?? 0} insights generated`
     );
 
     return {
       analysisType: input.analysis,
       generatedAt: new Date().toISOString(),
-      insights: object.insights,
-      summary: object.summary,
+      insights: parsed.insights ?? [],
+      summary: parsed.summary ?? analysisNarrative,
     };
   },
 });
+
+/** Fallback parser if structured output fails */
+function parseInsightsFromText(text: string): { insights: Array<Record<string, unknown>>; summary: string } {
+  try {
+    // Try to find JSON in the text
+    const jsonMatch = text.match(/\{[\s\S]*"insights"[\s\S]*\}/);
+    if (jsonMatch) return JSON.parse(jsonMatch[0]);
+  } catch { /* ignore */ }
+
+  return {
+    insights: [{
+      title: "Analysis Complete",
+      severity: "info",
+      description: text.slice(0, 500),
+      recommendation: "Review the full analysis above for details.",
+      confidence: 0.7,
+    }],
+    summary: text.slice(0, 300),
+  };
+}

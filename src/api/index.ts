@@ -36,3 +36,4 @@ export { default as documentRoutes } from "./documents";
 export { default as chatRoutes } from "./chat";
 export { default as reportRoutes } from "./reports";
 export { default as customToolRoutes } from "./custom-tools";
+export { default as agentConfigRoutes } from "./agent-configs";

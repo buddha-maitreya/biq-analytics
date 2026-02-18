@@ -6,7 +6,7 @@ interface AdminPageProps {
   onSaved?: () => void;
 }
 
-type AdminTab = "users" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools" | "model";
+type AdminTab = "users" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools" | "model" | "agents";
 
 /* ---------- Sub-types ---------- */
 interface RBACConfig {
@@ -127,6 +127,7 @@ export default function AdminPage({ config, onSaved }: AdminPageProps) {
     { key: "model", label: "AI Model", icon: "🤖" },
     { key: "ai", label: "Prompt Engineering", icon: "✍️" },
     { key: "tools", label: "Custom Tools", icon: "🧩" },
+    { key: "agents", label: "AI Agents", icon: "🧬" },
     { key: "users", label: "Users & Access", icon: "🔐" },
     { key: "settings", label: "Profile", icon: "🏢" },
   ];
@@ -156,6 +157,7 @@ export default function AdminPage({ config, onSaved }: AdminPageProps) {
         {tab === "model" && <AIModelTab onSaved={onSaved} />}
         {tab === "ai" && <AIConfigTab config={config} onSaved={onSaved} />}
         {tab === "tools" && <CustomToolsTab />}
+        {tab === "agents" && <AIAgentsTab />}
         {tab === "settings" && <SettingsTab config={config} onSaved={onSaved} />}
       </div>
     </div>
@@ -1925,6 +1927,272 @@ function AIConfigTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
         <button className="btn btn-primary btn-lg" onClick={handleSave} disabled={saving}>
           {saving ? "Saving…" : "💾 Save AI Configuration"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+/* ===== AI AGENTS TAB ===== */
+
+interface AgentConfig {
+  id?: string;
+  agentName: string;
+  displayName: string;
+  description: string | null;
+  isActive: boolean;
+  modelOverride: string | null;
+  temperature: string | null;
+  maxSteps: number | null;
+  timeoutMs: number | null;
+  customInstructions: string | null;
+  executionPriority: number;
+  config: Record<string, unknown> | null;
+}
+
+/** Per-agent specialization metadata (static, display-only) */
+const AGENT_META: Record<string, { icon: string; role: string; color: string; configHints: { key: string; label: string; hint: string; type: "text" | "number" | "boolean" }[] }> = {
+  "data-science": {
+    icon: "🧠", role: "The Brain — Orchestrator",
+    color: "#7c3aed",
+    configHints: [
+      { key: "enableSandbox", label: "Enable Sandbox", hint: "Allow running generated code in isolated sandbox", type: "boolean" },
+      { key: "compressionThreshold", label: "Compression Threshold", hint: "Compress conversation after this many messages", type: "number" },
+    ],
+  },
+  "insights-analyzer": {
+    icon: "📊", role: "The Analyst — Statistical Computation",
+    color: "#2563eb",
+    configHints: [
+      { key: "structuringModel", label: "Structuring Model", hint: "Fast model used for structuring step (e.g. gpt-4o-mini)", type: "text" },
+      { key: "sandboxMemoryMb", label: "Sandbox Memory (MB)", hint: "Memory limit for sandbox execution", type: "number" },
+      { key: "sandboxTimeoutMs", label: "Sandbox Timeout (ms)", hint: "Max execution time for sandbox code", type: "number" },
+    ],
+  },
+  "report-generator": {
+    icon: "📝", role: "The Writer — Report Narration",
+    color: "#059669",
+    configHints: [
+      { key: "defaultFormat", label: "Default Format", hint: "Report output format: markdown or plain", type: "text" },
+      { key: "maxSqlSteps", label: "Max SQL Steps", hint: "Maximum SQL queries the writer can execute", type: "number" },
+    ],
+  },
+  "knowledge-base": {
+    icon: "📚", role: "The Librarian — Document Retrieval",
+    color: "#d97706",
+    configHints: [
+      { key: "topK", label: "Top K Results", hint: "Number of document chunks to retrieve per query", type: "number" },
+      { key: "similarityThreshold", label: "Similarity Threshold", hint: "Minimum similarity score (0.0 – 1.0)", type: "number" },
+    ],
+  },
+};
+
+function AIAgentsTab() {
+  const [agents, setAgents] = useState<AgentConfig[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
+  const [editState, setEditState] = useState<Record<string, AgentConfig>>({});
+
+  const loadAgents = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/agent-configs");
+      const json = await res.json();
+      if (json.data) {
+        setAgents(json.data);
+        // Initialize edit state with current values
+        const state: Record<string, AgentConfig> = {};
+        for (const a of json.data) state[a.agentName] = { ...a };
+        setEditState(state);
+      }
+    } catch { /* ignore */ }
+    setLoading(false);
+  };
+
+  useEffect(() => { loadAgents(); }, []);
+
+  const updateField = (agentName: string, field: keyof AgentConfig, value: unknown) => {
+    setEditState((prev) => ({
+      ...prev,
+      [agentName]: { ...prev[agentName], [field]: value },
+    }));
+  };
+
+  const updateConfig = (agentName: string, key: string, value: unknown) => {
+    setEditState((prev) => ({
+      ...prev,
+      [agentName]: {
+        ...prev[agentName],
+        config: { ...(prev[agentName]?.config ?? {}), [key]: value },
+      },
+    }));
+  };
+
+  const handleSave = async (agentName: string) => {
+    const agent = editState[agentName];
+    if (!agent) return;
+    setSaving(agentName);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/agent-configs/${agentName}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(agent),
+      });
+      if (res.ok) {
+        setMessage({ type: "success", text: `${agent.displayName} configuration saved!` });
+        loadAgents();
+      } else {
+        const err = await res.json();
+        setMessage({ type: "error", text: err.error || "Failed to save." });
+      }
+    } catch {
+      setMessage({ type: "error", text: "Network error." });
+    }
+    setSaving(null);
+  };
+
+  const handleToggle = async (agentName: string) => {
+    const agent = editState[agentName];
+    if (!agent) return;
+    const updated = { ...agent, isActive: !agent.isActive };
+    setEditState((prev) => ({ ...prev, [agentName]: updated }));
+    try {
+      await fetch(`/api/agent-configs/${agentName}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updated),
+      });
+      loadAgents();
+    } catch { /* ignore */ }
+  };
+
+  if (loading) return <div className="loading-state"><div className="spinner" />Loading agent configurations…</div>;
+
+  return (
+    <div>
+      {message && (
+        <div className={`alert alert-${message.type}`} style={{ marginBottom: 16 }}>
+          {message.type === "success" ? "✅" : "❌"} {message.text}
+        </div>
+      )}
+
+      <div className="settings-grid">
+        {agents.map((agent) => {
+          const meta = AGENT_META[agent.agentName];
+          const edit = editState[agent.agentName];
+          const isExpanded = expandedAgent === agent.agentName;
+          if (!meta || !edit) return null;
+
+          return (
+            <div key={agent.agentName} className="card settings-card" style={{ borderLeft: `4px solid ${meta.color}` }}>
+              {/* Header */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <button
+                  className="ai-section-header"
+                  style={{ flex: 1, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                  onClick={() => setExpandedAgent(isExpanded ? null : agent.agentName)}
+                >
+                  <div>
+                    <h3 style={{ margin: 0 }}>{meta.icon} {edit.displayName}</h3>
+                    <p className="text-muted" style={{ margin: "4px 0 0", fontSize: 13 }}>{meta.role}</p>
+                  </div>
+                  <span className="ai-section-chevron">{isExpanded ? "▼" : "▶"}</span>
+                </button>
+                <label className="toggle-switch" style={{ marginLeft: 16 }}>
+                  <input type="checkbox" checked={edit.isActive} onChange={() => handleToggle(agent.agentName)} />
+                  <span className="toggle-slider" />
+                  <span className="toggle-label">{edit.isActive ? "Active" : "Disabled"}</span>
+                </label>
+              </div>
+
+              {/* Expanded editor */}
+              {isExpanded && (
+                <div style={{ marginTop: 16, borderTop: "1px solid var(--color-border)", paddingTop: 16 }}>
+                  <div className="form-grid" style={{ gap: 16 }}>
+                    {/* Basic fields */}
+                    <FormField label="Display Name" hint="Human-friendly label shown in the UI">
+                      <input type="text" value={edit.displayName} onChange={(e) => updateField(agent.agentName, "displayName", e.target.value)} />
+                    </FormField>
+
+                    <FormField label="Description" hint="What this agent specializes in">
+                      <textarea rows={2} value={edit.description ?? ""} onChange={(e) => updateField(agent.agentName, "description", e.target.value)} style={{ resize: "vertical" }} />
+                    </FormField>
+
+                    {/* Model & Performance */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                      <FormField label="Model Override" hint="Leave empty to use system default">
+                        <input type="text" placeholder="e.g. gpt-4o-mini, claude-3-haiku" value={edit.modelOverride ?? ""} onChange={(e) => updateField(agent.agentName, "modelOverride", e.target.value || null)} />
+                      </FormField>
+
+                      <FormField label="Temperature" hint="0.00 (deterministic) – 2.00 (creative)">
+                        <input type="number" step="0.05" min="0" max="2" placeholder="System default" value={edit.temperature ?? ""} onChange={(e) => updateField(agent.agentName, "temperature", e.target.value || null)} />
+                      </FormField>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                      <FormField label="Max Steps" hint="Tool-calling rounds">
+                        <input type="number" min="1" max="20" placeholder="Default" value={edit.maxSteps ?? ""} onChange={(e) => updateField(agent.agentName, "maxSteps", e.target.value ? parseInt(e.target.value) : null)} />
+                      </FormField>
+
+                      <FormField label="Timeout (ms)" hint="Execution timeout">
+                        <input type="number" min="1000" max="300000" step="1000" placeholder="Default" value={edit.timeoutMs ?? ""} onChange={(e) => updateField(agent.agentName, "timeoutMs", e.target.value ? parseInt(e.target.value) : null)} />
+                      </FormField>
+
+                      <FormField label="Priority" hint="Lower = higher priority">
+                        <input type="number" min="0" max="99" value={edit.executionPriority} onChange={(e) => updateField(agent.agentName, "executionPriority", parseInt(e.target.value) || 0)} />
+                      </FormField>
+                    </div>
+
+                    {/* Custom Instructions */}
+                    <FormField label="Custom Instructions" hint="Business-specific instructions appended to this agent's system prompt">
+                      <textarea rows={4} placeholder="e.g. Focus on wholesale metrics. Always include profit margins. Flag inventory below 50 units." value={edit.customInstructions ?? ""} onChange={(e) => updateField(agent.agentName, "customInstructions", e.target.value || null)} style={{ resize: "vertical" }} />
+                    </FormField>
+
+                    {/* Agent-specific config */}
+                    {meta.configHints.length > 0 && (
+                      <div>
+                        <h4 style={{ margin: "8px 0", fontSize: 14 }}>🔧 Agent-Specific Settings</h4>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                          {meta.configHints.map((ch) => (
+                            <FormField key={ch.key} label={ch.label} hint={ch.hint}>
+                              {ch.type === "boolean" ? (
+                                <label className="toggle-switch" style={{ marginTop: 4 }}>
+                                  <input type="checkbox" checked={!!edit.config?.[ch.key]} onChange={(e) => updateConfig(agent.agentName, ch.key, e.target.checked)} />
+                                  <span className="toggle-slider" />
+                                  <span className="toggle-label">{edit.config?.[ch.key] ? "On" : "Off"}</span>
+                                </label>
+                              ) : ch.type === "number" ? (
+                                <input type="number" value={(edit.config?.[ch.key] as number) ?? ""} onChange={(e) => updateConfig(agent.agentName, ch.key, e.target.value ? parseFloat(e.target.value) : undefined)} />
+                              ) : (
+                                <input type="text" value={(edit.config?.[ch.key] as string) ?? ""} onChange={(e) => updateConfig(agent.agentName, ch.key, e.target.value || undefined)} />
+                              )}
+                            </FormField>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Save button */}
+                  <div style={{ marginTop: 16 }}>
+                    <button className="btn btn-primary" onClick={() => handleSave(agent.agentName)} disabled={saving === agent.agentName}>
+                      {saving === agent.agentName ? "Saving…" : `💾 Save ${edit.displayName}`}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        <InfoBox>
+          <strong>💡 How AI Agents work:</strong> Each agent specializes in a different task — orchestration, statistical analysis, report writing, or document retrieval.
+          Configuration changes take effect immediately. Use <strong>Model Override</strong> to use a faster/cheaper model for specific agents.
+          <strong> Custom Instructions</strong> are appended to the agent's built-in system prompt for per-business customization.
+          Disable an agent to prevent the orchestrator from delegating to it.
+        </InfoBox>
       </div>
     </div>
   );

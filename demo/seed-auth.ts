@@ -24,7 +24,7 @@ const { db } = createPostgresDrizzle({ schema });
 
 const DEMO_PASSWORD = "demo2025";
 
-/** All 10 permission modules */
+/** All permission modules */
 const ALL_PERMISSIONS = [
   "dashboard",
   "products",
@@ -34,6 +34,7 @@ const ALL_PERMISSIONS = [
   "invoices",
   "reports",
   "pos",
+  "assistant",
   "admin",
   "settings",
 ];

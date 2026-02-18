@@ -28,6 +28,17 @@ import {
   payments,
   taxRules,
   users,
+  assetCategories,
+  assets,
+  serviceCategories,
+  services,
+  serviceBookings,
+  bookingAssets,
+  bookingStockAllocations,
+  auditLog,
+  notifications,
+  chatMessages,
+  chatSessions,
 } from "../src/db/schema";
 
 // ────────────────────────────────────────────────────────────
@@ -64,13 +75,35 @@ function generateInvoiceNumber(index: number): string {
 async function seed() {
   console.log("🌍 Seeding Kenyan Tourism Business Demo...\n");
 
-  // Check if already seeded
-  const existingCategories = await db.select({ id: categories.id }).from(categories).limit(1);
-  if (existingCategories.length > 0) {
-    console.log("⚠️  Database already has data. To re-seed, drop tables first:");
-    console.log("   bunx drizzle-kit push --force && bun scripts/seed-demo.ts");
-    process.exit(0);
-  }
+  // ── Truncate all tables (order matters for FK constraints) ──
+  console.log("🗑️  Clearing existing data...");
+  await db.delete(bookingStockAllocations);
+  await db.delete(bookingAssets);
+  await db.delete(serviceBookings);
+  await db.delete(payments);
+  await db.delete(invoices);
+  await db.delete(orderItems);
+  await db.delete(orders);
+  await db.delete(inventoryTransactions);
+  await db.delete(inventory);
+  await db.delete(products);
+  await db.delete(categories);
+  await db.delete(services);
+  await db.delete(serviceCategories);
+  await db.delete(assets);
+  await db.delete(assetCategories);
+  await db.delete(customers);
+  await db.delete(orderStatuses);
+  await db.delete(taxRules);
+  await db.delete(warehouses);
+  // Clear user-related tables (FK constraints)
+  await db.delete(chatMessages);
+  await db.delete(chatSessions);
+  await db.delete(notifications);
+  await db.delete(auditLog);
+  // Clear users so we can re-seed them
+  await db.delete(users);
+  console.log("   ✓ All tables cleared\n");
 
   // ══════════════════════════════════════════════════════════
   // 1. CATEGORIES (hierarchical)
@@ -595,7 +628,12 @@ async function seed() {
 
   const insertedProducts = [];
   for (const p of productData) {
-    const [inserted] = await db.insert(products).values(p as any).returning();
+    // Flag consumable stock items (meals, camping gear used during operations)
+    const sku = (p as any).sku as string;
+    const isConsumable = sku.startsWith("MEAL-") || sku.startsWith("CAMP-GEAR") || sku.startsWith("CAMP-TENT-RENT");
+    // All products are sellable to customers (this is a customer-facing catalog)
+    const isSellable = true;
+    const [inserted] = await db.insert(products).values({ ...p, isConsumable, isSellable } as any).returning();
     insertedProducts.push(inserted);
   }
 
@@ -809,6 +847,199 @@ async function seed() {
   }
 
   console.log(`   ✓ ${insertedUsers.length} users created\n`);
+
+  // ══════════════════════════════════════════════════════════
+  // 8.5  ASSET CATEGORIES & ASSETS
+  // ══════════════════════════════════════════════════════════
+  console.log("🚙 Creating asset categories & assets...");
+
+  const [acVehicles] = await db.insert(assetCategories).values({
+    name: "Safari Vehicles",
+    description: "4x4 game-drive vehicles, safari vans, and luxury transfers",
+    metadata: { icon: "🚙" },
+  }).returning();
+
+  const [acCamping] = await db.insert(assetCategories).values({
+    name: "Camping Equipment",
+    description: "Tents, glamping structures, sleeping bags, and camp furniture",
+    metadata: { icon: "⛺" },
+  }).returning();
+
+  const [acWaterSports] = await db.insert(assetCategories).values({
+    name: "Water Sports Equipment",
+    description: "Kayaks, snorkeling sets, dive gear, and kitesurfing rigs",
+    metadata: { icon: "🤿" },
+  }).returning();
+
+  const [acElectronics] = await db.insert(assetCategories).values({
+    name: "Electronics & Communication",
+    description: "Two-way radios, satellite phones, GPS units, camera traps",
+    metadata: { icon: "📡" },
+  }).returning();
+
+  const [acKitchen] = await db.insert(assetCategories).values({
+    name: "Kitchen & Catering",
+    description: "Camp cooking equipment, cooler boxes, water purifiers",
+    metadata: { icon: "🍳" },
+  }).returning();
+
+  // Helper to pick a random staff member for asset assignment
+  const staffUsers = insertedUsers.filter((u) => u.role === "staff" || u.metadata?.department === "field guides");
+  const pickStaff = () => staffUsers.length > 0 ? staffUsers[randomInt(0, staffUsers.length - 1)] : null;
+
+  const assetData: Array<{
+    assetCode: string; name: string; categoryId: string;
+    purchaseDate?: Date; purchaseCost?: string; currentValue?: string;
+    conditionStatus?: string; location?: string; assignedToStaffId?: string | null; notes?: string;
+  }> = [
+    // ── Safari Vehicles ──
+    { assetCode: "VEH-LC-001", name: "Land Cruiser #1 — KCG 201A", categoryId: acVehicles.id, purchaseDate: randomDate(900), purchaseCost: "6500000.00", currentValue: "4800000.00", conditionStatus: "excellent", location: "NBO-DEPOT", notes: "Pop-up roof, 6-seater, cooler box fitted" },
+    { assetCode: "VEH-LC-002", name: "Land Cruiser #2 — KCG 202B", categoryId: acVehicles.id, purchaseDate: randomDate(800), purchaseCost: "6500000.00", currentValue: "4500000.00", conditionStatus: "good", location: "MARA-OPS", notes: "Assigned to Mara base permanently" },
+    { assetCode: "VEH-LC-003", name: "Land Cruiser #3 — KCG 203C", categoryId: acVehicles.id, purchaseDate: randomDate(600), purchaseCost: "7200000.00", currentValue: "5800000.00", conditionStatus: "excellent", location: "NBO-DEPOT", notes: "New suspension, upgraded seats" },
+    { assetCode: "VEH-LC-004", name: "Land Cruiser #4 — KCH 404D", categoryId: acVehicles.id, purchaseDate: randomDate(400), purchaseCost: "7200000.00", currentValue: "6200000.00", conditionStatus: "excellent", location: "NBO-DEPOT" },
+    { assetCode: "VEH-LC-005", name: "Land Cruiser #5 — KCH 505E", categoryId: acVehicles.id, purchaseDate: randomDate(300), purchaseCost: "7800000.00", currentValue: "7000000.00", conditionStatus: "excellent", location: "NBO-DEPOT", notes: "Latest model, camera mounts" },
+    { assetCode: "VEH-HI-001", name: "HiAce Safari Van #1 — KBZ 601F", categoryId: acVehicles.id, purchaseDate: randomDate(700), purchaseCost: "3800000.00", currentValue: "2500000.00", conditionStatus: "good", location: "NBO-DEPOT", notes: "8-seater, pop-up roof, AC" },
+    { assetCode: "VEH-HI-002", name: "HiAce Safari Van #2 — KCA 702G", categoryId: acVehicles.id, purchaseDate: randomDate(500), purchaseCost: "4200000.00", currentValue: "3200000.00", conditionStatus: "good", location: "NBO-DEPOT" },
+    { assetCode: "VEH-HI-003", name: "HiAce Safari Van #3 — KCA 803H", categoryId: acVehicles.id, purchaseDate: randomDate(400), purchaseCost: "4200000.00", currentValue: "3500000.00", conditionStatus: "excellent", location: "MARA-OPS" },
+    { assetCode: "VEH-MB-001", name: "22-Seater Rosa Minibus — KBX 901J", categoryId: acVehicles.id, purchaseDate: randomDate(600), purchaseCost: "5500000.00", currentValue: "3800000.00", conditionStatus: "good", location: "NBO-DEPOT", notes: "PA system, AC, large luggage bay" },
+    { assetCode: "VEH-JIM-001", name: "Suzuki Jimny #1 — KCF 101K", categoryId: acVehicles.id, purchaseDate: randomDate(500), purchaseCost: "2800000.00", currentValue: "2100000.00", conditionStatus: "good", location: "NBO-DEPOT", notes: "Self-drive rental, GPS built-in" },
+    { assetCode: "VEH-JIM-002", name: "Suzuki Jimny #2 — KCF 102L", categoryId: acVehicles.id, purchaseDate: randomDate(400), purchaseCost: "3000000.00", currentValue: "2400000.00", conditionStatus: "excellent", location: "DIANI-OFC" },
+    { assetCode: "VEH-RR-001", name: "Range Rover Vogue — KCJ 001M", categoryId: acVehicles.id, purchaseDate: randomDate(350), purchaseCost: "18000000.00", currentValue: "15000000.00", conditionStatus: "excellent", location: "NBO-DEPOT", notes: "VIP vehicle, leather, fridge, tinted" },
+
+    // ── Camping Equipment ──
+    { assetCode: "TENT-2P-001", name: "2-Person Dome Tent #1", categoryId: acCamping.id, purchaseCost: "8500.00", currentValue: "5000.00", conditionStatus: "good", location: "NBO-HQ" },
+    { assetCode: "TENT-2P-002", name: "2-Person Dome Tent #2", categoryId: acCamping.id, purchaseCost: "8500.00", currentValue: "5000.00", conditionStatus: "good", location: "NBO-HQ" },
+    { assetCode: "TENT-2P-003", name: "2-Person Dome Tent #3", categoryId: acCamping.id, purchaseCost: "8500.00", currentValue: "4000.00", conditionStatus: "fair", location: "MARA-OPS" },
+    { assetCode: "TENT-2P-004", name: "2-Person Dome Tent #4", categoryId: acCamping.id, purchaseCost: "8500.00", currentValue: "5000.00", conditionStatus: "good", location: "NANYUKI-BASE" },
+    { assetCode: "TENT-2P-005", name: "2-Person Dome Tent #5", categoryId: acCamping.id, purchaseCost: "8500.00", currentValue: "5000.00", conditionStatus: "good", location: "NANYUKI-BASE" },
+    { assetCode: "TENT-GL-001", name: "Glamping Bell Tent #1 (5m)", categoryId: acCamping.id, purchaseCost: "65000.00", currentValue: "50000.00", conditionStatus: "excellent", location: "MARA-OPS", notes: "Premium canvas, wooden floor platform" },
+    { assetCode: "TENT-GL-002", name: "Glamping Bell Tent #2 (5m)", categoryId: acCamping.id, purchaseCost: "65000.00", currentValue: "50000.00", conditionStatus: "excellent", location: "MARA-OPS" },
+    { assetCode: "TENT-GL-003", name: "Glamping Bell Tent #3 (4m)", categoryId: acCamping.id, purchaseCost: "45000.00", currentValue: "35000.00", conditionStatus: "good", location: "NANYUKI-BASE" },
+
+    // ── Water Sports Equipment ──
+    { assetCode: "KAYAK-001", name: "Sea Kayak — Double #1", categoryId: acWaterSports.id, purchaseCost: "120000.00", currentValue: "85000.00", conditionStatus: "good", location: "DIANI-OFC" },
+    { assetCode: "KAYAK-002", name: "Sea Kayak — Double #2", categoryId: acWaterSports.id, purchaseCost: "120000.00", currentValue: "85000.00", conditionStatus: "good", location: "DIANI-OFC" },
+    { assetCode: "KAYAK-003", name: "Sea Kayak — Single", categoryId: acWaterSports.id, purchaseCost: "80000.00", currentValue: "55000.00", conditionStatus: "fair", location: "MSA-CO" },
+    { assetCode: "SNORK-SET-001", name: "Snorkeling Set (mask+fins+snorkel) #1", categoryId: acWaterSports.id, purchaseCost: "4500.00", currentValue: "3000.00", conditionStatus: "good", location: "DIANI-OFC" },
+    { assetCode: "SNORK-SET-002", name: "Snorkeling Set #2", categoryId: acWaterSports.id, purchaseCost: "4500.00", currentValue: "3000.00", conditionStatus: "good", location: "DIANI-OFC" },
+    { assetCode: "SNORK-SET-003", name: "Snorkeling Set #3", categoryId: acWaterSports.id, purchaseCost: "4500.00", currentValue: "2500.00", conditionStatus: "fair", location: "MSA-CO" },
+    { assetCode: "SNORK-SET-004", name: "Snorkeling Set #4", categoryId: acWaterSports.id, purchaseCost: "4500.00", currentValue: "3000.00", conditionStatus: "good", location: "DIANI-OFC" },
+    { assetCode: "SNORK-SET-005", name: "Snorkeling Set #5", categoryId: acWaterSports.id, purchaseCost: "4500.00", currentValue: "3000.00", conditionStatus: "good", location: "MSA-CO" },
+    { assetCode: "KITE-RIG-001", name: "Kitesurfing Rig (10m kite + board) #1", categoryId: acWaterSports.id, purchaseCost: "95000.00", currentValue: "70000.00", conditionStatus: "good", location: "DIANI-OFC" },
+    { assetCode: "KITE-RIG-002", name: "Kitesurfing Rig (12m kite + board) #2", categoryId: acWaterSports.id, purchaseCost: "105000.00", currentValue: "80000.00", conditionStatus: "excellent", location: "DIANI-OFC" },
+
+    // ── Electronics & Communication ──
+    { assetCode: "RADIO-001", name: "Motorola Two-Way Radio #1", categoryId: acElectronics.id, purchaseCost: "25000.00", currentValue: "15000.00", conditionStatus: "good", location: "NBO-HQ" },
+    { assetCode: "RADIO-002", name: "Motorola Two-Way Radio #2", categoryId: acElectronics.id, purchaseCost: "25000.00", currentValue: "15000.00", conditionStatus: "good", location: "MARA-OPS" },
+    { assetCode: "RADIO-003", name: "Motorola Two-Way Radio #3", categoryId: acElectronics.id, purchaseCost: "25000.00", currentValue: "15000.00", conditionStatus: "good", location: "MARA-OPS" },
+    { assetCode: "RADIO-004", name: "Motorola Two-Way Radio #4", categoryId: acElectronics.id, purchaseCost: "25000.00", currentValue: "12000.00", conditionStatus: "fair", location: "MSA-CO" },
+    { assetCode: "GPS-001", name: "Garmin GPSMAP 67 Handheld #1", categoryId: acElectronics.id, purchaseCost: "55000.00", currentValue: "40000.00", conditionStatus: "excellent", location: "NBO-HQ" },
+    { assetCode: "GPS-002", name: "Garmin GPSMAP 67 Handheld #2", categoryId: acElectronics.id, purchaseCost: "55000.00", currentValue: "40000.00", conditionStatus: "good", location: "MARA-OPS" },
+    { assetCode: "GPS-003", name: "Garmin GPSMAP 67 Handheld #3", categoryId: acElectronics.id, purchaseCost: "55000.00", currentValue: "35000.00", conditionStatus: "good", location: "NANYUKI-BASE" },
+    { assetCode: "SATPHONE-001", name: "Thuraya X5-Touch Sat Phone", categoryId: acElectronics.id, purchaseCost: "180000.00", currentValue: "130000.00", conditionStatus: "excellent", location: "NBO-HQ", notes: "Emergency use — Mara / remote areas" },
+
+    // ── Kitchen & Catering ──
+    { assetCode: "COOLER-001", name: "80L Engel Fridge/Freezer #1", categoryId: acKitchen.id, purchaseCost: "85000.00", currentValue: "60000.00", conditionStatus: "good", location: "NBO-DEPOT" },
+    { assetCode: "COOLER-002", name: "80L Engel Fridge/Freezer #2", categoryId: acKitchen.id, purchaseCost: "85000.00", currentValue: "60000.00", conditionStatus: "good", location: "MARA-OPS" },
+    { assetCode: "COOLER-003", name: "45L Coleman Cooler Box #1", categoryId: acKitchen.id, purchaseCost: "12000.00", currentValue: "8000.00", conditionStatus: "good", location: "NBO-HQ" },
+    { assetCode: "COOLER-004", name: "45L Coleman Cooler Box #2", categoryId: acKitchen.id, purchaseCost: "12000.00", currentValue: "7000.00", conditionStatus: "fair", location: "NANYUKI-BASE" },
+    { assetCode: "COOK-SET-001", name: "Camp Cooking Set (12-person) #1", categoryId: acKitchen.id, purchaseCost: "35000.00", currentValue: "25000.00", conditionStatus: "good", location: "NBO-HQ" },
+    { assetCode: "COOK-SET-002", name: "Camp Cooking Set (12-person) #2", categoryId: acKitchen.id, purchaseCost: "35000.00", currentValue: "22000.00", conditionStatus: "fair", location: "MARA-OPS" },
+    { assetCode: "COOK-SET-003", name: "Camp Cooking Set (6-person) #1", categoryId: acKitchen.id, purchaseCost: "18000.00", currentValue: "14000.00", conditionStatus: "good", location: "NANYUKI-BASE" },
+    { assetCode: "PURIFIER-001", name: "Katadyn Water Purifier #1", categoryId: acKitchen.id, purchaseCost: "28000.00", currentValue: "20000.00", conditionStatus: "good", location: "NBO-HQ" },
+    { assetCode: "PURIFIER-002", name: "Katadyn Water Purifier #2", categoryId: acKitchen.id, purchaseCost: "28000.00", currentValue: "20000.00", conditionStatus: "good", location: "NANYUKI-BASE" },
+  ];
+
+  // Assign random staff to ~40% of assets
+  for (const a of assetData) {
+    if (Math.random() < 0.4) {
+      const staff = pickStaff();
+      if (staff) a.assignedToStaffId = staff.id;
+    }
+  }
+
+  const insertedAssets: Record<string, any> = {};
+  for (const a of assetData) {
+    const [inserted] = await db.insert(assets).values(a as any).returning();
+    insertedAssets[a.assetCode] = inserted;
+  }
+
+  console.log(`   ✓ ${5} asset categories, ${assetData.length} assets created\n`);
+
+  // ══════════════════════════════════════════════════════════
+  // 8.6  SERVICE CATEGORIES & SERVICES
+  // ══════════════════════════════════════════════════════════
+  console.log("🎯 Creating service categories & services...");
+
+  const [scSafari] = await db.insert(serviceCategories).values({
+    name: "Wildlife Safari Services",
+    examples: "Game drives, night drives, walking safaris, balloon safaris",
+  }).returning();
+
+  const [scBirding] = await db.insert(serviceCategories).values({
+    name: "Birdwatching Guide Services",
+    examples: "Guided birding excursions, bird photography hides",
+  }).returning();
+
+  const [scMarine] = await db.insert(serviceCategories).values({
+    name: "Beach & Marine Services",
+    examples: "Snorkeling guides, dive masters, kite instructors, fishing charters",
+  }).returning();
+
+  const [scTrekking] = await db.insert(serviceCategories).values({
+    name: "Trekking & Mountain Services",
+    examples: "Summit guides, porters, high-altitude cooking",
+  }).returning();
+
+  const [scCultural] = await db.insert(serviceCategories).values({
+    name: "Cultural & Heritage Services",
+    examples: "Maasai guide, cooking class instructor, heritage interpreters",
+  }).returning();
+
+  const [scTransport] = await db.insert(serviceCategories).values({
+    name: "Transport & Transfer Services",
+    examples: "Airport pickups, inter-park drives, flight bookings, helicopter charter ops",
+  }).returning();
+
+  const [scCatering] = await db.insert(serviceCategories).values({
+    name: "Catering & Dining Services",
+    examples: "Bush dinner setup, camp cooking, dietary meal prep",
+  }).returning();
+
+  const serviceData = [
+    // Wildlife safaris
+    { serviceCode: "SVC-GD-001", name: "Full-Day Game Drive (with guide)", categoryId: scSafari.id, description: "Expert guide-led game drive. Includes tracking, commentary, safety briefing. Vehicle required separately.", basePrice: "120.00", pricingModel: "per_person", capacityLimit: 7, requiresAsset: true, requiresStock: true },
+    { serviceCode: "SVC-GD-002", name: "Night Game Drive (conservancy)", categoryId: scSafari.id, description: "Night game drive with spotlight in private conservancy. Spot nocturnal predators. Min 2 pax.", basePrice: "85.00", pricingModel: "per_person", capacityLimit: 6, requiresAsset: true, requiresStock: false },
+    { serviceCode: "SVC-GD-003", name: "Walking Safari (half day)", categoryId: scSafari.id, description: "Guided bush walk with armed ranger. Track animals on foot. Laikipia / Mara conservancies only.", basePrice: "75.00", pricingModel: "per_person", capacityLimit: 8, requiresAsset: false, requiresStock: true },
+    { serviceCode: "SVC-BAL-001", name: "Hot Air Balloon Safari", categoryId: scSafari.id, description: "Sunrise balloon flight over the Mara with champagne bush breakfast. Approx 1 hour flight.", basePrice: "450.00", pricingModel: "per_person", capacityLimit: 16, requiresAsset: false, requiresStock: false },
+    // Birding
+    { serviceCode: "SVC-BIRD-001", name: "Expert Birding Guide (full day)", categoryId: scBirding.id, description: "Professional ornithologist guide for a full day. Species checklist, photography tips, habitat context.", basePrice: "80.00", pricingModel: "per_day", capacityLimit: 8, requiresAsset: false, requiresStock: false },
+    { serviceCode: "SVC-BIRD-002", name: "Bird Photography Hide Session", categoryId: scBirding.id, description: "4-hour session in purpose-built photography hide. Kingfishers, bee-eaters, raptors depending on site.", basePrice: "60.00", pricingModel: "per_person", capacityLimit: 4, requiresAsset: false, requiresStock: false },
+    // Beach & Marine
+    { serviceCode: "SVC-SNORK-001", name: "Snorkeling Guide (half day)", categoryId: scMarine.id, description: "Guided reef snorkeling with safety briefing, equipment check, marine life identification.", basePrice: "40.00", pricingModel: "per_person", capacityLimit: 10, requiresAsset: true, requiresStock: false },
+    { serviceCode: "SVC-DIVE-001", name: "PADI Dive Master (2-tank)", categoryId: scMarine.id, description: "Certified dive master for 2-tank recreational dive. Equipment inspection, buddy check, dive briefing.", basePrice: "100.00", pricingModel: "per_person", capacityLimit: 6, requiresAsset: true, requiresStock: false },
+    { serviceCode: "SVC-KITE-001", name: "IKO Kitesurf Instructor (per session)", categoryId: scMarine.id, description: "Certified kitesurfing instruction. 3-hour session including safety, kite control, and water start.", basePrice: "70.00", pricingModel: "per_person", capacityLimit: 3, requiresAsset: true, requiresStock: false },
+    // Trekking
+    { serviceCode: "SVC-TREK-001", name: "Mountain Guide (per day)", categoryId: scTrekking.id, description: "Certified mountain guide for Mt Kenya / Aberdares / Chyulu treks. Route planning, altitude management.", basePrice: "60.00", pricingModel: "per_day", capacityLimit: 8, requiresAsset: false, requiresStock: true },
+    { serviceCode: "SVC-PORTER-001", name: "Porter Service (per day per porter)", categoryId: scTrekking.id, description: "Trek porter carrying up to 18kg. Essential for Mt Kenya summits.", basePrice: "20.00", pricingModel: "per_day", capacityLimit: null, requiresAsset: false, requiresStock: false },
+    // Cultural
+    { serviceCode: "SVC-CULT-001", name: "Maasai Cultural Guide", categoryId: scCultural.id, description: "Maasai community guide for village visit, cultural explanation, bead-making, warrior demo.", basePrice: "35.00", pricingModel: "per_person", capacityLimit: 20, requiresAsset: false, requiresStock: false },
+    { serviceCode: "SVC-COOK-001", name: "Swahili Cooking Instructor", categoryId: scCultural.id, description: "Professional chef for Swahili cooking class. Market tour + 3-hour hands-on class.", basePrice: "40.00", pricingModel: "per_person", capacityLimit: 10, requiresAsset: false, requiresStock: true },
+    // Transport
+    { serviceCode: "SVC-XFER-001", name: "Airport Transfer Service", categoryId: scTransport.id, description: "Meet & greet at JKIA/Wilson/Mombasa. Signboard, AC vehicle, luggage handling.", basePrice: "35.00", pricingModel: "fixed", capacityLimit: null, requiresAsset: true, requiresStock: false },
+    { serviceCode: "SVC-XFER-002", name: "Inter-Park Transfer Drive", categoryId: scTransport.id, description: "Scenic drive between parks with game viewing. Driver guide, fuel included.", basePrice: "200.00", pricingModel: "fixed", capacityLimit: 6, requiresAsset: true, requiresStock: false },
+    // Catering
+    { serviceCode: "SVC-CATER-001", name: "Bush Dinner Setup & Catering", categoryId: scCatering.id, description: "Full bush dinner service — setup, cooking, service, and cleanup. Lanterns, table, nyama choma, drinks.", basePrice: "80.00", pricingModel: "per_person", capacityLimit: 16, requiresAsset: true, requiresStock: true },
+    { serviceCode: "SVC-CATER-002", name: "Camp Cook Service (per day)", categoryId: scCatering.id, description: "Dedicated camp cook for bush camping groups. Breakfast, lunch, and dinner preparation.", basePrice: "40.00", pricingModel: "per_day", capacityLimit: 12, requiresAsset: true, requiresStock: true },
+  ];
+
+  const insertedServices: Record<string, any> = {};
+  for (const s of serviceData) {
+    const [inserted] = await db.insert(services).values(s as any).returning();
+    insertedServices[s.serviceCode] = inserted;
+  }
+
+  console.log(`   ✓ ${7} service categories, ${serviceData.length} services created\n`);
 
   // ══════════════════════════════════════════════════════════
   // 9. ORDERS (bookings)
@@ -1060,7 +1291,9 @@ async function seed() {
       const itemTax = li.lineTotal * 0.16;
       await db.insert(orderItems).values({
         orderId: order.id,
+        itemType: "stock",
         productId: li.product.id,
+        description: li.product.name,
         quantity: li.qty,
         unitPrice: li.unitPrice.toFixed(2),
         taxRate: "0.16",
@@ -1148,22 +1381,173 @@ async function seed() {
   console.log(`   ✓ ${invoiceCount} invoices and ${paymentCount} payments created\n`);
 
   // ══════════════════════════════════════════════════════════
+  // 11. SERVICE BOOKINGS + ASSET / STOCK ALLOCATIONS
+  // ══════════════════════════════════════════════════════════
+  console.log("📅 Creating service bookings & resource allocations...");
+
+  // Fetch completed / in-progress / confirmed orders for booking creation
+  const ordersForBookings = await db.select().from(orders);
+  const allOrderItems = await db.select().from(orderItems);
+
+  let bookingCount = 0;
+  let bookingAssetCount = 0;
+  let bookingStockCount = 0;
+
+  // Create service bookings for a subset of orders (completed, in_progress, confirmed, deposit_paid)
+  const activeStatusNames = ["completed", "in_progress", "confirmed", "deposit_paid", "fully_paid"];
+  const activeStatuses = insertedStatuses.filter((s) => activeStatusNames.includes(s.name)).map((s) => s.id);
+
+  for (const order of ordersForBookings) {
+    if (!order.statusId || !activeStatuses.includes(order.statusId)) continue;
+
+    const items = allOrderItems.filter((oi) => oi.orderId === order.id);
+
+    // Create game drive bookings for safari orders
+    for (const item of items) {
+      if (!item.productId) continue;
+      const product = insertedProducts.find((p) => p.id === item.productId);
+      if (!product) continue;
+
+      // Only create service bookings for safari / trek / cultural products
+      const sku = product.sku;
+      const isSafari = sku.startsWith("SAF-");
+      const isTrek = sku.startsWith("TREK-");
+      const isCultural = sku.startsWith("CULT-");
+      const isBeach = sku.startsWith("BCH-");
+
+      if (!isSafari && !isTrek && !isCultural && !isBeach) continue;
+
+      // Pick appropriate service
+      let svcCode: string;
+      if (isSafari && sku.includes("MIGRATION")) svcCode = "SVC-BAL-001";
+      else if (isSafari) svcCode = "SVC-GD-001";
+      else if (isTrek && sku.includes("MTKENYA")) svcCode = "SVC-TREK-001";
+      else if (isTrek) svcCode = "SVC-GD-003"; // walking safari
+      else if (isCultural && sku.includes("MAASAI")) svcCode = "SVC-CULT-001";
+      else if (isCultural && sku.includes("SWAHILI")) svcCode = "SVC-COOK-001";
+      else if (isBeach && sku.includes("SNORK")) svcCode = "SVC-SNORK-001";
+      else if (isBeach && sku.includes("DIVE")) svcCode = "SVC-DIVE-001";
+      else if (isBeach && sku.includes("KITE")) svcCode = "SVC-KITE-001";
+      else continue;
+
+      const svc = insertedServices[svcCode];
+      if (!svc) continue;
+
+      // Service date relative to order date
+      const serviceDate = new Date(order.createdAt);
+      serviceDate.setDate(serviceDate.getDate() + randomInt(1, 14));
+
+      const startTime = new Date(serviceDate);
+      startTime.setHours(6 + randomInt(0, 3), 0, 0, 0);
+      const endTime = new Date(startTime);
+      endTime.setHours(endTime.getHours() + randomInt(4, 10));
+
+      const bookingStatus = order.statusId === statusMap["completed"]?.id ? "completed"
+        : order.statusId === statusMap["in_progress"]?.id ? "in_progress"
+        : "scheduled";
+
+      // Pick guide
+      const guideUser = staffUsers.length > 0 ? staffUsers[randomInt(0, staffUsers.length - 1)] : null;
+      // Pick vehicle asset for safari services
+      const vehicleAsset = svc.requiresAsset
+        ? insertedAssets[`VEH-LC-00${randomInt(1, 5)}`]
+        : null;
+
+      const [booking] = await db.insert(serviceBookings).values({
+        orderItemId: item.id,
+        serviceDate,
+        startTime,
+        endTime,
+        status: bookingStatus,
+        assignedGuideId: guideUser?.id,
+        assignedVehicleId: vehicleAsset?.id,
+        notes: `Auto-generated booking for ${product.name}`,
+      } as any).returning();
+
+      bookingCount++;
+
+      // Allocate assets to this booking (vehicle + equipment)
+      if (vehicleAsset) {
+        await db.insert(bookingAssets).values({
+          bookingId: booking.id,
+          assetId: vehicleAsset.id,
+          assignedFrom: startTime,
+          assignedUntil: endTime,
+        } as any);
+        bookingAssetCount++;
+      }
+
+      // For snorkeling, allocate snorkeling gear
+      if (svcCode === "SVC-SNORK-001" && insertedAssets["SNORK-SET-001"]) {
+        const numSets = Math.min(item.quantity, 5);
+        for (let i = 1; i <= numSets; i++) {
+          const snorkAsset = insertedAssets[`SNORK-SET-00${i}`];
+          if (snorkAsset) {
+            await db.insert(bookingAssets).values({
+              bookingId: booking.id,
+              assetId: snorkAsset.id,
+              assignedFrom: startTime,
+              assignedUntil: endTime,
+            } as any);
+            bookingAssetCount++;
+          }
+        }
+      }
+
+      // For kite instruction, allocate kite rigs
+      if (svcCode === "SVC-KITE-001" && insertedAssets["KITE-RIG-001"]) {
+        await db.insert(bookingAssets).values({
+          bookingId: booking.id,
+          assetId: insertedAssets["KITE-RIG-001"].id,
+          assignedFrom: startTime,
+          assignedUntil: endTime,
+        } as any);
+        bookingAssetCount++;
+      }
+
+      // Allocate consumable stock (water, meals) for services requiring stock
+      if (svc.requiresStock) {
+        // Find a consumable product (water/snacks represented by MEAL- items)
+        const mealProduct = insertedProducts.find((p) => p.sku === "MEAL-FULLBOARD");
+        if (mealProduct) {
+          await db.insert(bookingStockAllocations).values({
+            bookingId: booking.id,
+            stockItemId: mealProduct.id,
+            quantityReserved: item.quantity,
+            quantityUsed: bookingStatus === "completed" ? item.quantity : 0,
+          } as any);
+          bookingStockCount++;
+        }
+      }
+    }
+  }
+
+  console.log(`   ✓ ${bookingCount} service bookings, ${bookingAssetCount} asset allocations, ${bookingStockCount} stock allocations created\n`);
+
+  // ══════════════════════════════════════════════════════════
   // SUMMARY
   // ══════════════════════════════════════════════════════════
   console.log("═══════════════════════════════════════════════════");
   console.log("🎉 Kenyan Tourism Demo Data — Seeding Complete!");
   console.log("═══════════════════════════════════════════════════");
-  console.log(`   Categories:     15`);
-  console.log(`   Products:       ${insertedProducts.length}`);
-  console.log(`   Locations:      ${insertedWarehouses.length}`);
-  console.log(`   Inventory:      ${inventoryCount} records`);
-  console.log(`   Customers:      ${insertedCustomers.length}`);
-  console.log(`   Order Statuses: ${insertedStatuses.length}`);
-  console.log(`   Tax Rules:      ${taxData.length}`);
-  console.log(`   Users:          ${insertedUsers.length}`);
-  console.log(`   Bookings:       ${orderCount}`);
-  console.log(`   Invoices:       ${invoiceCount}`);
-  console.log(`   Payments:       ${paymentCount}`);
+  console.log(`   Categories:          15`);
+  console.log(`   Products:            ${insertedProducts.length}`);
+  console.log(`   Locations:           ${insertedWarehouses.length}`);
+  console.log(`   Inventory:           ${inventoryCount} records`);
+  console.log(`   Customers:           ${insertedCustomers.length}`);
+  console.log(`   Order Statuses:      ${insertedStatuses.length}`);
+  console.log(`   Tax Rules:           ${taxData.length}`);
+  console.log(`   Users:               ${insertedUsers.length}`);
+  console.log(`   Asset Categories:    5`);
+  console.log(`   Assets:              ${assetData.length}`);
+  console.log(`   Service Categories:  7`);
+  console.log(`   Services:            ${serviceData.length}`);
+  console.log(`   Bookings (orders):   ${orderCount}`);
+  console.log(`   Service Bookings:    ${bookingCount}`);
+  console.log(`   Asset Allocations:   ${bookingAssetCount}`);
+  console.log(`   Stock Allocations:   ${bookingStockCount}`);
+  console.log(`   Invoices:            ${invoiceCount}`);
+  console.log(`   Payments:            ${paymentCount}`);
   console.log("═══════════════════════════════════════════════════\n");
 }
 

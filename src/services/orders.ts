@@ -222,9 +222,11 @@ export async function cancelOrder(id: string) {
   });
   if (!order) throw new NotFoundError(config.labels.order, id);
 
-  // Restore stock
+  // Restore stock (only for stock items with a productId)
   if (order.warehouseId) {
     for (const item of order.items) {
+      if (!item.productId) continue; // skip service items
+
       await db
         .update(inventory)
         .set({ quantity: sql`${inventory.quantity} + ${item.quantity}` })

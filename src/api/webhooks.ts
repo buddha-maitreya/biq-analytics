@@ -336,7 +336,7 @@ webhooks.get("/webhooks", authMiddleware(), async (c) => {
  * POST /webhooks/register — Register a new webhook source (admin).
  * Persists to DB and updates in-memory cache.
  */
-const registerSchema = z.object({
+export const registerSchema = z.object({
   name: z.string().min(1).max(50),
   secret: z.string().optional(),
   signatureHeader: z.string().default("x-signature"),

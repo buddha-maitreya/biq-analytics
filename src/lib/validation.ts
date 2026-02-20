@@ -302,8 +302,32 @@ export const createCustomToolSchema = z.object({
   label: z.string().min(1).max(255),
   description: z.string().min(1),
   toolType: z.enum(["server", "client"]).optional(),
+  // Server tool fields
   webhookUrl: z.string().url().optional(),
+  webhookMethod: z.string().optional(),
+  webhookHeaders: z.record(z.string()).optional(),
+  webhookTimeoutSecs: z.number().int().min(1).max(300).optional(),
+  authType: z.string().optional(),
+  authConfig: z.record(z.string()).optional(),
+  pathParamsSchema: z.array(z.record(z.unknown())).optional(),
+  queryParamsSchema: z.array(z.record(z.unknown())).optional(),
+  requestBodySchema: z.record(z.unknown()).optional(),
+  // Parameter schema (generic)
+  parameterSchema: z.record(z.unknown()).optional(),
   parameters: z.record(z.unknown()).optional(),
+  // Client tool fields
+  expectsResponse: z.boolean().optional(),
+  // Shared behaviour
+  disableInterruptions: z.boolean().optional(),
+  preToolSpeech: z.string().optional(),
+  preToolSpeechText: z.string().optional(),
+  executionMode: z.string().optional(),
+  toolCallSound: z.string().optional(),
+  dynamicVariables: z.record(z.unknown()).optional(),
+  dynamicVariableAssignments: z.array(z.record(z.unknown())).optional(),
+  // Common
+  isActive: z.boolean().optional(),
+  sortOrder: z.number().int().optional(),
   metadata: metadataSchema,
 });
 

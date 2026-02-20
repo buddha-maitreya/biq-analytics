@@ -159,6 +159,12 @@ const NAV_SECTIONS: NavSection[] = [
   },
 ];
 
+const SECTION_KEYS: Record<string, string> = {
+  "AI & Intelligence": "ai",
+  "Operations": "ops",
+  "Configuration": "config",
+};
+
 /** Section title labels */
 const TAB_TITLES: Record<AdminTab, string> = {
   knowledge: "Knowledge Base",
@@ -220,7 +226,7 @@ export default function AdminPage({ config, onSaved }: AdminPageProps) {
 
         <nav className="admin-sidebar-nav">
           {NAV_SECTIONS.map((section) => (
-            <div key={section.label} className="admin-nav-section">
+            <div key={section.label} className="admin-nav-section" data-section={SECTION_KEYS[section.label] ?? ""}>
               {!sidebarCollapsed && (
                 <div className="admin-nav-section-label">{section.label}</div>
               )}
@@ -2865,7 +2871,7 @@ function CustomToolsTab() {
   const handleToggle = async (tool: CustomTool) => {
     await fetch(`/api/custom-tools/${tool.id}`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...tool, isActive: !tool.isActive }),
+      body: JSON.stringify({ isActive: !tool.isActive }),
     });
     loadTools();
   };
@@ -4673,11 +4679,28 @@ interface ApprovalStep {
   label: string | null;
 }
 
-const ACTION_TYPE_LABELS: Record<string, { icon: string; label: string }> = {
-  "inventory.delivery_request": { icon: "🚚", label: "Inventory Delivery Request" },
-  "inventory.adjustment": { icon: "📦", label: "Stock Adjustment" },
-  "order.large_order": { icon: "💰", label: "Large Order" },
-};
+const ACTION_TYPE_OPTIONS = [
+  { value: "inventory.delivery_request", icon: "🚚", label: "Inventory Delivery Request" },
+  { value: "inventory.adjustment", icon: "📦", label: "Stock Adjustment" },
+  { value: "inventory.write_off", icon: "🗑️", label: "Inventory Write-Off" },
+  { value: "inventory.transfer", icon: "🔄", label: "Warehouse Transfer" },
+  { value: "order.large_order", icon: "💰", label: "Large Order" },
+  { value: "order.discount", icon: "🏷️", label: "Order Discount" },
+  { value: "order.refund", icon: "↩️", label: "Refund Request" },
+  { value: "order.cancellation", icon: "❌", label: "Order Cancellation" },
+  { value: "pricing.price_change", icon: "💲", label: "Price Change" },
+  { value: "pricing.bulk_update", icon: "📊", label: "Bulk Price Update" },
+  { value: "customer.credit_limit", icon: "💳", label: "Credit Limit Change" },
+  { value: "customer.delete", icon: "🧹", label: "Customer Deletion" },
+  { value: "product.new_product", icon: "🆕", label: "New Product" },
+  { value: "product.discontinue", icon: "🚫", label: "Discontinue Product" },
+  { value: "expense.reimbursement", icon: "🧾", label: "Expense Reimbursement" },
+  { value: "custom", icon: "⚙️", label: "Custom Action (enter below)" },
+];
+
+const ACTION_TYPE_LABELS: Record<string, { icon: string; label: string }> = Object.fromEntries(
+  ACTION_TYPE_OPTIONS.filter(o => o.value !== "custom").map(o => [o.value, { icon: o.icon, label: o.label }])
+);
 
 function ApprovalWorkflowsTab() {
   const [workflows, setWorkflows] = useState<ApprovalWorkflow[]>([]);
@@ -4846,137 +4869,169 @@ function ApprovalWorkflowsTab() {
 
       {/* Create/Edit Form */}
       {showForm && (
-        <div className="card" style={{ marginBottom: 16, padding: 20 }}>
-          <h4 style={{ marginBottom: 12 }}>{editWf ? `Edit — ${editWf.name}` : "New Approval Workflow"}</h4>
-
-          <div className="form-grid cols-3">
-            <label>
-              <span className="form-label">Action Type</span>
-              <input
-                value={form.actionType}
-                onChange={(e) => setForm({ ...form, actionType: e.target.value })}
-                placeholder="e.g. inventory.delivery_request"
-              />
-              <span className="form-hint">Machine-readable identifier</span>
-            </label>
-            <label>
-              <span className="form-label">Name</span>
-              <input
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="e.g. Inventory Delivery Request"
-              />
-            </label>
-            <label>
-              <span className="form-label">Auto-Approve Above Role</span>
-              <select
-                value={form.autoApproveAboveRole}
-                onChange={(e) => setForm({ ...form, autoApproveAboveRole: e.target.value })}
-              >
-                <option value="">— None —</option>
-                <option value="manager">Manager & above</option>
-                <option value="admin">Admin & above</option>
-                <option value="super_admin">Super Admin only</option>
-              </select>
-              <span className="form-hint">Skip approval for users at this role or higher</span>
-            </label>
+        <div className="admin-form-panel">
+          {/* Panel Header */}
+          <div className="admin-form-panel-header">
+            <div className="admin-form-panel-header-icon">{editWf ? "✏️" : "✅"}</div>
+            <h4>{editWf ? `Edit — ${editWf.name}` : "New Approval Workflow"}</h4>
           </div>
 
-          <div className="form-grid cols-2" style={{ marginTop: 12 }}>
-            <label>
-              <span className="form-label">Description</span>
-              <textarea
-                value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-                placeholder="When should this workflow be triggered?"
-                rows={2}
-              />
-            </label>
-            <div>
-              <span className="form-label">Condition (Optional)</span>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input
-                  style={{ flex: 1 }}
-                  value={form.conditionField}
-                  onChange={(e) => setForm({ ...form, conditionField: e.target.value })}
-                  placeholder="Field (e.g. totalAmount)"
-                />
+          {/* Panel Body */}
+          <div className="admin-form-panel-body">
+            <div className="form-grid cols-3">
+              <label>
+                <span className="form-label">Action Type</span>
                 <select
-                  style={{ width: 60 }}
-                  value={form.conditionOp}
-                  onChange={(e) => setForm({ ...form, conditionOp: e.target.value })}
+                  value={ACTION_TYPE_OPTIONS.some(o => o.value === form.actionType) ? form.actionType : "custom"}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === "custom") {
+                      setForm({ ...form, actionType: "" });
+                    } else {
+                      const opt = ACTION_TYPE_OPTIONS.find(o => o.value === val);
+                      setForm({ ...form, actionType: val, name: form.name || opt?.label || "" });
+                    }
+                  }}
                 >
-                  <option value=">">&gt;</option>
-                  <option value=">=">&gt;=</option>
-                  <option value="<">&lt;</option>
-                  <option value="<=">&lt;=</option>
-                  <option value="==">=</option>
+                  <option value="" disabled>Select an action…</option>
+                  {ACTION_TYPE_OPTIONS.map(o => (
+                    <option key={o.value} value={o.value}>{o.icon} {o.label}</option>
+                  ))}
                 </select>
+                {(!ACTION_TYPE_OPTIONS.some(o => o.value === form.actionType) || form.actionType === "") && (
+                  <input
+                    style={{ marginTop: 6 }}
+                    value={form.actionType}
+                    onChange={(e) => setForm({ ...form, actionType: e.target.value })}
+                    placeholder="e.g. inventory.delivery_request"
+                  />
+                )}
+                <span className="form-hint">Machine-readable identifier for this workflow trigger</span>
+              </label>
+              <label>
+                <span className="form-label">Workflow Name</span>
                 <input
-                  style={{ width: 100 }}
-                  type="number"
-                  value={form.conditionValue}
-                  onChange={(e) => setForm({ ...form, conditionValue: e.target.value })}
-                  placeholder="Value"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="e.g. Inventory Delivery Request"
                 />
-              </div>
-              <span className="form-hint">Only trigger when condition is met (leave empty for always)</span>
+                <span className="form-hint">Human-readable name displayed in approval inbox</span>
+              </label>
+              <label>
+                <span className="form-label">Auto-Approve Above Role</span>
+                <select
+                  value={form.autoApproveAboveRole}
+                  onChange={(e) => setForm({ ...form, autoApproveAboveRole: e.target.value })}
+                >
+                  <option value="">— None —</option>
+                  <option value="manager">Manager & above</option>
+                  <option value="admin">Admin & above</option>
+                  <option value="super_admin">Super Admin only</option>
+                </select>
+                <span className="form-hint">Skip approval for users at this role or higher</span>
+              </label>
             </div>
-          </div>
 
-          {/* Approval Steps */}
-          <div style={{ marginTop: 16, marginBottom: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <h4 style={{ margin: 0 }}>Approval Steps</h4>
-              <button className="btn btn-secondary btn-xs" onClick={addStep}>+ Add Step</button>
-            </div>
-            <div className="approval-steps-editor">
-              {form.steps.map((step, idx) => (
-                <div key={idx} className="approval-step-row" style={{
-                  display: "flex", gap: 12, alignItems: "center",
-                  padding: "10px 12px", background: "#1a1a2e", borderRadius: 8, marginBottom: 8,
-                  border: "1px solid #333",
-                }}>
-                  <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#3b82f6", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>
-                    {step.stepOrder}
-                  </div>
-                  <label style={{ flex: 1 }}>
-                    <span className="form-label">Approver Role</span>
-                    <select value={step.approverRole} onChange={(e) => updateStep(idx, "approverRole", e.target.value)}>
-                      <option value="staff">Staff</option>
-                      <option value="manager">Manager</option>
-                      <option value="admin">Admin</option>
-                      <option value="super_admin">Super Admin</option>
-                    </select>
-                  </label>
-                  <label style={{ flex: 1.5 }}>
-                    <span className="form-label">Step Label</span>
-                    <input
-                      value={step.label}
-                      onChange={(e) => updateStep(idx, "label", e.target.value)}
-                      placeholder="e.g. Manager Review"
-                    />
-                  </label>
-                  {form.steps.length > 1 && (
-                    <button
-                      className="btn btn-xs btn-warning"
-                      onClick={() => removeStep(idx)}
-                      style={{ alignSelf: "flex-end", marginBottom: 4 }}
-                    >✕</button>
-                  )}
+            <div className="form-grid cols-2" style={{ marginTop: 16 }}>
+              <label>
+                <span className="form-label">Description</span>
+                <textarea
+                  value={form.description}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  placeholder="Describe when this workflow should be triggered…"
+                  rows={2}
+                />
+              </label>
+              <div>
+                <span className="form-label">Condition (Optional)</span>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    style={{ flex: 1 }}
+                    value={form.conditionField}
+                    onChange={(e) => setForm({ ...form, conditionField: e.target.value })}
+                    placeholder="Field (e.g. totalAmount)"
+                  />
+                  <select
+                    style={{ width: 60 }}
+                    value={form.conditionOp}
+                    onChange={(e) => setForm({ ...form, conditionOp: e.target.value })}
+                  >
+                    <option value=">">&gt;</option>
+                    <option value=">=">&gt;=</option>
+                    <option value="<">&lt;</option>
+                    <option value="<=">&lt;=</option>
+                    <option value="==">=</option>
+                  </select>
+                  <input
+                    style={{ width: 100 }}
+                    type="number"
+                    value={form.conditionValue}
+                    onChange={(e) => setForm({ ...form, conditionValue: e.target.value })}
+                    placeholder="Value"
+                  />
                 </div>
-              ))}
+                <span className="form-hint">Only trigger when condition is met (leave empty for always)</span>
+              </div>
             </div>
-            <p className="form-hint">Steps are executed in order. Step 1 is reviewed first, then step 2, etc.</p>
+
+            {/* Approval Steps */}
+            <div className="admin-form-section">
+              <div className="admin-form-section-header">
+                <span className="admin-form-section-title">Approval Steps</span>
+                <button className="btn btn-secondary btn-xs" onClick={addStep}>+ Add Step</button>
+              </div>
+              <div>
+                {form.steps.map((step, idx) => (
+                  <div key={idx} className="approval-step-card">
+                    <div className="approval-step-number">{step.stepOrder}</div>
+                    <div className="approval-step-fields">
+                      <label>
+                        <span className="form-label">Approver Role</span>
+                        <select value={step.approverRole} onChange={(e) => updateStep(idx, "approverRole", e.target.value)}>
+                          <option value="staff">Staff</option>
+                          <option value="manager">Manager</option>
+                          <option value="admin">Admin</option>
+                          <option value="super_admin">Super Admin</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span className="form-label">Step Label</span>
+                        <input
+                          value={step.label}
+                          onChange={(e) => updateStep(idx, "label", e.target.value)}
+                          placeholder="e.g. Manager Review"
+                        />
+                      </label>
+                    </div>
+                    {form.steps.length > 1 && (
+                      <button className="approval-step-remove" onClick={() => removeStep(idx)} title="Remove step">✕</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p className="form-hint" style={{ marginTop: 4 }}>
+                Steps are executed in order. Step 1 is reviewed first, then step 2, etc.
+              </p>
+            </div>
           </div>
 
-          <div className="form-actions" style={{ display: "flex", gap: 8 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, marginRight: "auto" }}>
-              <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />
-              Active
-            </label>
-            <button className="btn btn-primary" onClick={save}>{editWf ? "Update Workflow" : "Create Workflow"}</button>
-            <button className="btn btn-secondary" onClick={resetForm}>Cancel</button>
+          {/* Panel Footer */}
+          <div className="admin-form-panel-footer">
+            <div
+              className="admin-toggle-switch"
+              onClick={() => setForm({ ...form, isActive: !form.isActive })}
+            >
+              <div className={`admin-toggle-track ${form.isActive ? "active" : ""}`}>
+                <div className="admin-toggle-thumb" />
+              </div>
+              <span className="admin-toggle-label">{form.isActive ? "Active" : "Inactive"}</span>
+            </div>
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              <button className="btn btn-primary" onClick={save}>
+                {editWf ? "💾 Update Workflow" : "✅ Create Workflow"}
+              </button>
+              <button className="btn btn-secondary" onClick={resetForm}>Cancel</button>
+            </div>
           </div>
         </div>
       )}

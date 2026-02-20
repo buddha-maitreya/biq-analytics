@@ -7,19 +7,17 @@
  * POST /auth/password — Change password (authenticated)
  */
 
-import { createRouter } from "@agentuity/runtime";
+import { createRouter, validator } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
+import { loginSchema, changePasswordSchema } from "@lib/validation";
 import * as authSvc from "@services/auth";
 
 const router = createRouter();
 router.use(errorMiddleware());
 
 // ── Login ────────────────────────────────────────────────────
-router.post("/auth/login", async (c) => {
-  const { email, password } = await c.req.json<{
-    email: string;
-    password: string;
-  }>();
+router.post("/auth/login", validator({ input: loginSchema }), async (c) => {
+  const { email, password } = c.req.valid("json");
 
   const result = await authSvc.login(email, password);
 
@@ -81,7 +79,7 @@ router.post("/auth/logout", (c) => {
 });
 
 // ── Change Password (authenticated) ──────────────────────────
-router.post("/auth/password", async (c) => {
+router.post("/auth/password", validator({ input: changePasswordSchema }), async (c) => {
   // Verify current auth
   let token: string | undefined;
   const authHeader = c.req.header("Authorization");
@@ -105,14 +103,7 @@ router.post("/auth/password", async (c) => {
     return c.json({ error: "Invalid token" }, 401);
   }
 
-  const { currentPassword, newPassword } = await c.req.json<{
-    currentPassword: string;
-    newPassword: string;
-  }>();
-
-  if (!newPassword || newPassword.length < 6) {
-    return c.json({ error: "New password must be at least 6 characters" }, 400);
-  }
+  const { currentPassword, newPassword } = c.req.valid("json");
 
   // Re-validate current password via login
   const check = await authSvc.login(user.email, currentPassword);

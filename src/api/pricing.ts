@@ -1,6 +1,7 @@
-import { createRouter } from "@agentuity/runtime";
+import { createRouter, validator } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
 import { authMiddleware } from "@services/auth";
+import { bulkPricingSchema } from "@lib/validation";
 import * as svc from "@services/pricing";
 
 const router = createRouter();
@@ -14,9 +15,9 @@ router.get("/pricing/:productId", async (c) => {
 });
 
 /** Bulk calculate prices (cart / quote) */
-router.post("/pricing/calculate", async (c) => {
-  const { items } = await c.req.json();
-  const result = await svc.bulkCalculate(items ?? []);
+router.post("/pricing/calculate", validator({ input: bulkPricingSchema }), async (c) => {
+  const { items } = c.req.valid("json");
+  const result = await svc.bulkCalculate(items);
   return c.json({ data: result });
 });
 

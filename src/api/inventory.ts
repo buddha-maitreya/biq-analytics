@@ -1,6 +1,7 @@
-import { createRouter } from "@agentuity/runtime";
+import { createRouter, validator } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
 import { authMiddleware } from "@services/auth";
+import { adjustInventorySchema, transferInventorySchema } from "@lib/validation";
 import * as svc from "@services/inventory";
 
 const router = createRouter();
@@ -8,15 +9,15 @@ router.use(errorMiddleware());
 router.use(authMiddleware());
 
 /** Adjust stock level */
-router.post("/inventory/adjust", async (c) => {
-  const body = await c.req.json();
+router.post("/inventory/adjust", validator({ input: adjustInventorySchema }), async (c) => {
+  const body = c.req.valid("json");
   const tx = await svc.adjustStock(body);
   return c.json({ data: tx }, 201);
 });
 
 /** Transfer stock between warehouses */
-router.post("/inventory/transfer", async (c) => {
-  const body = await c.req.json();
+router.post("/inventory/transfer", validator({ input: transferInventorySchema }), async (c) => {
+  const body = c.req.valid("json");
   const result = await svc.transferStock(body);
   return c.json({ data: result });
 });

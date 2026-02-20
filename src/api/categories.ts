@@ -1,6 +1,7 @@
-import { createRouter } from "@agentuity/runtime";
+import { createRouter, validator } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
 import { authMiddleware } from "@services/auth";
+import { createCategorySchema, updateCategorySchema } from "@lib/validation";
 import * as svc from "@services/categories";
 
 const router = createRouter();
@@ -22,15 +23,15 @@ router.get("/categories/:id", async (c) => {
   return c.json({ data: category });
 });
 
-router.post("/categories", async (c) => {
-  const body = await c.req.json();
+router.post("/categories", validator({ input: createCategorySchema }), async (c) => {
+  const body = c.req.valid("json");
   const category = await svc.createCategory(body);
   return c.json({ data: category }, 201);
 });
 
-router.put("/categories/:id", async (c) => {
+router.put("/categories/:id", validator({ input: updateCategorySchema }), async (c) => {
   const id = c.req.param("id");
-  const body = await c.req.json();
+  const body = c.req.valid("json");
   const category = await svc.updateCategory(id, body);
   return c.json({ data: category });
 });

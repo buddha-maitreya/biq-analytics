@@ -44,6 +44,21 @@ export default function AssistantPage({ config }: AssistantPageProps) {
   const [input, setInput] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  /** Map tool names to agent display labels */
+  const getAgentLabel = (toolCalls: ToolCall[]): string | null => {
+    const active = toolCalls.find((tc) => tc.status === "running");
+    if (!active) return null;
+    const map: Record<string, string> = {
+      query_database: "🧠 The Brain is querying...",
+      analyze_trends: "📊 The Analyst is computing...",
+      generate_report: "📝 The Writer is drafting...",
+      search_knowledge: "📚 The Librarian is searching...",
+      get_business_snapshot: "🧠 The Brain is analyzing...",
+    };
+    return map[active.name] ?? `⚙️ Running ${active.name}...`;
+  };
 
   // Load sessions on mount
   useEffect(() => {
@@ -188,12 +203,20 @@ export default function AssistantPage({ config }: AssistantPageProps) {
             </div>
           )}
 
-          {/* Thinking indicator (streaming with no text yet) */}
+          {/* Thinking indicator — shows which agent is working */}
           {streaming && !streamingText && streamingToolCalls.length === 0 && (
             <div className="chat-message assistant">
               <div className="message-bubble loading-bubble">
                 <span className="typing-indicator">●●●</span>
+                <span className="agent-thinking-label">🧠 The Brain is thinking...</span>
               </div>
+            </div>
+          )}
+
+          {/* Agent routing indicator during tool execution */}
+          {streaming && streamingToolCalls.length > 0 && (
+            <div className="streaming-agent-indicator">
+              {getAgentLabel(streamingToolCalls as ToolCall[]) ?? "⚙️ Processing..."}
             </div>
           )}
 
@@ -215,13 +238,27 @@ export default function AssistantPage({ config }: AssistantPageProps) {
             }}
             disabled={streaming}
           />
-          <button
-            className="btn btn-primary"
-            onClick={handleSend}
-            disabled={!input.trim() || streaming}
-          >
-            {streaming ? "…" : "Send"}
-          </button>
+          {streaming ? (
+            <button
+              className="btn btn-danger"
+              onClick={() => {
+                // Abort current stream by creating a new session (soft cancel)
+                abortRef.current?.abort();
+                window.location.reload();
+              }}
+              title="Cancel generation"
+            >
+              ■ Stop
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary"
+              onClick={handleSend}
+              disabled={!input.trim() || streaming}
+            >
+              Send
+            </button>
+          )}
         </div>
       </div>
     </div>

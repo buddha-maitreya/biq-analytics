@@ -210,15 +210,103 @@ export async function deleteTool(id: string): Promise<boolean> {
 
 // ── Server Tool Execution ──────────────────────────────────
 
+// Phase 6.2: OAuth2 token cache (in-memory per deployment instance)
+const oauthTokenCache = new Map<string, { token: string; expiresAt: number }>();
+
+/**
+ * Exchange OAuth2 credentials for an access token.
+ * Supports client_credentials grant (most common for server-to-server).
+ * Tokens are cached in-memory until 60s before expiry.
+ */
+async function getOAuth2Token(
+  authCfg: Record<string, string>
+): Promise<string | null> {
+  const cacheKey = `${authCfg.tokenUrl}:${authCfg.clientId}`;
+  const cached = oauthTokenCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.token;
+  }
+
+  // If we have a stored access token but no tokenUrl, use it directly
+  if (authCfg.accessToken && !authCfg.tokenUrl) {
+    return authCfg.accessToken;
+  }
+
+  if (!authCfg.tokenUrl || !authCfg.clientId || !authCfg.clientSecret) {
+    return authCfg.accessToken ?? null;
+  }
+
+  try {
+    const body = new URLSearchParams({
+      grant_type: authCfg.grantType ?? "client_credentials",
+      client_id: authCfg.clientId,
+      client_secret: authCfg.clientSecret,
+    });
+    if (authCfg.scope) body.set("scope", authCfg.scope);
+
+    const res = await fetch(authCfg.tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+
+    if (!res.ok) {
+      return authCfg.accessToken ?? null;
+    }
+
+    const data = (await res.json()) as {
+      access_token: string;
+      expires_in?: number;
+    };
+    const expiresIn = data.expires_in ?? 3600;
+    // Cache until 60s before expiry
+    oauthTokenCache.set(cacheKey, {
+      token: data.access_token,
+      expiresAt: Date.now() + (expiresIn - 60) * 1000,
+    });
+    return data.access_token;
+  } catch {
+    return authCfg.accessToken ?? null;
+  }
+}
+
+// Phase 6.2: Rate limiting via in-memory counters (per-tool)
+const rateLimitCounters = new Map<string, { count: number; windowStart: number }>();
+
+/** Default rate limit: 60 requests per minute per tool */
+const DEFAULT_RATE_LIMIT = 60;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+
+/**
+ * Check and increment rate limit counter for a tool.
+ * Returns true if the request is allowed, false if rate-limited.
+ */
+function checkRateLimit(toolId: string, maxRequests?: number): boolean {
+  const limit = maxRequests ?? DEFAULT_RATE_LIMIT;
+  const now = Date.now();
+  const counter = rateLimitCounters.get(toolId);
+
+  if (!counter || now - counter.windowStart > RATE_LIMIT_WINDOW_MS) {
+    rateLimitCounters.set(toolId, { count: 1, windowStart: now });
+    return true;
+  }
+
+  if (counter.count >= limit) return false;
+  counter.count++;
+  return true;
+}
+
 /**
  * Execute a server tool by making an HTTP request to the configured endpoint.
  *
  * Supports:
- * - Authentication (api_key, bearer, basic, oauth2)
+ * - Authentication (api_key, bearer, basic, oauth2 with token exchange)
  * - Path parameter interpolation (e.g. /users/{user_id})
  * - Query parameters (merged from schema defaults + LLM params)
  * - Request body schema for POST/PUT/PATCH
  * - Dynamic variable substitution in URL, headers, and body
+ * - Rate limiting (per-tool, configurable via metadata.rateLimit)
+ * - Retry with exponential backoff for transient failures (5xx, network errors)
  *
  * @param tool - The tool definition (must have webhookUrl set)
  * @param params - Parameters passed by the LLM — sent as JSON body for POST/PUT/PATCH,
@@ -231,6 +319,15 @@ export async function executeServerTool(
 ): Promise<Record<string, unknown>> {
   if (!tool.webhookUrl) {
     return { error: `Server tool "${tool.label}" has no URL configured` };
+  }
+
+  // Phase 6.2: Rate limiting
+  const rateLimit = (tool.metadata as Record<string, unknown>)?.rateLimit as number | undefined;
+  if (!checkRateLimit(tool.id, rateLimit)) {
+    return {
+      error: `Server tool "${tool.label}" is rate-limited. Try again later.`,
+      rateLimited: true,
+    };
   }
 
   const method = (tool.webhookMethod || "GET").toUpperCase();
@@ -250,10 +347,12 @@ export async function executeServerTool(
   } else if (authType === "basic" && authCfg.username) {
     const encoded = btoa(`${authCfg.username}:${authCfg.password ?? ""}`);
     headers["Authorization"] = `Basic ${encoded}`;
-  }
-  // oauth2 would require a token exchange flow — stored token used as bearer
-  if (authType === "oauth2" && authCfg.accessToken) {
-    headers["Authorization"] = `Bearer ${authCfg.accessToken}`;
+  } else if (authType === "oauth2") {
+    // Phase 6.2: Full OAuth2 token exchange with caching
+    const token = await getOAuth2Token(authCfg);
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
   }
 
   // ── Dynamic variable resolution ──
@@ -304,38 +403,69 @@ export async function executeServerTool(
   }
 
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    // Phase 6.2: Retry with exponential backoff for transient failures
+    const maxRetries = ((tool.metadata as Record<string, unknown>)?.retries as number) ?? 2;
+    let lastError: Error | null = null;
 
-    const res = await fetch(url, {
-      method,
-      headers,
-      body,
-      signal: controller.signal,
-    });
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (attempt > 0) {
+        // Exponential backoff: 500ms, 1000ms, 2000ms, ...
+        await new Promise((r) => setTimeout(r, 500 * Math.pow(2, attempt - 1)));
+      }
 
-    clearTimeout(timer);
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    const text = await res.text();
+        const res = await fetch(url, {
+          method,
+          headers,
+          body,
+          signal: controller.signal,
+        });
 
-    if (!res.ok) {
-      return {
-        error: `Server tool "${tool.label}" returned HTTP ${res.status}`,
-        status: res.status,
-        body: text.slice(0, 500),
-      };
+        clearTimeout(timer);
+
+        const text = await res.text();
+
+        // Don't retry client errors (4xx) — only server errors (5xx)
+        if (!res.ok) {
+          if (res.status >= 500 && attempt < maxRetries) {
+            lastError = new Error(`HTTP ${res.status}`);
+            continue; // retry
+          }
+          return {
+            error: `Server tool "${tool.label}" returned HTTP ${res.status}`,
+            status: res.status,
+            body: text.slice(0, 500),
+          };
+        }
+
+        // Try to parse as JSON
+        try {
+          return JSON.parse(text);
+        } catch {
+          return { output: text.slice(0, 2000) };
+        }
+      } catch (err: any) {
+        if (err.name === "AbortError") {
+          if (attempt < maxRetries) {
+            lastError = err;
+            continue; // retry timeouts
+          }
+          return { error: `Server tool "${tool.label}" timed out after ${timeoutMs}ms` };
+        }
+        // Network errors are retryable
+        if (attempt < maxRetries) {
+          lastError = err;
+          continue;
+        }
+        return { error: `Server tool execution failed: ${err.message || String(err)}` };
+      }
     }
 
-    // Try to parse as JSON
-    try {
-      return JSON.parse(text);
-    } catch {
-      return { output: text.slice(0, 2000) };
-    }
+    return { error: `Server tool "${tool.label}" failed after ${maxRetries + 1} attempts: ${lastError?.message ?? "unknown"}` };
   } catch (err: any) {
-    if (err.name === "AbortError") {
-      return { error: `Server tool "${tool.label}" timed out after ${timeoutMs}ms` };
-    }
     return { error: `Server tool execution failed: ${err.message || String(err)}` };
   }
 }
@@ -395,3 +525,357 @@ export async function executeTool(
       return { error: `Unsupported tool type "${tool.toolType}" for tool "${tool.label}"` };
   }
 }
+
+// ── Default Starter Tools ──────────────────────────────────
+//
+// Industry-agnostic tool templates that demonstrate the system.
+// URLs are placeholders — each deployment configures their own
+// endpoints via the Admin Console.
+// ──────────────────────────────────────────────────────────
+
+const DEFAULT_TOOLS: CreateToolInput[] = [
+  // ── SERVER TOOLS (external API calls) ─────────────────────
+
+  {
+    toolType: "server",
+    name: "send_webhook_notification",
+    label: "Send Webhook Notification",
+    description:
+      "Send a notification to an external webhook endpoint (Slack, Discord, Microsoft Teams, Zapier, Make, n8n, etc.). Use when the user asks to notify a channel, send an alert, or trigger an external automation.",
+    parameterSchema: {
+      message: {
+        type: "string",
+        description: "The notification message text to send",
+        required: true,
+      },
+      channel: {
+        type: "string",
+        description: "Target channel or topic (optional — depends on webhook config)",
+      },
+      priority: {
+        type: "string",
+        description: "Priority level: low, normal, high, urgent",
+      },
+    },
+    webhookUrl: "https://hooks.example.com/webhook",
+    webhookMethod: "POST",
+    webhookHeaders: { "Content-Type": "application/json" },
+    webhookTimeoutSecs: 10,
+    authType: "none",
+    authConfig: {},
+    executionMode: "immediate",
+    isActive: false, // Inactive until user configures their URL
+    sortOrder: 1,
+  },
+
+  {
+    toolType: "server",
+    name: "send_email",
+    label: "Send Email",
+    description:
+      "Send an email via the configured email API (SendGrid, Resend, Mailgun, Postmark, etc.). Use when the user asks to email a customer, send a report by email, or send a notification email.",
+    parameterSchema: {
+      to: {
+        type: "string",
+        description: "Recipient email address",
+        required: true,
+      },
+      subject: {
+        type: "string",
+        description: "Email subject line",
+        required: true,
+      },
+      body: {
+        type: "string",
+        description: "Email body content (plain text or HTML)",
+        required: true,
+      },
+    },
+    webhookUrl: "https://api.example.com/v1/emails/send",
+    webhookMethod: "POST",
+    webhookHeaders: { "Content-Type": "application/json" },
+    webhookTimeoutSecs: 15,
+    authType: "bearer",
+    authConfig: { token: "" },
+    executionMode: "confirm",
+    isActive: false,
+    sortOrder: 2,
+  },
+
+  {
+    toolType: "server",
+    name: "send_sms",
+    label: "Send SMS",
+    description:
+      "Send an SMS text message to a phone number via the configured SMS provider (Twilio, Africa's Talking, Vonage, etc.). Use when the user asks to text a customer or send an SMS alert.",
+    parameterSchema: {
+      to: {
+        type: "string",
+        description: "Recipient phone number in international format (e.g. +254712345678)",
+        required: true,
+      },
+      message: {
+        type: "string",
+        description: "SMS message text (max 160 characters for single SMS)",
+        required: true,
+      },
+    },
+    webhookUrl: "https://api.example.com/v1/sms/send",
+    webhookMethod: "POST",
+    webhookHeaders: { "Content-Type": "application/json" },
+    webhookTimeoutSecs: 15,
+    authType: "api_key",
+    authConfig: { headerName: "X-API-Key", apiKey: "" },
+    executionMode: "confirm",
+    isActive: false,
+    sortOrder: 3,
+  },
+
+  {
+    toolType: "server",
+    name: "check_external_price",
+    label: "Check External Price",
+    description:
+      "Look up current pricing from an external pricing system, supplier API, or price comparison service. Use when the user asks about supplier prices, market rates, or wants to compare pricing.",
+    parameterSchema: {
+      query: {
+        type: "string",
+        description: "Product name, SKU, or search term to look up",
+        required: true,
+      },
+      supplier: {
+        type: "string",
+        description: "Specific supplier to check (optional)",
+      },
+    },
+    webhookUrl: "https://api.example.com/v1/pricing/lookup",
+    webhookMethod: "GET",
+    webhookHeaders: {},
+    webhookTimeoutSecs: 20,
+    authType: "bearer",
+    authConfig: { token: "" },
+    executionMode: "immediate",
+    isActive: false,
+    sortOrder: 4,
+  },
+
+  {
+    toolType: "server",
+    name: "sync_to_accounting",
+    label: "Sync to Accounting System",
+    description:
+      "Push financial data (invoices, payments, expenses) to the external accounting system (QuickBooks, Xero, Zoho Books, etc.). Use when the user asks to sync data, export to accounting, or reconcile.",
+    parameterSchema: {
+      recordType: {
+        type: "string",
+        description: "Type of record to sync: invoice, payment, expense, credit_note",
+        required: true,
+      },
+      recordId: {
+        type: "string",
+        description: "The ID of the record to sync",
+        required: true,
+      },
+    },
+    webhookUrl: "https://api.example.com/v1/accounting/sync",
+    webhookMethod: "POST",
+    webhookHeaders: { "Content-Type": "application/json" },
+    webhookTimeoutSecs: 30,
+    authType: "oauth2",
+    authConfig: { accessToken: "" },
+    executionMode: "confirm",
+    isActive: false,
+    sortOrder: 5,
+  },
+
+  {
+    toolType: "server",
+    name: "check_delivery_status",
+    label: "Check Delivery Status",
+    description:
+      "Check the delivery/shipping status of an order from the logistics provider (DHL, FedEx, local courier, etc.). Use when the user asks about order delivery, tracking, or shipment status.",
+    parameterSchema: {
+      trackingNumber: {
+        type: "string",
+        description: "Tracking number or order reference",
+        required: true,
+      },
+      carrier: {
+        type: "string",
+        description: "Carrier/courier name (optional — auto-detected if not specified)",
+      },
+    },
+    webhookUrl: "https://api.example.com/v1/tracking/{trackingNumber}",
+    webhookMethod: "GET",
+    webhookHeaders: {},
+    webhookTimeoutSecs: 15,
+    authType: "api_key",
+    authConfig: { headerName: "X-API-Key", apiKey: "" },
+    pathParamsSchema: [
+      { name: "trackingNumber", description: "The tracking number to look up", required: true },
+    ],
+    executionMode: "immediate",
+    isActive: false,
+    sortOrder: 6,
+  },
+
+  // ── CLIENT TOOLS (browser-side actions) ───────────────────
+
+  {
+    toolType: "client",
+    name: "navigate_to_page",
+    label: "Navigate to Page",
+    description:
+      "Navigate the user to a specific page in the platform. Use when the user mentions wanting to see a page, go somewhere, or you want to direct them to relevant content after answering their question. Available pages: dashboard, products, orders, customers, inventory, invoices, pos, reports, settings, admin.",
+    parameterSchema: {
+      page: {
+        type: "string",
+        description: "Page identifier: dashboard, products, orders, customers, inventory, invoices, pos, reports, settings, admin",
+        required: true,
+      },
+      message: {
+        type: "string",
+        description: "Optional message to show after navigation",
+      },
+    },
+    expectsResponse: false,
+    executionMode: "immediate",
+    isActive: true,
+    sortOrder: 10,
+  },
+
+  {
+    toolType: "client",
+    name: "show_data_card",
+    label: "Show Data Card",
+    description:
+      "Display a rich, interactive data card in the chat (product details, customer profile, order summary, etc.). Use when you want to present structured data visually rather than just as text. The frontend renders the card with appropriate formatting.",
+    parameterSchema: {
+      cardType: {
+        type: "string",
+        description: "Type of card: product, customer, order, invoice, alert, metric",
+        required: true,
+      },
+      title: {
+        type: "string",
+        description: "Card title/heading",
+        required: true,
+      },
+      data: {
+        type: "string",
+        description: "JSON string of key-value pairs to display in the card",
+        required: true,
+      },
+      actions: {
+        type: "string",
+        description: "JSON array of action buttons, e.g. [{\"label\": \"View Details\", \"page\": \"products\"}]",
+      },
+    },
+    expectsResponse: false,
+    executionMode: "immediate",
+    isActive: true,
+    sortOrder: 11,
+  },
+
+  {
+    toolType: "client",
+    name: "generate_export",
+    label: "Generate Export",
+    description:
+      "Trigger a data export/download in the browser. The frontend generates the file (CSV, PDF, Excel) from the provided data. Use when the user asks to export, download, or save data to a file.",
+    parameterSchema: {
+      format: {
+        type: "string",
+        description: "Export format: csv, pdf, json",
+        required: true,
+      },
+      title: {
+        type: "string",
+        description: "Export file title/name",
+        required: true,
+      },
+      data: {
+        type: "string",
+        description: "JSON string of the data to export (array of objects for CSV, or report content for PDF)",
+        required: true,
+      },
+    },
+    expectsResponse: false,
+    executionMode: "immediate",
+    isActive: true,
+    sortOrder: 12,
+  },
+
+  {
+    toolType: "client",
+    name: "create_quick_order",
+    label: "Create Quick Order",
+    description:
+      "Open the POS (point-of-sale) page with pre-filled items to create a quick order. Use when the user says things like 'create an order for...', 'ring up...', or 'add to cart...'. Pre-fills the order form so the user just needs to confirm.",
+    parameterSchema: {
+      customerName: {
+        type: "string",
+        description: "Customer name to pre-select (optional)",
+      },
+      items: {
+        type: "string",
+        description: "JSON array of items to add, e.g. [{\"productName\": \"Widget\", \"quantity\": 2}]",
+        required: true,
+      },
+    },
+    expectsResponse: false,
+    executionMode: "confirm",
+    isActive: true,
+    sortOrder: 13,
+  },
+
+  {
+    toolType: "client",
+    name: "show_alert",
+    label: "Show Alert",
+    description:
+      "Display a prominent alert banner or toast notification in the platform UI. Use when you need to draw the user's attention to something important — a critical stock warning, a deadline approaching, or an action confirmation.",
+    parameterSchema: {
+      severity: {
+        type: "string",
+        description: "Alert severity: info, success, warning, error",
+        required: true,
+      },
+      title: {
+        type: "string",
+        description: "Alert title/heading",
+        required: true,
+      },
+      message: {
+        type: "string",
+        description: "Alert message body",
+        required: true,
+      },
+    },
+    expectsResponse: false,
+    executionMode: "immediate",
+    isActive: true,
+    sortOrder: 14,
+  },
+];
+
+/**
+ * Seed default starter tools (idempotent — skips tools whose name already exists).
+ * Returns the count of newly created tools.
+ */
+export async function seedDefaultTools(): Promise<number> {
+  let created = 0;
+  for (const def of DEFAULT_TOOLS) {
+    const existing = await db.query.customTools.findFirst({
+      where: eq(customTools.name, def.name),
+    });
+    if (!existing) {
+      await createTool(def);
+      created++;
+    }
+  }
+  return created;
+}
+
+/** Get the list of default tool names (for display in UI) */
+export const DEFAULT_TOOL_NAMES = DEFAULT_TOOLS.map((t) => t.name);

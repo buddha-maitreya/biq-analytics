@@ -1,7 +1,8 @@
-import { createRouter } from "@agentuity/runtime";
+import { createRouter, validator } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
 import { authMiddleware } from "@services/auth";
 import { paginationSchema } from "@lib/pagination";
+import { createProductSchema, updateProductSchema } from "@lib/validation";
 import * as svc from "@services/products";
 
 const router = createRouter();
@@ -30,15 +31,15 @@ router.get("/products/:id", async (c) => {
   return c.json({ data: product });
 });
 
-router.post("/products", async (c) => {
-  const body = await c.req.json();
+router.post("/products", validator({ input: createProductSchema }), async (c) => {
+  const body = c.req.valid("json");
   const product = await svc.createProduct(body);
   return c.json({ data: product }, 201);
 });
 
-router.put("/products/:id", async (c) => {
+router.put("/products/:id", validator({ input: updateProductSchema }), async (c) => {
   const id = c.req.param("id");
-  const body = await c.req.json();
+  const body = c.req.valid("json");
   const product = await svc.updateProduct(id, body);
   return c.json({ data: product });
 });

@@ -6,7 +6,7 @@ interface AdminPageProps {
   onSaved?: () => void;
 }
 
-type AdminTab = "users" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools" | "model" | "agents";
+type AdminTab = "users" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools" | "model" | "agents" | "prompts" | "evals" | "examples" | "scheduler" | "observability";
 
 /* ---------- Sub-types ---------- */
 interface RBACConfig {
@@ -128,6 +128,11 @@ export default function AdminPage({ config, onSaved }: AdminPageProps) {
     { key: "ai", label: "Prompt Engineering", icon: "✍️" },
     { key: "tools", label: "Custom Tools", icon: "🧩" },
     { key: "agents", label: "AI Agents", icon: "🧬" },
+    { key: "prompts", label: "Prompt Templates", icon: "📋" },
+    { key: "evals", label: "Eval Dashboard", icon: "📊" },
+    { key: "examples", label: "Few-Shot Examples", icon: "💡" },
+    { key: "scheduler", label: "Scheduler", icon: "⏰" },
+    { key: "observability", label: "Observability", icon: "📡" },
     { key: "users", label: "Users & Access", icon: "🔐" },
     { key: "settings", label: "Profile", icon: "🏢" },
   ];
@@ -158,6 +163,11 @@ export default function AdminPage({ config, onSaved }: AdminPageProps) {
         {tab === "ai" && <AIConfigTab config={config} onSaved={onSaved} />}
         {tab === "tools" && <CustomToolsTab />}
         {tab === "agents" && <AIAgentsTab />}
+        {tab === "prompts" && <PromptTemplatesTab />}
+        {tab === "evals" && <EvalDashboardTab />}
+        {tab === "examples" && <FewShotExamplesTab />}
+        {tab === "scheduler" && <SchedulerTab />}
+        {tab === "observability" && <ObservabilityTab />}
         {tab === "settings" && <SettingsTab config={config} onSaved={onSaved} />}
       </div>
     </div>
@@ -1947,6 +1957,20 @@ interface AgentConfig {
   customInstructions: string | null;
   executionPriority: number;
   config: Record<string, unknown> | null;
+  updatedAt?: string;
+}
+
+/** Validate agent config fields — returns array of error strings (empty = valid) */
+function validateAgentConfig(edit: AgentConfig): string[] {
+  const errors: string[] = [];
+  const temp = edit.temperature != null ? parseFloat(String(edit.temperature)) : null;
+  if (temp != null && (isNaN(temp) || temp < 0 || temp > 2))
+    errors.push("Temperature must be between 0.00 and 2.00");
+  if (edit.maxSteps != null && (edit.maxSteps < 1 || edit.maxSteps > 20))
+    errors.push("Max Steps must be between 1 and 20");
+  if (edit.timeoutMs != null && (edit.timeoutMs < 5000 || edit.timeoutMs > 300000))
+    errors.push("Timeout must be between 5,000 and 300,000 ms");
+  return errors;
 }
 
 /** Per-agent specialization metadata (static, display-only) */
@@ -2032,6 +2056,12 @@ function AIAgentsTab() {
   const handleSave = async (agentName: string) => {
     const agent = editState[agentName];
     if (!agent) return;
+    // Validate before saving
+    const errors = validateAgentConfig(agent);
+    if (errors.length > 0) {
+      setMessage({ type: "error", text: errors.join(". ") });
+      return;
+    }
     setSaving(agentName);
     setMessage(null);
     try {
@@ -2068,6 +2098,29 @@ function AIAgentsTab() {
     } catch { /* ignore */ }
   };
 
+  const handleReset = async (agentName: string) => {
+    if (!confirm(`Reset ${editState[agentName]?.displayName ?? agentName} to default settings?`)) return;
+    setSaving(agentName);
+    setMessage(null);
+    try {
+      // Re-seed defaults then reload
+      await fetch("/api/agent-configs/seed", { method: "POST" });
+      // Delete & re-seed for this specific agent by setting defaults
+      const res = await fetch(`/api/agent-configs/${agentName}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resetToDefaults: true }),
+      });
+      if (res.ok) {
+        setMessage({ type: "success", text: `${agentName} reset to defaults!` });
+        loadAgents();
+      }
+    } catch {
+      setMessage({ type: "error", text: "Failed to reset." });
+    }
+    setSaving(null);
+  };
+
   if (loading) return <div className="loading-state"><div className="spinner" />Loading agent configurations…</div>;
 
   return (
@@ -2096,7 +2149,14 @@ function AIAgentsTab() {
                 >
                   <div>
                     <h3 style={{ margin: 0 }}>{meta.icon} {edit.displayName}</h3>
-                    <p className="text-muted" style={{ margin: "4px 0 0", fontSize: 13 }}>{meta.role}</p>
+                    <p className="text-muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
+                      {meta.role}
+                      {agent.updatedAt && (
+                        <span style={{ marginLeft: 8, fontSize: 11, opacity: 0.7 }}>
+                          · Updated {new Date(agent.updatedAt).toLocaleDateString()}
+                        </span>
+                      )}
+                    </p>
                   </div>
                   <span className="ai-section-chevron">{isExpanded ? "▼" : "▶"}</span>
                 </button>
@@ -2175,10 +2235,20 @@ function AIAgentsTab() {
                     )}
                   </div>
 
-                  {/* Save button */}
-                  <div style={{ marginTop: 16 }}>
-                    <button className="btn btn-primary" onClick={() => handleSave(agent.agentName)} disabled={saving === agent.agentName}>
+                  {/* Validation errors */}
+                  {validateAgentConfig(edit).length > 0 && (
+                    <div className="alert alert-error" style={{ marginTop: 12, fontSize: 13 }}>
+                      {validateAgentConfig(edit).map((e, i) => <div key={i}>⚠️ {e}</div>)}
+                    </div>
+                  )}
+
+                  {/* Save + Reset buttons */}
+                  <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
+                    <button className="btn btn-primary" onClick={() => handleSave(agent.agentName)} disabled={saving === agent.agentName || validateAgentConfig(edit).length > 0}>
                       {saving === agent.agentName ? "Saving…" : `💾 Save ${edit.displayName}`}
+                    </button>
+                    <button className="btn btn-secondary" onClick={() => handleReset(agent.agentName)} disabled={saving === agent.agentName} title="Reset this agent to factory defaults">
+                      ↺ Reset Defaults
                     </button>
                   </div>
                 </div>
@@ -2598,6 +2668,7 @@ function CustomToolsTab() {
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testingToolId, setTestingToolId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [seeding, setSeeding] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [filter, setFilter] = useState<"all" | "server" | "client">("all");
 
@@ -2659,6 +2730,25 @@ function CustomToolsTab() {
     loadTools();
   };
 
+  const handleSeedTools = async () => {
+    setSeeding(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/custom-tools/seed", { method: "POST" });
+      const json = await res.json();
+      if (res.ok) {
+        const count = json.data?.seeded ?? 0;
+        setMessage({ type: "success", text: count > 0 ? `${count} starter tools created!` : "All starter tools already exist." });
+        loadTools();
+      } else {
+        setMessage({ type: "error", text: json.error || "Failed to seed tools." });
+      }
+    } catch {
+      setMessage({ type: "error", text: "Network error seeding tools." });
+    }
+    setSeeding(false);
+  };
+
   const filteredTools = tools.filter((t) => filter === "all" || t.toolType === filter);
 
   return (
@@ -2694,7 +2784,10 @@ function CustomToolsTab() {
         <div className="card settings-card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <h3 style={{ margin: 0 }}>🧩 Your Custom Tools ({tools.length})</h3>
-            <div style={{ display: "flex", gap: 4 }}>
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <button className="btn btn-sm btn-secondary" onClick={handleSeedTools} disabled={seeding} title="Create default starter tools" style={{ fontSize: 11 }}>
+                {seeding ? "…" : "🌱 Seed"}
+              </button>
               {(["all", "server", "client"] as const).map((f) => (
                 <button key={f} className={`btn btn-sm ${filter === f ? "btn-primary" : "btn-secondary"}`}
                   onClick={() => setFilter(f)} style={{ fontSize: 11, textTransform: "capitalize" }}>
@@ -2705,7 +2798,14 @@ function CustomToolsTab() {
           </div>
 
           {filteredTools.length === 0 ? (
-            <p className="text-muted">{tools.length === 0 ? "No custom tools defined yet." : "No tools match the filter."}</p>
+            <div>
+              <p className="text-muted">{tools.length === 0 ? "No custom tools defined yet." : "No tools match the filter."}</p>
+              {tools.length === 0 && (
+                <button className="btn btn-primary btn-sm" onClick={handleSeedTools} disabled={seeding} style={{ marginTop: 8 }}>
+                  {seeding ? "Seeding…" : "🌱 Seed Starter Tools"}
+                </button>
+              )}
+            </div>
           ) : (
             <div className="tools-list">
               {filteredTools.map((t) => (
@@ -2737,7 +2837,1430 @@ function CustomToolsTab() {
           Path params use <code>{"{param}"}</code> syntax in the URL. Dynamic variables use <code>{"{{var}}"}</code> syntax.
           Changes take effect immediately — no redeployment needed.
         </InfoBox>
+
+        {/* Phase 2.2: MCP Tools section — reserved for Model Context Protocol tools */}
+        <div style={{ marginTop: 32 }}>
+          <h3 style={{ margin: "0 0 12px 0" }}>🔌 MCP Tools (Model Context Protocol)</h3>
+          <div style={{
+            padding: 24,
+            background: "var(--bg-tertiary, #1a1a2e)",
+            borderRadius: 8,
+            border: "1px dashed var(--border-color, #333)",
+            textAlign: "center",
+          }}>
+            <p style={{ fontSize: 32, margin: "0 0 8px 0" }}>🔮</p>
+            <p style={{ fontWeight: 600, margin: "0 0 4px 0" }}>MCP Tools — Coming Soon</p>
+            <p className="text-muted" style={{ margin: 0 }}>
+              Connect external MCP-compatible tool servers to extend the AI assistant's capabilities.
+              MCP tools will appear here alongside your custom tools and can be enabled/disabled per deployment.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );
+}
+
+/* ===== PROMPT TEMPLATES TAB ===== */
+interface PromptTemplate {
+  id: string;
+  agentName: string;
+  sectionKey: string;
+  template: string;
+  version: number;
+  isActive: boolean;
+  createdBy: string | null;
+  changeNotes: string | null;
+  createdAt: string;
+}
+
+function PromptTemplatesTab() {
+  const [templates, setTemplates] = useState<PromptTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [filterAgent, setFilterAgent] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [formData, setFormData] = useState({
+    agentName: "data-science",
+    sectionKey: "system",
+    template: "",
+    changeNotes: "",
+  });
+  const [testInput, setTestInput] = useState("");
+  const [testResult, setTestResult] = useState("");
+  const [testing, setTesting] = useState(false);
+
+  const fetchTemplates = async () => {
+    setLoading(true);
+    try {
+      const url = filterAgent
+        ? `/api/admin/prompts/${filterAgent}`
+        : "/api/admin/prompts";
+      const res = await fetch(url, { credentials: "include" });
+      const data = await res.json();
+      setTemplates(data.templates ?? []);
+    } catch {
+      setError("Failed to load prompt templates");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTemplates();
+  }, [filterAgent]);
+
+  const handleCreate = async () => {
+    try {
+      const res = await fetch("/api/admin/prompts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(formData),
+      });
+      if (!res.ok) throw new Error("Failed to create template");
+      setShowForm(false);
+      setFormData({ agentName: "data-science", sectionKey: "system", template: "", changeNotes: "" });
+      fetchTemplates();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleActivate = async (id: string) => {
+    try {
+      await fetch(`/api/admin/prompts/${id}/activate`, {
+        method: "PUT",
+        credentials: "include",
+      });
+      fetchTemplates();
+    } catch {
+      setError("Failed to activate template");
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this template version?")) return;
+    try {
+      await fetch(`/api/admin/prompts/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      fetchTemplates();
+    } catch {
+      setError("Failed to delete template");
+    }
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult("");
+    try {
+      const res = await fetch("/api/admin/prompts/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          agentName: formData.agentName,
+          testMessage: testInput || "Hello, what can you do?",
+          overrides: formData.template
+            ? { [formData.sectionKey]: formData.template }
+            : undefined,
+        }),
+      });
+      const data = await res.json();
+      setTestResult(data.response ?? JSON.stringify(data, null, 2));
+    } catch (err: any) {
+      setTestResult(`Error: ${err.message}`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const agents = ["data-science", "insights-analyzer", "report-generator", "knowledge-base"];
+
+  return (
+    <div className="admin-section">
+      <div className="section-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3>📋 Prompt Templates</h3>
+        <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)}>
+          {showForm ? "Cancel" : "+ New Template"}
+        </button>
+      </div>
+
+      {error && <div className="alert alert-error">{error}</div>}
+
+      {/* Agent filter */}
+      <div style={{ marginBottom: 12 }}>
+        <select value={filterAgent} onChange={(e) => setFilterAgent(e.target.value)}
+          style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid var(--color-border)" }}>
+          <option value="">All Agents</option>
+          {agents.map((a) => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Create form */}
+      {showForm && (
+        <div className="card" style={{ marginBottom: 16, padding: 16 }}>
+          <h4>New Prompt Template</h4>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div>
+              <label>Agent</label>
+              <select value={formData.agentName} onChange={(e) => setFormData({ ...formData, agentName: e.target.value })}
+                style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid var(--color-border)" }}>
+                {agents.map((a) => (
+                  <option key={a} value={a}>{a}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Section Key</label>
+              <input value={formData.sectionKey} onChange={(e) => setFormData({ ...formData, sectionKey: e.target.value })}
+                style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid var(--color-border)" }}
+                placeholder="e.g. system, guardrails, examples" />
+            </div>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label>Template Content</label>
+            <textarea rows={8} value={formData.template} onChange={(e) => setFormData({ ...formData, template: e.target.value })}
+              style={{ width: "100%", fontFamily: "monospace", fontSize: 12, padding: 10, borderRadius: 6, border: "1px solid var(--color-border)", resize: "vertical" }}
+              placeholder="Enter prompt template text..." />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label>Change Notes</label>
+            <input value={formData.changeNotes} onChange={(e) => setFormData({ ...formData, changeNotes: e.target.value })}
+              style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid var(--color-border)" }}
+              placeholder="Brief description of changes" />
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-primary btn-sm" onClick={handleCreate}>Save Template</button>
+            <button className="btn btn-secondary btn-sm" onClick={() => { setShowForm(false); }}>Cancel</button>
+          </div>
+
+          {/* Test section */}
+          <div style={{ marginTop: 16, borderTop: "1px solid var(--color-border)", paddingTop: 12 }}>
+            <h4>🧪 Test Prompt</h4>
+            <input value={testInput} onChange={(e) => setTestInput(e.target.value)}
+              style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid var(--color-border)", marginBottom: 8 }}
+              placeholder="Test message (e.g. 'What are our top products?')" />
+            <button className="btn btn-secondary btn-sm" onClick={handleTest} disabled={testing}>
+              {testing ? "Testing..." : "Run Test"}
+            </button>
+            {testResult && (
+              <pre style={{ marginTop: 8, background: "var(--color-bg-secondary)", padding: 12, borderRadius: 6, fontSize: 12, maxHeight: 300, overflow: "auto", whiteSpace: "pre-wrap" }}>
+                {testResult}
+              </pre>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Templates list */}
+      {loading ? (
+        <div className="text-muted">Loading templates...</div>
+      ) : templates.length === 0 ? (
+        <div className="text-muted">No prompt templates yet. Create one to start versioning your prompts.</div>
+      ) : (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Section</th>
+              <th>Version</th>
+              <th>Active</th>
+              <th>Notes</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {templates.map((t) => (
+              <tr key={t.id}>
+                <td><code>{t.agentName}</code></td>
+                <td>{t.sectionKey}</td>
+                <td>v{t.version}</td>
+                <td>
+                  <span style={{ color: t.isActive ? "var(--color-success)" : "var(--color-text-muted)" }}>
+                    {t.isActive ? "✅ Active" : "—"}
+                  </span>
+                </td>
+                <td className="text-muted" style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {t.changeNotes || "—"}
+                </td>
+                <td className="text-muted">{new Date(t.createdAt).toLocaleDateString()}</td>
+                <td>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {!t.isActive && (
+                      <button className="btn btn-sm" onClick={() => handleActivate(t.id)} title="Activate this version">
+                        ▶️
+                      </button>
+                    )}
+                    <button className="btn btn-sm btn-danger" onClick={() => handleDelete(t.id)} title="Delete">
+                      🗑️
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <InfoBox>
+        <strong>💡 Prompt versioning</strong> lets you track and roll back changes to agent system prompts.
+        Each save creates a new version. Only one version per agent+section can be active at a time.
+        Use the <strong>Test</strong> feature to preview how prompt changes affect agent responses before activating.
+      </InfoBox>
+    </div>
+  );
+}
+
+/* ===== EVAL DASHBOARD TAB ===== */
+interface EvalResultRow {
+  id: string;
+  agentName: string;
+  evalName: string;
+  passed: boolean;
+  score: string | null;
+  reason: string | null;
+  createdAt: string;
+}
+
+interface EvalSummaryRow {
+  agentName: string;
+  evalName: string;
+  totalRuns: number;
+  passCount: number;
+  failCount: number;
+  passRate: number;
+  avgScore: number | null;
+}
+
+interface EvalTrendRow {
+  date: string;
+  totalRuns: number;
+  passCount: number;
+  failCount: number;
+  passRate: number;
+  avgScore: number | null;
+}
+
+function EvalDashboardTab() {
+  const [summaries, setSummaries] = useState<EvalSummaryRow[]>([]);
+  const [trends, setTrends] = useState<EvalTrendRow[]>([]);
+  const [recentResults, setRecentResults] = useState<EvalResultRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [runningEvals, setRunningEvals] = useState(false);
+  const [runResult, setRunResult] = useState<any>(null);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const [sumRes, trendRes, recentRes] = await Promise.all([
+        fetch("/api/admin/evals/summary", { credentials: "include" }),
+        fetch("/api/admin/evals/trends?days=14", { credentials: "include" }),
+        fetch("/api/admin/evals?limit=20", { credentials: "include" }),
+      ]);
+
+      const sumData = await sumRes.json();
+      const trendData = await trendRes.json();
+      const recentData = await recentRes.json();
+
+      setSummaries(sumData.summaries ?? []);
+      setTrends(trendData.trends ?? []);
+      setRecentResults(recentData.results ?? []);
+    } catch {
+      setError("Failed to load eval data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const handleRunEvals = async () => {
+    setRunningEvals(true);
+    setRunResult(null);
+    try {
+      const res = await fetch("/api/admin/evals/run", {
+        method: "POST",
+        credentials: "include",
+      });
+      const data = await res.json();
+      setRunResult(data);
+      fetchData(); // Refresh dashboard
+    } catch (err: any) {
+      setRunResult({ error: err.message });
+    } finally {
+      setRunningEvals(false);
+    }
+  };
+
+  const overallPassRate = summaries.length
+    ? Math.round(
+        (summaries.reduce((s, r) => s + r.passCount, 0) /
+          Math.max(summaries.reduce((s, r) => s + r.totalRuns, 0), 1)) *
+          100
+      )
+    : 0;
+
+  const totalRuns = summaries.reduce((s, r) => s + r.totalRuns, 0);
+
+  return (
+    <div className="admin-section">
+      <div className="section-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3>📊 Eval Dashboard</h3>
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={handleRunEvals}
+          disabled={runningEvals}
+        >
+          {runningEvals ? "Running..." : "▶️ Run Evals Now"}
+        </button>
+      </div>
+
+      {error && <div className="alert alert-error">{error}</div>}
+
+      {runResult && (
+        <div className="card" style={{ marginBottom: 16, padding: 12 }}>
+          <strong>Eval Run Complete:</strong>{" "}
+          {runResult.error ? (
+            <span style={{ color: "var(--color-error)" }}>{runResult.error}</span>
+          ) : (
+            <span>
+              {runResult.passed}/{runResult.totalTests} passed
+              ({runResult.failed} failed)
+            </span>
+          )}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-muted">Loading eval data...</div>
+      ) : (
+        <>
+          {/* Summary cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 20 }}>
+            <div className="card" style={{ padding: 16, textAlign: "center" }}>
+              <div style={{ fontSize: 28, fontWeight: 700 }}>{totalRuns}</div>
+              <div className="text-muted">Total Runs</div>
+            </div>
+            <div className="card" style={{ padding: 16, textAlign: "center" }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: overallPassRate >= 80 ? "var(--color-success)" : overallPassRate >= 50 ? "var(--color-warning)" : "var(--color-error)" }}>
+                {overallPassRate}%
+              </div>
+              <div className="text-muted">Pass Rate</div>
+            </div>
+            <div className="card" style={{ padding: 16, textAlign: "center" }}>
+              <div style={{ fontSize: 28, fontWeight: 700 }}>{summaries.length}</div>
+              <div className="text-muted">Eval Types</div>
+            </div>
+          </div>
+
+          {/* Per-eval summary table */}
+          {summaries.length > 0 && (
+            <>
+              <h4>Eval Summary</h4>
+              <table className="data-table" style={{ marginBottom: 20 }}>
+                <thead>
+                  <tr>
+                    <th>Agent</th>
+                    <th>Eval</th>
+                    <th>Runs</th>
+                    <th>Pass Rate</th>
+                    <th>Avg Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summaries.map((s, i) => (
+                    <tr key={i}>
+                      <td><code>{s.agentName}</code></td>
+                      <td>{s.evalName}</td>
+                      <td>{s.totalRuns}</td>
+                      <td>
+                        <span style={{ color: s.passRate >= 0.8 ? "var(--color-success)" : s.passRate >= 0.5 ? "var(--color-warning)" : "var(--color-error)" }}>
+                          {Math.round(s.passRate * 100)}%
+                        </span>
+                      </td>
+                      <td>{s.avgScore != null ? s.avgScore.toFixed(2) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+
+          {/* 14-day trend (simple text table) */}
+          {trends.length > 0 && (
+            <>
+              <h4>14-Day Trend</h4>
+              <div style={{ display: "flex", gap: 4, marginBottom: 20, flexWrap: "wrap" }}>
+                {trends.map((t, i) => {
+                  const pct = Math.round(t.passRate * 100);
+                  const bg = pct >= 80 ? "var(--color-success)" : pct >= 50 ? "var(--color-warning)" : "var(--color-error)";
+                  return (
+                    <div key={i} title={`${t.date}: ${pct}% pass (${t.totalRuns} runs)`}
+                      style={{ width: 24, height: 40, background: bg, opacity: Math.max(0.3, pct / 100), borderRadius: 4, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+                      <span style={{ fontSize: 9, color: "#fff" }}>{t.totalRuns}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {/* Recent results */}
+          <h4>Recent Results</h4>
+          {recentResults.length === 0 ? (
+            <div className="text-muted">No eval results yet. Run evals or wait for the daily scheduled run.</div>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Agent</th>
+                  <th>Eval</th>
+                  <th>Result</th>
+                  <th>Score</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentResults.map((r) => (
+                  <tr key={r.id}>
+                    <td className="text-muted">{new Date(r.createdAt).toLocaleString()}</td>
+                    <td><code>{r.agentName}</code></td>
+                    <td>{r.evalName}</td>
+                    <td>
+                      <span style={{ color: r.passed ? "var(--color-success)" : "var(--color-error)" }}>
+                        {r.passed ? "✅ Pass" : "❌ Fail"}
+                      </span>
+                    </td>
+                    <td>{r.score != null ? Number(r.score).toFixed(2) : "—"}</td>
+                    <td className="text-muted" style={{ maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {r.reason || "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+
+      <InfoBox>
+        <strong>📊 Eval Dashboard</strong> tracks automated quality checks for all AI agents.
+        Evals run automatically after each response and daily at 3 AM.
+        Click <strong>Run Evals Now</strong> to trigger a manual evaluation sweep.
+        Monitor pass rates and trends to catch regressions early.
+      </InfoBox>
+    </div>
+  );
+}
+
+/* ===== FEW-SHOT EXAMPLES TAB ===== */
+interface FewShotExample {
+  id: string;
+  category: string;
+  userInput: string;
+  expectedBehavior: string;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+}
+
+function FewShotExamplesTab() {
+  const [examples, setExamples] = useState<FewShotExample[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [filterCategory, setFilterCategory] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formData, setFormData] = useState({
+    category: "general",
+    userInput: "",
+    expectedBehavior: "",
+    isActive: true,
+    sortOrder: 0,
+  });
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const [exRes, catRes] = await Promise.all([
+        fetch(
+          filterCategory
+            ? `/api/admin/examples?category=${filterCategory}`
+            : "/api/admin/examples",
+          { credentials: "include" }
+        ),
+        fetch("/api/admin/examples/categories", { credentials: "include" }),
+      ]);
+      const exData = await exRes.json();
+      const catData = await catRes.json();
+      setExamples(exData.examples ?? []);
+      setCategories(catData.categories ?? []);
+    } catch {
+      setError("Failed to load examples");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, [filterCategory]);
+
+  const handleSave = async () => {
+    try {
+      const url = editingId
+        ? `/api/admin/examples/${editingId}`
+        : "/api/admin/examples";
+      const method = editingId ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(formData),
+      });
+      if (!res.ok) throw new Error("Failed to save example");
+      setShowForm(false);
+      setEditingId(null);
+      setFormData({ category: "general", userInput: "", expectedBehavior: "", isActive: true, sortOrder: 0 });
+      fetchData();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleEdit = (ex: FewShotExample) => {
+    setEditingId(ex.id);
+    setFormData({
+      category: ex.category,
+      userInput: ex.userInput,
+      expectedBehavior: ex.expectedBehavior,
+      isActive: ex.isActive,
+      sortOrder: ex.sortOrder,
+    });
+    setShowForm(true);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this example?")) return;
+    try {
+      await fetch(`/api/admin/examples/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      fetchData();
+    } catch {
+      setError("Failed to delete example");
+    }
+  };
+
+  return (
+    <div className="admin-section">
+      <div className="section-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3>💡 Few-Shot Examples</h3>
+        <button className="btn btn-primary btn-sm" onClick={() => {
+          setShowForm(!showForm);
+          setEditingId(null);
+          setFormData({ category: "general", userInput: "", expectedBehavior: "", isActive: true, sortOrder: 0 });
+        }}>
+          {showForm ? "Cancel" : "+ New Example"}
+        </button>
+      </div>
+
+      {error && <div className="alert alert-error">{error}</div>}
+
+      {/* Category filter */}
+      <div style={{ marginBottom: 12 }}>
+        <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)}
+          style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid var(--color-border)" }}>
+          <option value="">All Categories</option>
+          {categories.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+        <span className="text-muted" style={{ marginLeft: 8 }}>
+          {examples.length} example{examples.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+
+      {/* Create/Edit form */}
+      {showForm && (
+        <div className="card" style={{ marginBottom: 16, padding: 16 }}>
+          <h4>{editingId ? "Edit Example" : "New Example"}</h4>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div>
+              <label>Category</label>
+              <input value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid var(--color-border)" }}
+                placeholder="e.g. general, sales-query, inventory" />
+            </div>
+            <div>
+              <label>Sort Order</label>
+              <input type="number" value={formData.sortOrder} onChange={(e) => setFormData({ ...formData, sortOrder: Number(e.target.value) })}
+                style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid var(--color-border)" }} />
+            </div>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label>User Input (example question/request)</label>
+            <textarea rows={3} value={formData.userInput} onChange={(e) => setFormData({ ...formData, userInput: e.target.value })}
+              style={{ width: "100%", fontFamily: "monospace", fontSize: 12, padding: 10, borderRadius: 6, border: "1px solid var(--color-border)", resize: "vertical" }}
+              placeholder='e.g. "What were last month total sales?"' />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label>Expected Behavior (how the AI should respond)</label>
+            <textarea rows={4} value={formData.expectedBehavior} onChange={(e) => setFormData({ ...formData, expectedBehavior: e.target.value })}
+              style={{ width: "100%", fontFamily: "monospace", fontSize: 12, padding: 10, borderRadius: 6, border: "1px solid var(--color-border)", resize: "vertical" }}
+              placeholder='e.g. "Use the query_database tool to run a SUM query on the orders table for the last 30 days, then present the total with currency formatting."' />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label>
+              <input type="checkbox" checked={formData.isActive} onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })} />{" "}
+              Active
+            </label>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-primary btn-sm" onClick={handleSave}>
+              {editingId ? "Update" : "Create"} Example
+            </button>
+            <button className="btn btn-secondary btn-sm" onClick={() => { setShowForm(false); setEditingId(null); }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Examples list */}
+      {loading ? (
+        <div className="text-muted">Loading examples...</div>
+      ) : examples.length === 0 ? (
+        <div className="text-muted">No few-shot examples yet. Add examples to teach the AI how to handle specific queries.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {examples.map((ex) => (
+            <div key={ex.id} className="card" style={{ padding: 12, opacity: ex.isActive ? 1 : 0.5 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                    <span style={{ background: "var(--color-bg-secondary)", padding: "2px 8px", borderRadius: 12, fontSize: 11 }}>
+                      {ex.category}
+                    </span>
+                    {!ex.isActive && (
+                      <span className="text-muted" style={{ fontSize: 11 }}>inactive</span>
+                    )}
+                  </div>
+                  <div style={{ marginBottom: 4 }}>
+                    <strong>Q: </strong>
+                    <span style={{ fontFamily: "monospace", fontSize: 13 }}>{ex.userInput}</span>
+                  </div>
+                  <div className="text-muted" style={{ fontSize: 13 }}>
+                    <strong>A: </strong>{ex.expectedBehavior.slice(0, 200)}{ex.expectedBehavior.length > 200 ? "..." : ""}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 4, marginLeft: 8 }}>
+                  <button className="btn btn-sm" onClick={() => handleEdit(ex)} title="Edit">✏️</button>
+                  <button className="btn btn-sm btn-danger" onClick={() => handleDelete(ex.id)} title="Delete">🗑️</button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <InfoBox>
+        <strong>💡 Few-shot examples</strong> teach the AI agent how to handle specific types of queries.
+        When a user sends a message, the system dynamically selects the most relevant examples
+        (via semantic similarity) and includes them in the prompt context.
+        Active examples are used at runtime. Organize by category for easier management.
+      </InfoBox>
+    </div>
+  );
+}
+
+/* ===== SCHEDULER TAB ===== */
+interface Schedule {
+  id: string;
+  name: string;
+  taskType: string;
+  cronExpression: string | null;
+  taskConfig: Record<string, unknown>;
+  isActive: boolean;
+  timezone: string;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  failureCount: number;
+  maxFailures: number;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ScheduleExecution {
+  id: string;
+  scheduleId: string;
+  status: string;
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  result: Record<string, unknown> | null;
+  errorMessage: string | null;
+  triggerSource: string;
+}
+
+interface ExecutionSummary {
+  total: number;
+  succeeded: number;
+  failed: number;
+  avgDurationMs: number;
+}
+
+const TASK_TYPE_LABELS: Record<string, { icon: string; label: string; desc: string }> = {
+  report: { icon: "📊", label: "Report", desc: "Generate a scheduled report" },
+  insight: { icon: "💡", label: "Insight", desc: "Run insight analysis" },
+  alert: { icon: "🔔", label: "Alert", desc: "Check alert conditions (low stock, overdue invoices)" },
+  cleanup: { icon: "🧹", label: "Cleanup", desc: "Purge old sessions, notifications, executions" },
+  custom: { icon: "⚙️", label: "Custom", desc: "Custom task with arbitrary config" },
+};
+
+function SchedulerTab() {
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [historyScheduleId, setHistoryScheduleId] = useState<string | null>(null);
+  const [executions, setExecutions] = useState<ScheduleExecution[]>([]);
+  const [summary, setSummary] = useState<ExecutionSummary | null>(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [running, setRunning] = useState<string | null>(null);
+  const [formData, setFormData] = useState({
+    name: "",
+    taskType: "report",
+    cronExpression: "0 8 * * *",
+    taskConfig: "{}",
+    timezone: "UTC",
+    maxFailures: 5,
+    isActive: true,
+  });
+
+  const fetchSchedules = async () => {
+    try {
+      const res = await fetch("/api/admin/schedules", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setSchedules(data.schedules || []);
+      }
+    } catch { /* ignore */ } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchSchedules(); }, []);
+
+  const handleSave = async () => {
+    let config: Record<string, unknown>;
+    try {
+      config = JSON.parse(formData.taskConfig);
+    } catch {
+      alert("Task Config must be valid JSON");
+      return;
+    }
+    const body = {
+      name: formData.name,
+      taskType: formData.taskType,
+      cronExpression: formData.cronExpression || null,
+      taskConfig: config,
+      timezone: formData.timezone,
+      maxFailures: formData.maxFailures,
+      isActive: formData.isActive,
+    };
+    const url = editingId ? `/api/admin/schedules/${editingId}` : "/api/admin/schedules";
+    const method = editingId ? "PUT" : "POST";
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      setShowForm(false);
+      setEditingId(null);
+      fetchSchedules();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      alert((err as { error?: string }).error || "Failed to save schedule");
+    }
+  };
+
+  const handleEdit = (s: Schedule) => {
+    setEditingId(s.id);
+    setFormData({
+      name: s.name,
+      taskType: s.taskType,
+      cronExpression: s.cronExpression || "",
+      taskConfig: JSON.stringify(s.taskConfig || {}, null, 2),
+      timezone: s.timezone || "UTC",
+      maxFailures: s.maxFailures,
+      isActive: s.isActive,
+    });
+    setShowForm(true);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this schedule?")) return;
+    const res = await fetch(`/api/admin/schedules/${id}`, { method: "DELETE", credentials: "include" });
+    if (res.ok) fetchSchedules();
+  };
+
+  const handleToggle = async (id: string) => {
+    const res = await fetch(`/api/admin/schedules/${id}/toggle`, { method: "POST", credentials: "include" });
+    if (res.ok) fetchSchedules();
+  };
+
+  const handleRun = async (id: string) => {
+    setRunning(id);
+    try {
+      const res = await fetch(`/api/admin/schedules/${id}/run`, { method: "POST", credentials: "include" });
+      if (res.ok) {
+        fetchSchedules();
+        if (historyScheduleId === id) loadHistory(id);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert((err as { error?: string }).error || "Run failed");
+      }
+    } finally {
+      setRunning(null);
+    }
+  };
+
+  const loadHistory = async (scheduleId: string) => {
+    setHistoryScheduleId(scheduleId);
+    setLoadingHistory(true);
+    try {
+      const [histRes, sumRes] = await Promise.all([
+        fetch(`/api/admin/schedules/${scheduleId}/history?limit=20`, { credentials: "include" }),
+        fetch(`/api/admin/schedules/summary?scheduleId=${scheduleId}`, { credentials: "include" }),
+      ]);
+      if (histRes.ok) {
+        const data = await histRes.json();
+        setExecutions(data.executions || []);
+      }
+      if (sumRes.ok) {
+        const data = await sumRes.json();
+        setSummary(data.summary || null);
+      }
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({ name: "", taskType: "report", cronExpression: "0 8 * * *", taskConfig: "{}", timezone: "UTC", maxFailures: 5, isActive: true });
+    setEditingId(null);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <h3>⏰ Scheduled Tasks</h3>
+        <button className="btn btn-primary btn-sm" onClick={() => { resetForm(); setShowForm(!showForm); }}>
+          {showForm ? "Cancel" : "+ New Schedule"}
+        </button>
+      </div>
+
+      {/* Create / Edit Form */}
+      {showForm && (
+        <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+          <h4>{editingId ? "Edit Schedule" : "New Schedule"}</h4>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div>
+              <label className="text-muted" style={{ fontSize: 12 }}>Name</label>
+              <input className="input" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="Daily Sales Report" />
+            </div>
+            <div>
+              <label className="text-muted" style={{ fontSize: 12 }}>Task Type</label>
+              <select className="input" value={formData.taskType} onChange={(e) => setFormData({ ...formData, taskType: e.target.value })}>
+                {Object.entries(TASK_TYPE_LABELS).map(([k, v]) => (
+                  <option key={k} value={k}>{v.icon} {v.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-muted" style={{ fontSize: 12 }}>Cron Expression</label>
+              <input className="input" value={formData.cronExpression} onChange={(e) => setFormData({ ...formData, cronExpression: e.target.value })} placeholder="0 8 * * * (daily at 8am)" />
+            </div>
+            <div>
+              <label className="text-muted" style={{ fontSize: 12 }}>Timezone</label>
+              <input className="input" value={formData.timezone} onChange={(e) => setFormData({ ...formData, timezone: e.target.value })} placeholder="UTC" />
+            </div>
+            <div>
+              <label className="text-muted" style={{ fontSize: 12 }}>Max Failures (auto-disable after)</label>
+              <input className="input" type="number" value={formData.maxFailures} onChange={(e) => setFormData({ ...formData, maxFailures: parseInt(e.target.value) || 0 })} />
+            </div>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label className="text-muted" style={{ fontSize: 12 }}>Task Config (JSON)</label>
+            <textarea className="input" rows={4} value={formData.taskConfig} onChange={(e) => setFormData({ ...formData, taskConfig: e.target.value })} style={{ fontFamily: "monospace", fontSize: 13 }}
+              placeholder={'{\n  "reportType": "sales_summary",\n  "period": "daily"\n}'} />
+            <div className="text-muted" style={{ fontSize: 11, marginTop: 4 }}>
+              {TASK_TYPE_LABELS[formData.taskType]?.desc || "Configure the task parameters."}
+            </div>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label>
+              <input type="checkbox" checked={formData.isActive} onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })} />{" "}
+              Active
+            </label>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-primary btn-sm" onClick={handleSave}>
+              {editingId ? "Update" : "Create"} Schedule
+            </button>
+            <button className="btn btn-secondary btn-sm" onClick={() => { setShowForm(false); setEditingId(null); }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule List */}
+      {loading ? (
+        <div className="text-muted">Loading schedules...</div>
+      ) : schedules.length === 0 ? (
+        <div className="text-muted">No scheduled tasks yet. Create one to automate reports, insights, alerts, or cleanup jobs.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {schedules.map((s) => {
+            const tt = TASK_TYPE_LABELS[s.taskType] || TASK_TYPE_LABELS.custom;
+            return (
+              <div key={s.id} className="card" style={{ padding: 12, opacity: s.isActive ? 1 : 0.5 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                      <strong>{tt.icon} {s.name}</strong>
+                      <span style={{ background: "var(--color-bg-secondary)", padding: "2px 8px", borderRadius: 12, fontSize: 11 }}>
+                        {tt.label}
+                      </span>
+                      {s.cronExpression && (
+                        <span className="text-muted" style={{ fontSize: 11, fontFamily: "monospace" }}>
+                          {s.cronExpression}
+                        </span>
+                      )}
+                      {!s.isActive && (
+                        <span style={{ color: "#ef4444", fontSize: 11, fontWeight: 600 }}>DISABLED</span>
+                      )}
+                    </div>
+                    <div className="text-muted" style={{ fontSize: 12, display: "flex", gap: 16 }}>
+                      <span>TZ: {s.timezone}</span>
+                      {s.lastRunAt && <span>Last run: {new Date(s.lastRunAt).toLocaleString()}</span>}
+                      {s.nextRunAt && <span>Next: {new Date(s.nextRunAt).toLocaleString()}</span>}
+                      {s.failureCount > 0 && (
+                        <span style={{ color: "#ef4444" }}>Failures: {s.failureCount}/{s.maxFailures}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 4, marginLeft: 8 }}>
+                    <button className="btn btn-sm" onClick={() => handleRun(s.id)} disabled={running === s.id} title="Run now">
+                      {running === s.id ? "⏳" : "▶️"}
+                    </button>
+                    <button className="btn btn-sm" onClick={() => handleToggle(s.id)} title={s.isActive ? "Disable" : "Enable"}>
+                      {s.isActive ? "⏸️" : "▶️"}
+                    </button>
+                    <button className="btn btn-sm" onClick={() => loadHistory(s.id)} title="History">📜</button>
+                    <button className="btn btn-sm" onClick={() => handleEdit(s)} title="Edit">✏️</button>
+                    <button className="btn btn-sm btn-danger" onClick={() => handleDelete(s.id)} title="Delete">🗑️</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Execution History Panel */}
+      {historyScheduleId && (
+        <div className="card" style={{ padding: 16, marginTop: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <h4>📜 Execution History</h4>
+            <button className="btn btn-sm" onClick={() => setHistoryScheduleId(null)}>✕ Close</button>
+          </div>
+
+          {summary && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
+              <div className="card" style={{ padding: 10, textAlign: "center" }}>
+                <div className="text-muted" style={{ fontSize: 11 }}>Total Runs</div>
+                <div style={{ fontSize: 20, fontWeight: 700 }}>{summary.total}</div>
+              </div>
+              <div className="card" style={{ padding: 10, textAlign: "center" }}>
+                <div className="text-muted" style={{ fontSize: 11 }}>Succeeded</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: "#10b981" }}>{summary.succeeded}</div>
+              </div>
+              <div className="card" style={{ padding: 10, textAlign: "center" }}>
+                <div className="text-muted" style={{ fontSize: 11 }}>Failed</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: "#ef4444" }}>{summary.failed}</div>
+              </div>
+              <div className="card" style={{ padding: 10, textAlign: "center" }}>
+                <div className="text-muted" style={{ fontSize: 11 }}>Avg Duration</div>
+                <div style={{ fontSize: 20, fontWeight: 700 }}>{summary.avgDurationMs ? `${(summary.avgDurationMs / 1000).toFixed(1)}s` : "–"}</div>
+              </div>
+            </div>
+          )}
+
+          {loadingHistory ? (
+            <div className="text-muted">Loading...</div>
+          ) : executions.length === 0 ? (
+            <div className="text-muted">No executions yet.</div>
+          ) : (
+            <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid var(--color-border)" }}>
+                  <th style={{ textAlign: "left", padding: 6 }}>Status</th>
+                  <th style={{ textAlign: "left", padding: 6 }}>Started</th>
+                  <th style={{ textAlign: "left", padding: 6 }}>Duration</th>
+                  <th style={{ textAlign: "left", padding: 6 }}>Trigger</th>
+                  <th style={{ textAlign: "left", padding: 6 }}>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {executions.map((ex) => (
+                  <tr key={ex.id} style={{ borderBottom: "1px solid var(--color-border)" }}>
+                    <td style={{ padding: 6 }}>
+                      <span style={{
+                        display: "inline-block",
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        marginRight: 6,
+                        background: ex.status === "completed" ? "#10b981" : ex.status === "failed" ? "#ef4444" : "#f59e0b",
+                      }} />
+                      {ex.status}
+                    </td>
+                    <td style={{ padding: 6 }}>{new Date(ex.startedAt).toLocaleString()}</td>
+                    <td style={{ padding: 6 }}>{ex.durationMs != null ? `${(ex.durationMs / 1000).toFixed(1)}s` : "–"}</td>
+                    <td style={{ padding: 6 }}>{ex.triggerSource}</td>
+                    <td style={{ padding: 6, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {ex.errorMessage || (ex.result ? JSON.stringify(ex.result).slice(0, 100) : "–")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      <InfoBox>
+        <strong>⏰ Scheduler</strong> automates recurring tasks. The cron engine checks every 15 minutes for due schedules
+        and dispatches them to the Scheduler Agent. Task types include <em>report</em> (generates reports),
+        <em>insight</em> (runs analysis), <em>alert</em> (checks low-stock/overdue invoices),
+        <em>cleanup</em> (purges old data), and <em>custom</em>. Schedules auto-disable after reaching
+        the max failure threshold.
+      </InfoBox>
+    </div>
+  );
+}
+
+/* ===== OBSERVABILITY TAB (Phase 1.10 + 2.2) ===== */
+
+interface AgentPerformance {
+  agentName: string;
+  totalInvocations: number;
+  avgDurationMs: number;
+  errorRate: number;
+  llmCalls: number;
+  toolCalls: number;
+  avgLlmLatencyMs: number;
+}
+
+interface ToolUsageStat {
+  toolName: string;
+  totalCalls: number;
+  successCount: number;
+  errorCount: number;
+  timeoutCount: number;
+  successRate: number;
+  avgDurationMs: number;
+  p95DurationMs: number;
+  avgInputSize: number;
+  avgOutputSize: number;
+}
+
+interface TimelinePoint {
+  hour: string;
+  totalSpans: number;
+  errorCount: number;
+}
+
+function ObservabilityTab() {
+  const [agents, setAgents] = useState<AgentPerformance[]>([]);
+  const [tools, setTools] = useState<ToolUsageStat[]>([]);
+  const [timeline, setTimeline] = useState<TimelinePoint[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(7);
+  const [view, setView] = useState<"agents" | "tools" | "timeline">("agents");
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [agentsRes, toolsRes, timelineRes] = await Promise.all([
+        fetch(`/api/admin/telemetry/agents?days=${days}`, { credentials: "include" }),
+        fetch(`/api/admin/telemetry/tools?days=${days}`, { credentials: "include" }),
+        fetch(`/api/admin/telemetry/timeline?days=${Math.min(days, 14)}`, { credentials: "include" }),
+      ]);
+      if (agentsRes.ok) {
+        const d = await agentsRes.json();
+        setAgents(d.data || []);
+      }
+      if (toolsRes.ok) {
+        const d = await toolsRes.json();
+        setTools(d.data || []);
+      }
+      if (timelineRes.ok) {
+        const d = await timelineRes.json();
+        setTimeline(d.data || []);
+      }
+    } catch { /* ignore */ } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [days]);
+
+  const totalInvocations = agents.reduce((s, a) => s + a.totalInvocations, 0);
+  const avgErrorRate = agents.length
+    ? agents.reduce((s, a) => s + a.errorRate, 0) / agents.length
+    : 0;
+  const totalToolCalls = tools.reduce((s, t) => s + t.totalCalls, 0);
+  const avgToolSuccess = tools.length
+    ? tools.reduce((s, t) => s + t.successRate, 0) / tools.length
+    : 100;
+
+  return (
+    <div className="admin-section">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <h3 style={{ margin: 0 }}>📡 Observability</h3>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <label style={{ fontSize: 13, color: "#888" }}>Period:</label>
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="input" style={{ width: 120 }}>
+            <option value={1}>Last 24h</option>
+            <option value={7}>Last 7 days</option>
+            <option value={14}>Last 14 days</option>
+            <option value={30}>Last 30 days</option>
+          </select>
+          <button className="btn btn-sm" onClick={load} disabled={loading}>
+            {loading ? "Loading…" : "Refresh"}
+          </button>
+        </div>
+      </div>
+
+      {/* Summary cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 20 }}>
+        <SummaryCard label="Agent Invocations" value={totalInvocations.toLocaleString()} icon="🔄" />
+        <SummaryCard label="Avg Error Rate" value={`${avgErrorRate.toFixed(1)}%`} icon={avgErrorRate > 10 ? "⚠️" : "✅"} />
+        <SummaryCard label="Tool Calls" value={totalToolCalls.toLocaleString()} icon="🔧" />
+        <SummaryCard label="Tool Success" value={`${avgToolSuccess.toFixed(1)}%`} icon={avgToolSuccess < 90 ? "⚠️" : "✅"} />
+      </div>
+
+      {/* Sub-nav */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 16, borderBottom: "1px solid #333", paddingBottom: 8 }}>
+        {(["agents", "tools", "timeline"] as const).map((v) => (
+          <button
+            key={v}
+            className={`tab-btn ${view === v ? "active" : ""}`}
+            onClick={() => setView(v)}
+            style={{ padding: "6px 14px", fontSize: 13 }}
+          >
+            {v === "agents" ? "🤖 Agents" : v === "tools" ? "🔧 Tools" : "📈 Timeline"}
+          </button>
+        ))}
+      </div>
+
+      {loading && <p style={{ color: "#888" }}>Loading telemetry data…</p>}
+
+      {!loading && view === "agents" && (
+        <div className="table-wrap">
+          {agents.length === 0 ? (
+            <p style={{ color: "#888", textAlign: "center", padding: 24 }}>
+              No agent telemetry data yet. Data will appear once agents process requests with tracing enabled.
+            </p>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Agent</th>
+                  <th style={{ textAlign: "right" }}>Invocations</th>
+                  <th style={{ textAlign: "right" }}>Avg Duration</th>
+                  <th style={{ textAlign: "right" }}>Error Rate</th>
+                  <th style={{ textAlign: "right" }}>LLM Calls</th>
+                  <th style={{ textAlign: "right" }}>Tool Calls</th>
+                  <th style={{ textAlign: "right" }}>Avg LLM Latency</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agents.map((a) => (
+                  <tr key={a.agentName}>
+                    <td><code>{a.agentName}</code></td>
+                    <td style={{ textAlign: "right" }}>{a.totalInvocations.toLocaleString()}</td>
+                    <td style={{ textAlign: "right" }}>{formatMs(a.avgDurationMs)}</td>
+                    <td style={{ textAlign: "right" }}>
+                      <span style={{ color: a.errorRate > 10 ? "#f87171" : a.errorRate > 5 ? "#fbbf24" : "#4ade80" }}>
+                        {a.errorRate.toFixed(1)}%
+                      </span>
+                    </td>
+                    <td style={{ textAlign: "right" }}>{a.llmCalls.toLocaleString()}</td>
+                    <td style={{ textAlign: "right" }}>{a.toolCalls.toLocaleString()}</td>
+                    <td style={{ textAlign: "right" }}>{formatMs(a.avgLlmLatencyMs)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {!loading && view === "tools" && (
+        <div className="table-wrap">
+          {tools.length === 0 ? (
+            <p style={{ color: "#888", textAlign: "center", padding: 24 }}>
+              No tool invocation data yet. Data will appear once AI tools are used.
+            </p>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Tool</th>
+                  <th style={{ textAlign: "right" }}>Total</th>
+                  <th style={{ textAlign: "right" }}>Success</th>
+                  <th style={{ textAlign: "right" }}>Errors</th>
+                  <th style={{ textAlign: "right" }}>Rate</th>
+                  <th style={{ textAlign: "right" }}>Avg Duration</th>
+                  <th style={{ textAlign: "right" }}>P95</th>
+                  <th style={{ textAlign: "right" }}>Avg In</th>
+                  <th style={{ textAlign: "right" }}>Avg Out</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tools.map((t) => (
+                  <tr key={t.toolName}>
+                    <td><code>{t.toolName}</code></td>
+                    <td style={{ textAlign: "right" }}>{t.totalCalls.toLocaleString()}</td>
+                    <td style={{ textAlign: "right", color: "#4ade80" }}>{t.successCount}</td>
+                    <td style={{ textAlign: "right", color: t.errorCount > 0 ? "#f87171" : "#888" }}>
+                      {t.errorCount}{t.timeoutCount > 0 ? ` (${t.timeoutCount} T/O)` : ""}
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      <span style={{ color: t.successRate < 90 ? "#fbbf24" : "#4ade80" }}>
+                        {t.successRate.toFixed(1)}%
+                      </span>
+                    </td>
+                    <td style={{ textAlign: "right" }}>{formatMs(t.avgDurationMs)}</td>
+                    <td style={{ textAlign: "right" }}>{formatMs(t.p95DurationMs)}</td>
+                    <td style={{ textAlign: "right" }}>{formatBytes(t.avgInputSize)}</td>
+                    <td style={{ textAlign: "right" }}>{formatBytes(t.avgOutputSize)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {!loading && view === "timeline" && (
+        <div style={{ padding: 12 }}>
+          {timeline.length === 0 ? (
+            <p style={{ color: "#888", textAlign: "center", padding: 24 }}>
+              No timeline data available for the selected period.
+            </p>
+          ) : (
+            <div>
+              <p style={{ color: "#888", fontSize: 13, marginBottom: 12 }}>
+                Hourly span volume &amp; error rate (last {Math.min(days, 14)} days)
+              </p>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 1, height: 120, padding: "0 4px" }}>
+                {(() => {
+                  const maxSpans = Math.max(...timeline.map((t) => t.totalSpans), 1);
+                  // Show last 48 points for readability
+                  const visible = timeline.slice(-48);
+                  return visible.map((point, i) => {
+                    const height = Math.max((point.totalSpans / maxSpans) * 100, 2);
+                    const errorPct = point.totalSpans > 0
+                      ? (point.errorCount / point.totalSpans) * 100
+                      : 0;
+                    const color = errorPct > 20 ? "#f87171" : errorPct > 5 ? "#fbbf24" : "#4ade80";
+                    const hour = new Date(point.hour).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                    return (
+                      <div
+                        key={i}
+                        title={`${hour}: ${point.totalSpans} spans, ${point.errorCount} errors`}
+                        style={{
+                          flex: 1,
+                          height: `${height}%`,
+                          background: color,
+                          borderRadius: "2px 2px 0 0",
+                          opacity: 0.8,
+                          minWidth: 3,
+                        }}
+                      />
+                    );
+                  });
+                })()}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#666", marginTop: 4 }}>
+                <span>{timeline.length > 0 ? new Date(timeline[Math.max(timeline.length - 48, 0)]?.hour).toLocaleDateString() : ""}</span>
+                <span>Now</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <InfoBox>
+        <strong>📡 Observability</strong> shows real-time performance metrics for all AI agents and tools.
+        Agent telemetry tracks every LLM call, tool execution, and agent invocation with duration and error rates.
+        Tool analytics provides per-tool success rates, latency percentiles (P95), and I/O sizes.
+        The timeline shows hourly span volume with error highlighting. Data is collected automatically
+        by the tracing infrastructure wired into each agent.
+      </InfoBox>
+    </div>
+  );
+}
+
+/* ===== Shared Helpers ===== */
+
+function SummaryCard({ label, value, icon }: { label: string; value: string; icon: string }) {
+  return (
+    <div style={{
+      background: "#1e1e2e",
+      border: "1px solid #333",
+      borderRadius: 8,
+      padding: "14px 16px",
+      textAlign: "center",
+    }}>
+      <div style={{ fontSize: 22, marginBottom: 4 }}>{icon}</div>
+      <div style={{ fontSize: 20, fontWeight: 700, color: "#e2e8f0" }}>{value}</div>
+      <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+function formatMs(ms: number): string {
+  if (!ms || ms === 0) return "—";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${(ms / 60000).toFixed(1)}m`;
+}
+
+function formatBytes(chars: number): string {
+  if (!chars || chars === 0) return "—";
+  if (chars < 1000) return `${chars}`;
+  if (chars < 1000000) return `${(chars / 1000).toFixed(1)}k`;
+  return `${(chars / 1000000).toFixed(1)}M`;
 }

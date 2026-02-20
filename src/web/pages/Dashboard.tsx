@@ -185,6 +185,7 @@ export default function Dashboard({ config }: DashboardProps) {
   const today = now.toISOString().slice(0, 10);
   const [startDate, setStartDate] = useState(monthStart);
   const [endDate, setEndDate] = useState(today);
+  const [nlQuery, setNlQuery] = useState("");
 
   const chartUrl = `GET /api/admin/chart-data?startDate=${startDate}T00:00:00Z&endDate=${endDate}T23:59:59Z`;
   const { data: chartData, isLoading: chartsLoading } = useAPI<any>(chartUrl);
@@ -212,6 +213,88 @@ export default function Dashboard({ config }: DashboardProps) {
     setEndDate(new Date().toISOString().slice(0, 10));
   };
 
+  /** Natural language date filter */
+  const handleNlFilter = () => {
+    const q = nlQuery.toLowerCase().trim();
+    if (!q) return;
+    if (q.includes("today")) { setPreset(0); }
+    else if (q.includes("yesterday")) { setPreset(1); }
+    else if (q.includes("last week") || q.includes("past week")) { setPreset(7); }
+    else if (q.includes("last 2 weeks") || q.includes("two weeks")) { setPreset(14); }
+    else if (q.includes("last month") || q.includes("past month") || q.includes("30 days")) { setPreset(30); }
+    else if (q.includes("last quarter") || q.includes("past quarter") || q.includes("90 days") || q.includes("3 months")) { setPreset(90); }
+    else if (q.match(/last (\d+) days?/)) {
+      const days = parseInt(q.match(/last (\d+) days?/)![1]);
+      if (days > 0 && days <= 365) setPreset(days);
+    }
+    else if (q.includes("this month") || q.includes("month to date") || q.includes("mtd")) { setMTD(); }
+    else if (q.includes("this year") || q.includes("year to date") || q.includes("ytd")) { setYTD(); }
+    else if (q.includes("all time") || q.includes("everything")) { setPreset(365); }
+    setNlQuery("");
+  };
+
+  /** Derive insights from dashboard data (no API call needed) */
+  const insights = useMemo(() => {
+    const result: Array<{ title: string; body: string; severity: "high" | "medium" | "low" }> = [];
+    if (!st) return result;
+
+    // Low stock alert
+    const lowCount = lowStock?.data?.length ?? 0;
+    if (lowCount > 0) {
+      const outOfStock = lowStock?.data?.filter((i: any) => i.quantity === 0).length ?? 0;
+      result.push({
+        title: outOfStock > 0 ? `⚠️ ${outOfStock} products out of stock` : `📦 ${lowCount} products running low`,
+        body: outOfStock > 0
+          ? `${outOfStock} products have zero stock and ${lowCount - outOfStock} are below reorder point. Consider restocking immediately.`
+          : `${lowCount} products are below their reorder point. Review and restock to avoid stockouts.`,
+        severity: outOfStock > 0 ? "high" : "medium",
+      });
+    }
+
+    // Revenue trend (if chart data available)
+    if (cd?.salesByDay?.length >= 7) {
+      const recent = cd.salesByDay.slice(-7);
+      const recentAvg = recent.reduce((s: number, d: any) => s + (Number(d.revenue) || 0), 0) / recent.length;
+      const earlier = cd.salesByDay.slice(0, 7);
+      const earlierAvg = earlier.reduce((s: number, d: any) => s + (Number(d.revenue) || 0), 0) / Math.max(earlier.length, 1);
+      if (earlierAvg > 0) {
+        const change = ((recentAvg - earlierAvg) / earlierAvg) * 100;
+        if (Math.abs(change) > 10) {
+          result.push({
+            title: change > 0 ? `📈 Sales trending up ${change.toFixed(0)}%` : `📉 Sales trending down ${Math.abs(change).toFixed(0)}%`,
+            body: change > 0
+              ? `Recent daily revenue is ${change.toFixed(0)}% higher than the prior period. Keep momentum going!`
+              : `Recent daily revenue dropped ${Math.abs(change).toFixed(0)}% vs prior period. Investigate potential causes.`,
+            severity: change < -20 ? "high" : change < 0 ? "medium" : "low",
+          });
+        }
+      }
+    }
+
+    // Unpaid invoices
+    if (cd?.paymentCollection?.unpaid > 0) {
+      const unpaidRate = cd.paymentCollection.unpaid / (cd.paymentCollection.fullyPaid + cd.paymentCollection.partiallyPaid + cd.paymentCollection.unpaid);
+      if (unpaidRate > 0.3) {
+        result.push({
+          title: `💳 ${(unpaidRate * 100).toFixed(0)}% invoices unpaid`,
+          body: `${cd.paymentCollection.unpaid} invoices remain unpaid. Consider sending reminders or reviewing payment terms.`,
+          severity: unpaidRate > 0.5 ? "high" : "medium",
+        });
+      }
+    }
+
+    // No data fallback
+    if (result.length === 0 && st.orderCount > 0) {
+      result.push({
+        title: "✅ Operations looking healthy",
+        body: `${st.orderCount.toLocaleString()} orders processed with ${st.productCount.toLocaleString()} active products. No critical alerts.`,
+        severity: "low",
+      });
+    }
+
+    return result.slice(0, 3);
+  }, [st, cd, lowStock]);
+
   return (
     <div className="page dashboard-page">
       <div className="page-header-row">
@@ -232,6 +315,15 @@ export default function Dashboard({ config }: DashboardProps) {
           <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="date-input" />
           <span className="text-muted">to</span>
           <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="date-input" />
+          <input
+            type="text"
+            placeholder="Try: 'last week', 'last 60 days'…"
+            value={nlQuery}
+            onChange={(e) => setNlQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleNlFilter(); }}
+            className="date-input"
+            style={{ minWidth: 160, fontSize: 12 }}
+          />
         </div>
       </div>
 
@@ -254,6 +346,22 @@ export default function Dashboard({ config }: DashboardProps) {
           <span className="summary-card-label">{config.labels.customerPlural}</span>
         </div>
       </div>
+
+      {/* AI Insights Widget */}
+      {insights.length > 0 && (
+        <div className="chart-card" style={{ marginBottom: 16 }}>
+          <h3>💡 AI Insights</h3>
+          <p className="chart-subtitle">Auto-generated from your current data</p>
+          <div className="ai-insights-widget">
+            {insights.map((insight, i) => (
+              <div key={i} className={`insight-card insight-card-${insight.severity}`}>
+                <div className="insight-card-title">{insight.title}</div>
+                <div className="insight-card-body">{insight.body}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {chartsLoading ? (
         <div className="loading-state"><div className="spinner" /><p>Loading charts...</p></div>

@@ -2,6 +2,8 @@ import { db, orderStatuses, taxRules, users, orders, invoices, payments, product
 import { eq, sql, gte, and, inArray, ne, asc, desc } from "drizzle-orm";
 import { NotFoundError } from "@lib/errors";
 import { z } from "zod";
+import { config } from "@lib/config";
+import { getLowStockProducts } from "@services/inventory";
 
 // ─── Order Status Management ─────────────────────────────────
 
@@ -359,6 +361,53 @@ export async function getDashboardStats() {
     customerCount: Number(customers_[0].customerCount),
     totalRevenue: Number(revenue_[0].totalRevenue),
   };
+}
+
+// ─── Business Snapshot (for agent tools) ─────────────────────
+
+/**
+ * Get a comprehensive business snapshot — used by the data-science agent's
+ * get_business_snapshot tool.
+ *
+ * Phase 6.1: Centralizes the snapshot logic in the service layer instead of
+ * having duplicate queries in agent tool code. Composes `getDashboardStats()`
+ * for counts and `getLowStockProducts()` from inventory service for stock alerts.
+ */
+export async function getBusinessSnapshot(opts: {
+  includeRecentOrders?: boolean;
+  includeLowStock?: boolean;
+} = {}): Promise<Record<string, unknown>> {
+  const { includeRecentOrders = true, includeLowStock = true } = opts;
+
+  const stats = await getDashboardStats();
+
+  const snapshot: Record<string, unknown> = {
+    totalProducts: stats.productCount,
+    totalOrders: stats.orderCount,
+    totalCustomers: stats.customerCount,
+    totalRevenue: stats.totalRevenue,
+    currency: config.currency,
+  };
+
+  if (includeLowStock) {
+    const lowStock = await getLowStockProducts();
+    snapshot.lowStockItems = lowStock.slice(0, 10).map((item) => ({
+      productName: item.productName,
+      sku: item.sku,
+      quantity: item.quantity,
+      reorderPoint: item.reorderPoint,
+    }));
+  }
+
+  if (includeRecentOrders) {
+    snapshot.recentOrders = await db.query.orders.findMany({
+      with: { customer: true, status: true },
+      orderBy: (o, { desc: d }) => [d(o.createdAt)],
+      limit: 5,
+    });
+  }
+
+  return snapshot;
 }
 
 // ─── Dashboard Chart Data ────────────────────────────────────

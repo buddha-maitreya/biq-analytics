@@ -1,6 +1,7 @@
-import { createRouter } from "@agentuity/runtime";
+import { createRouter, validator } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
 import { authMiddleware } from "@services/auth";
+import { createWarehouseSchema, updateWarehouseSchema } from "@lib/validation";
 import * as svc from "@services/warehouses";
 
 const router = createRouter();
@@ -22,15 +23,15 @@ router.get("/warehouses/:id", async (c) => {
   return c.json({ data: warehouse });
 });
 
-router.post("/warehouses", async (c) => {
-  const body = await c.req.json();
+router.post("/warehouses", validator({ input: createWarehouseSchema }), async (c) => {
+  const body = c.req.valid("json");
   const warehouse = await svc.createWarehouse(body);
   return c.json({ data: warehouse }, 201);
 });
 
-router.put("/warehouses/:id", async (c) => {
+router.put("/warehouses/:id", validator({ input: updateWarehouseSchema }), async (c) => {
   const id = c.req.param("id");
-  const body = await c.req.json();
+  const body = c.req.valid("json");
   const warehouse = await svc.updateWarehouse(id, body);
   return c.json({ data: warehouse });
 });

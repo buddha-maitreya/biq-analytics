@@ -1,55 +1,78 @@
-import { createRouter } from "@agentuity/runtime";
+import { createRouter, validator, sse, websocket } from "@agentuity/runtime";
+import type { SSEStream } from "@agentuity/runtime";
 import { errorMiddleware, ValidationError, NotFoundError } from "@lib/errors";
 import { authMiddleware, verifyToken } from "@services/auth";
 import type { AuthUser } from "@services/auth";
+import { chatMessageSchema, chatFeedbackSchema } from "@lib/validation";
+import { maskPII } from "@lib/pii";
 import {
   db,
   chatSessions,
   chatMessages,
 } from "@db/index";
 import { eq, desc, and } from "drizzle-orm";
+import { streamText } from "ai";
+import { getModel } from "@lib/ai";
+import { getAgentConfigWithDefaults } from "@services/agent-configs";
+import { getAISettings, type AISettings } from "@services/settings";
+import { getAllTools, buildCustomToolsPromptSection } from "@agent/data-science/tools";
+import { buildSystemPrompt } from "@agent/data-science/prompts/system";
+import { SpanCollector, extractToolInvocations } from "@lib/tracing";
+import { recordRoutingDecision } from "@services/routing-analytics";
 import {
-  streamChat,
   getConversationContext,
   maybeCompressSummary,
-} from "../agent/data-science/index";
+} from "@services/chat";
 
 // ────────────────────────────────────────────────────────────
-// In-memory SSE event bus (per-session, per-deployment)
+// SSE session bus (per-session, per-deployment)
 //
-// Each active session has a Set of writable callbacks.
-// When the Data Science Agent streams, we push events to all
-// connected clients on that session (normally just one browser tab).
+// Stores SDK SSEStream objects per session. When the Data Science
+// Agent streams, we push events to all connected clients on that
+// session (normally just one browser tab). Uses the SDK's sse()
+// handler instead of a hand-rolled ReadableStream.
 // ────────────────────────────────────────────────────────────
 
-type SSEWriter = (event: string, data: unknown) => void;
-const sessionBus = new Map<string, Set<SSEWriter>>();
+const sessionStreams = new Map<string, Set<SSEStream>>();
 
-function addWriter(sessionId: string, writer: SSEWriter) {
-  let writers = sessionBus.get(sessionId);
-  if (!writers) {
-    writers = new Set();
-    sessionBus.set(sessionId, writers);
+function addStream(sessionId: string, stream: SSEStream) {
+  let streams = sessionStreams.get(sessionId);
+  if (!streams) {
+    streams = new Set();
+    sessionStreams.set(sessionId, streams);
   }
-  writers.add(writer);
+  streams.add(stream);
 }
 
-function removeWriter(sessionId: string, writer: SSEWriter) {
-  const writers = sessionBus.get(sessionId);
-  if (writers) {
-    writers.delete(writer);
-    if (writers.size === 0) sessionBus.delete(sessionId);
+function removeStream(sessionId: string, stream: SSEStream) {
+  const streams = sessionStreams.get(sessionId);
+  if (streams) {
+    streams.delete(stream);
+    if (streams.size === 0) sessionStreams.delete(sessionId);
   }
 }
 
 function broadcast(sessionId: string, event: string, data: unknown) {
-  const writers = sessionBus.get(sessionId);
-  if (writers) {
-    for (const write of writers) {
+  const payload = JSON.stringify({ type: event, properties: data });
+
+  // Broadcast to SSE streams
+  const streams = sessionStreams.get(sessionId);
+  if (streams) {
+    for (const stream of streams) {
+      stream.writeSSE({ data: payload }).catch(() => {
+        // Stream may have been closed by the client
+      });
+    }
+  }
+
+  // Phase 2.3: Also broadcast to WebSocket connections
+  const conns = wsConnections.get(sessionId);
+  if (conns) {
+    for (const ws of conns) {
       try {
-        write(event, data);
+        ws.send(payload);
       } catch {
-        // Writer may have been closed
+        // WS may have been closed
       }
     }
   }
@@ -169,79 +192,77 @@ chat.get("/chat/sessions/:id/messages", async (c) => {
  * GET /sessions/:id/events — Server-Sent Events stream.
  *
  * Auth via query param ?token= (EventSource can't set headers).
- * Sends keepalive pings every 15s.
+ * Uses SDK sse() middleware for transport. Sends keepalive pings every 15s.
  * Events arrive when the user sends a message via POST /sessions/:id/send.
  */
-chat.get("/chat/sessions/:id/events", async (c) => {
+chat.get("/chat/sessions/:id/events", sse((c, stream) => {
   const sessionId = c.req.param("id");
 
   // Auth from query param (EventSource limitation)
   const url = new URL(c.req.url);
   const token = url.searchParams.get("token");
   if (!token) {
-    return c.json({ error: "Token required" }, 401);
+    stream.writeSSE({
+      data: JSON.stringify({ type: "error", properties: { message: "Token required" } }),
+    });
+    stream.close();
+    return;
   }
 
-  const payload = await verifyToken(token);
-  if (!payload) {
-    return c.json({ error: "Invalid token" }, 401);
-  }
-
-  // Verify session ownership
-  const session = await db.query.chatSessions.findFirst({
-    where: and(
-      eq(chatSessions.id, sessionId),
-      eq(chatSessions.userId, payload.sub!)
-    ),
-  });
-  if (!session) {
-    return c.json({ error: "Session not found" }, 404);
-  }
-
-  // SSE response
-  const stream = new ReadableStream({
-    start(controller) {
-      const encoder = new TextEncoder();
-
-      function send(event: string, data: unknown) {
-        const payload = JSON.stringify({ type: event, properties: data });
-        controller.enqueue(
-          encoder.encode(`data: ${payload}\n\n`)
-        );
-      }
-
-      // Register writer
-      addWriter(sessionId, send);
-
-      // Send connected event
-      send("session.connected", { sessionId });
-
-      // Keepalive ping every 15s
-      const pingInterval = setInterval(() => {
-        try {
-          send("ping", { ts: Date.now() });
-        } catch {
-          clearInterval(pingInterval);
-        }
-      }, 15_000);
-
-      // Cleanup on close
-      c.req.raw.signal.addEventListener("abort", () => {
-        clearInterval(pingInterval);
-        removeWriter(sessionId, send);
+  // Async auth + setup (sse handler can be sync or async, but we fire-and-forget
+  // so the handler returns immediately and the stream stays open via onAbort)
+  (async () => {
+    const payload = await verifyToken(token);
+    if (!payload) {
+      await stream.writeSSE({
+        data: JSON.stringify({ type: "error", properties: { message: "Invalid token" } }),
       });
-    },
-  });
+      stream.close();
+      return;
+    }
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    },
+    // Verify session ownership
+    const session = await db.query.chatSessions.findFirst({
+      where: and(
+        eq(chatSessions.id, sessionId),
+        eq(chatSessions.userId, payload.sub!)
+      ),
+    });
+    if (!session) {
+      await stream.writeSSE({
+        data: JSON.stringify({ type: "error", properties: { message: "Session not found" } }),
+      });
+      stream.close();
+      return;
+    }
+
+    // Register stream in session bus
+    addStream(sessionId, stream);
+
+    // Send connected event
+    await stream.writeSSE({
+      data: JSON.stringify({ type: "session.connected", properties: { sessionId } }),
+    });
+
+    // Keepalive ping every 15s
+    const pingInterval = setInterval(() => {
+      stream.writeSSE({
+        data: JSON.stringify({ type: "ping", properties: { ts: Date.now() } }),
+      }).catch(() => {
+        clearInterval(pingInterval);
+      });
+    }, 15_000);
+
+    // Cleanup on client disconnect
+    stream.onAbort(() => {
+      clearInterval(pingInterval);
+      removeStream(sessionId, stream);
+    });
+  })().catch(() => {
+    // If async setup fails, close the stream
+    stream.close();
   });
-});
+}));
 
 // ════════════════════════════════════════════════════════════
 // SEND MESSAGE (fire-and-forget → events arrive via SSE)
@@ -257,13 +278,13 @@ chat.get("/chat/sessions/:id/events", async (c) => {
  * 5. Broadcasts message.done
  * 6. Auto-titles the session on first message
  */
-chat.post("/chat/sessions/:id/send", async (c) => {
+chat.post("/chat/sessions/:id/send", validator({ input: chatMessageSchema }), async (c) => {
   const user = getUser(c);
   const sessionId = c.req.param("id");
-  const { message } = await c.req.json();
+  const { message } = c.req.valid("json");
 
-  if (!message || typeof message !== "string") {
-    throw new ValidationError("message is required and must be a string");
+  if (typeof message !== "string") {
+    throw new ValidationError("message must be a string");
   }
 
   // Verify ownership
@@ -288,15 +309,21 @@ chat.post("/chat/sessions/:id/send", async (c) => {
   // Build conversation context (rolling summary + recent messages)
   const { summary, recentMessages } = await getConversationContext(sessionId);
 
-  // Start streaming (non-blocking — events go to SSE bus)
+  // Start streaming in background (events go to SSE bus)
+  // c.waitUntil() keeps the runtime alive until the stream completes,
+  // replacing the unsafe fire-and-forget .catch() pattern.
   const sandboxApi = (c as any).var?.sandbox;
-  processStream(sessionId, message, recentMessages, summary, session.title, sandboxApi).catch(
-    (err) => {
+  const kvStore = (c as any).var?.kv;
+  const logger = (c as any).var?.logger;
+  c.waitUntil(async () => {
+    try {
+      await processStream(sessionId, message, recentMessages, summary, session.title, sandboxApi, kvStore, logger);
+    } catch (err: any) {
       broadcast(sessionId, "error", {
         message: err?.message || "Stream processing failed",
       });
     }
-  );
+  });
 
   // Return immediately (fire-and-forget)
   return c.json({ data: { messageId: sessionId, status: "processing" } });
@@ -305,6 +332,11 @@ chat.post("/chat/sessions/:id/send", async (c) => {
 /**
  * Process the AI stream and broadcast SSE events.
  * Runs async after the HTTP response is sent.
+ *
+ * Phase 1.7: Streaming logic is now route-level (not in the agent).
+ * The Agentuity SDK agents are strictly request/response — streaming
+ * belongs at the route layer where we have access to c.var context.
+ * This eliminates the anti-pattern of duplicating config loading.
  */
 async function processStream(
   sessionId: string,
@@ -312,9 +344,127 @@ async function processStream(
   history: Array<{ role: "user" | "assistant" | "system"; content: string }>,
   conversationSummary: string | undefined,
   sessionTitle: string | null,
-  sandboxApi?: any
+  sandboxApi?: any,
+  kv?: any,
+  logger?: any
 ) {
-  const result = await streamChat(message, sessionId, history, conversationSummary, sandboxApi);
+  const streamStart = Date.now();
+
+  // ── Load agent config (single source — same as agent handler setup) ──
+  const agentConfig = await getAgentConfigWithDefaults("data-science");
+  const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
+  const maxSteps = agentConfig.maxSteps ?? 8;
+  const sandboxTimeoutMs = (cfg.sandboxTimeoutMs as number) ?? 30_000;
+  const modelId = agentConfig.modelOverride ?? "gpt-4o";
+  const temperature = agentConfig.temperature
+    ? parseFloat(agentConfig.temperature)
+    : undefined;
+  const routingExamples = cfg.routingExamples as any[] | undefined;
+
+  let ai: AISettings | undefined;
+  try {
+    ai = await getAISettings();
+  } catch {
+    // Non-critical — system prompt will use defaults
+  }
+
+  // ── Build per-request tool set ──
+  const allTools = await getAllTools(
+    {
+      sandboxApi,
+      sandboxTimeoutMs,
+      snapshotId: cfg.sandboxSnapshotId as string | undefined,
+      runtime: (cfg.sandboxRuntime as any) ?? undefined,
+      dependencies: cfg.sandboxDeps as string[] | undefined,
+      memory: cfg.sandboxMemory as string | undefined,
+    },
+    kv
+  );
+  const customToolsSection = await buildCustomToolsPromptSection();
+
+  // ── Build message array ──
+  const messages: Array<{
+    role: "user" | "assistant" | "system";
+    content: string;
+  }> = [];
+
+  if (history?.length) {
+    messages.push(...history);
+  }
+  messages.push({ role: "user", content: message });
+
+  // ── Telemetry collector ──
+  const collector = new SpanCollector("data-science", sessionId);
+
+  // ── Stream the response ──
+  const result = streamText({
+    model: await getModel(modelId),
+    ...(temperature !== undefined ? { temperature } : {}),
+    system: buildSystemPrompt(conversationSummary, ai, customToolsSection, routingExamples),
+    messages,
+    tools: allTools,
+    maxSteps,
+    onFinish: async ({ steps, usage }) => {
+      const durationMs = Date.now() - streamStart;
+
+      // Record an LLM span for the stream
+      collector.addSpan({
+        spanType: "llm",
+        spanName: "streamText",
+        status: "ok",
+        durationMs,
+        startedAt: new Date(streamStart),
+        attributes: { model: modelId, maxSteps, streaming: true },
+      });
+
+      // Extract and record tool invocations
+      const toolInvocations = extractToolInvocations(
+        steps as any,
+        "data-science",
+        sessionId
+      );
+      for (const inv of toolInvocations) {
+        collector.addToolCall(inv);
+      }
+
+      // Record routing analytics
+      const toolNames = [
+        ...new Set(
+          steps.flatMap(
+            (s) => s.toolCalls?.map((tc: any) => tc.toolName) ?? []
+          )
+        ),
+      ];
+      if (toolNames.length > 0) {
+        try {
+          await recordRoutingDecision({
+            sessionId,
+            userMessage: message,
+            toolsSelected: toolNames,
+            strategy: toolNames.length > 1 ? "parallel" : "direct",
+            latencyMs: durationMs,
+          });
+        } catch {
+          // Non-critical
+        }
+      }
+
+      try {
+        await collector.flush();
+      } catch {
+        // Non-critical
+      }
+
+      logger?.info?.("Stream completed", {
+        sessionId,
+        model: modelId,
+        durationMs,
+        toolCount: toolNames.length,
+      });
+    },
+  });
+
+  // ── Iterate fullStream and broadcast SSE events ──
   const fullStream = result.fullStream;
 
   let fullText = "";
@@ -329,9 +479,11 @@ async function processStream(
   for await (const chunk of fullStream) {
     switch (chunk.type) {
       case "text-delta":
-        fullText += chunk.textDelta;
+        // Phase 7.5: Mask PII in streaming text deltas
+        const { masked: maskedDelta } = maskPII(chunk.textDelta);
+        fullText += maskedDelta;
         broadcast(sessionId, "message.delta", {
-          content: chunk.textDelta,
+          content: maskedDelta,
         });
         break;
 
@@ -424,13 +576,21 @@ async function processStream(
     metadata: tokenMeta,
   });
 
-  // Auto-title on first message (non-blocking)
+  // Auto-title on first message
   if (!sessionTitle) {
-    autoTitleSession(sessionId, message).catch(() => {});
+    try {
+      await autoTitleSession(sessionId, message);
+    } catch {
+      // Non-critical — session will remain untitled
+    }
   }
 
-  // Maybe compress summary (non-blocking)
-  maybeCompressSummary(sessionId).catch(() => {});
+  // Compress summary if message count exceeds threshold
+  try {
+    await maybeCompressSummary(sessionId);
+  } catch {
+    // Non-critical — summary compression can retry next message
+  }
 
   // Update session timestamp
   try {
@@ -469,13 +629,9 @@ async function autoTitleSession(
 // ════════════════════════════════════════════════════════════
 
 /** POST /messages/:id/feedback — Thumbs up/down on a message */
-chat.post("/chat/messages/:id/feedback", async (c) => {
+chat.post("/chat/messages/:id/feedback", validator({ input: chatFeedbackSchema }), async (c) => {
   const messageId = c.req.param("id");
-  const { rating } = await c.req.json();
-
-  if (rating !== "up" && rating !== "down") {
-    throw new ValidationError("rating must be 'up' or 'down'");
-  }
+  const { rating } = c.req.valid("json");
 
   const msg = await db.query.chatMessages.findFirst({
     where: eq(chatMessages.id, messageId),
@@ -498,15 +654,15 @@ chat.post("/chat/messages/:id/feedback", async (c) => {
 // LEGACY COMPAT: POST / — fallback for old UI
 // ════════════════════════════════════════════════════════════
 
-chat.post("/chat", async (c) => {
-  const { message } = await c.req.json();
+chat.post("/chat", validator({ input: chatMessageSchema }), async (c) => {
+  const { message } = c.req.valid("json");
 
-  if (!message || typeof message !== "string") {
-    throw new ValidationError("message is required and must be a string");
+  if (typeof message !== "string") {
+    throw new ValidationError("message must be a string");
   }
 
   // Use data-science agent directly (non-streaming fallback)
-  const dataScienceAgent = (await import("../agent/data-science/index")).default;
+  const dataScienceAgent = (await import("@agent/data-science")).default;
   const tempSessionId = crypto.randomUUID();
 
   const result = await dataScienceAgent.run({
@@ -521,5 +677,182 @@ chat.post("/chat", async (c) => {
     },
   });
 });
+
+// ════════════════════════════════════════════════════════════
+// WEBSOCKET CHAT (Phase 2.3 — Bidirectional)
+//
+// Enables:
+//   - Real-time message streaming (replaces SSE for WS clients)
+//   - Cancel/interrupt signals from the client
+//   - Client-side tool responses (browser → server tool result)
+//
+// Protocol (JSON messages):
+//   Client → Server:
+//     { type: "auth", token: "jwt..." }
+//     { type: "send", sessionId: "...", message: "..." }
+//     { type: "cancel", sessionId: "..." }
+//     { type: "tool-response", toolId: "...", result: any }
+//
+//   Server → Client:
+//     { type: "authenticated", userId: "..." }
+//     { type: "session.status", status: "busy" | "idle" }
+//     { type: "message.delta", content: "..." }
+//     { type: "tool.start", toolId: "...", name: "...", input: {...} }
+//     { type: "tool.result", toolId: "...", output: any }
+//     { type: "message.done", messageId: "..." }
+//     { type: "error", message: "..." }
+// ════════════════════════════════════════════════════════════
+
+/** Active WS connections keyed by sessionId */
+const wsConnections = new Map<string, Set<any>>();
+
+/** Pending client-side tool responses keyed by toolId */
+const pendingToolResponses = new Map<
+  string,
+  { resolve: (result: unknown) => void; timeout: ReturnType<typeof setTimeout> }
+>();
+
+/**
+ * Wait for a client-side tool response with a timeout.
+ * Called by client-side tools when they need browser input.
+ */
+export function waitForClientToolResponse(
+  toolId: string,
+  timeoutMs: number = 30_000
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingToolResponses.delete(toolId);
+      reject(new Error(`Client tool response timeout for ${toolId}`));
+    }, timeoutMs);
+
+    pendingToolResponses.set(toolId, { resolve, timeout });
+  });
+}
+
+chat.get("/chat/ws", websocket((c, ws) => {
+  let authed = false;
+  let userId: string | null = null;
+  let currentSessionId: string | null = null;
+
+  ws.onOpen(() => {
+    ws.send(JSON.stringify({ type: "connected", properties: { requiresAuth: true } }));
+  });
+
+  ws.onMessage(async (event) => {
+    let data: any;
+    try {
+      data = JSON.parse(event.data as string);
+    } catch {
+      ws.send(JSON.stringify({ type: "error", properties: { message: "Invalid JSON" } }));
+      return;
+    }
+
+    // ── Auth ──
+    if (data.type === "auth") {
+      const payload = await verifyToken(data.token);
+      if (!payload) {
+        ws.send(JSON.stringify({ type: "error", properties: { message: "Invalid token" } }));
+        return;
+      }
+      authed = true;
+      userId = payload.sub ?? null;
+      ws.send(JSON.stringify({ type: "authenticated", properties: { userId } }));
+      return;
+    }
+
+    // All other messages require auth
+    if (!authed || !userId) {
+      ws.send(JSON.stringify({ type: "error", properties: { message: "Not authenticated" } }));
+      return;
+    }
+
+    // ── Send message ──
+    if (data.type === "send") {
+      const { sessionId, message: userMessage } = data;
+      if (!sessionId || !userMessage) {
+        ws.send(JSON.stringify({ type: "error", properties: { message: "sessionId and message required" } }));
+        return;
+      }
+
+      // Verify session ownership
+      const session = await db.query.chatSessions.findFirst({
+        where: and(
+          eq(chatSessions.id, sessionId),
+          eq(chatSessions.userId, userId)
+        ),
+      });
+      if (!session) {
+        ws.send(JSON.stringify({ type: "error", properties: { message: "Session not found" } }));
+        return;
+      }
+
+      // Track WS connection for this session
+      currentSessionId = sessionId;
+      let conns = wsConnections.get(sessionId);
+      if (!conns) {
+        conns = new Set();
+        wsConnections.set(sessionId, conns);
+      }
+      conns.add(ws);
+
+      // Persist user message
+      await db.insert(chatMessages).values({
+        sessionId,
+        role: "user",
+        content: userMessage,
+      });
+
+      // Broadcast busy (goes to both SSE and WS via unified broadcast)
+      broadcast(sessionId, "session.status", { status: "busy" });
+
+      // Build context and start streaming
+      const { summary, recentMessages } = await getConversationContext(sessionId);
+
+      processStream(
+        sessionId,
+        userMessage,
+        recentMessages,
+        summary,
+        session.title,
+        undefined, // sandboxApi
+        undefined, // kv
+        undefined  // logger
+      ).catch((err: any) => {
+        broadcast(sessionId, "error", { message: err?.message || "Stream failed" });
+      });
+
+      return;
+    }
+
+    // ── Cancel ──
+    if (data.type === "cancel") {
+      ws.send(JSON.stringify({ type: "cancel.ack", properties: { sessionId: data.sessionId } }));
+      return;
+    }
+
+    // ── Client-side tool response ──
+    if (data.type === "tool-response") {
+      const { toolId, result } = data;
+      const pending = pendingToolResponses.get(toolId);
+      if (pending) {
+        clearTimeout(pending.timeout);
+        pending.resolve(result);
+        pendingToolResponses.delete(toolId);
+      }
+      return;
+    }
+  });
+
+  ws.onClose(() => {
+    if (currentSessionId) {
+      const conns = wsConnections.get(currentSessionId);
+      if (conns) {
+        conns.delete(ws);
+        if (conns.size === 0) wsConnections.delete(currentSessionId);
+      }
+    }
+  });
+}));
 
 export default chat;

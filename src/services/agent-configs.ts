@@ -12,6 +12,7 @@
 
 import { db, agentConfigs } from "@db/index";
 import { eq, asc } from "drizzle-orm";
+import { memoryCache } from "@lib/cache";
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -122,17 +123,26 @@ export async function getAgentConfig(agentName: string): Promise<AgentConfigRow 
   return (row as AgentConfigRow) ?? null;
 }
 
-/** Get config for a single agent, falling back to built-in defaults */
+/** Get config for a single agent, falling back to built-in defaults.
+ *  Results are cached in-memory for 60s to avoid repeated DB lookups
+ *  during a single request cycle (agents call this at setup time). */
 export async function getAgentConfigWithDefaults(agentName: string): Promise<AgentConfigRow> {
+  const cacheKey = `agent-config:${agentName}`;
+  const cached = memoryCache.get<AgentConfigRow>(cacheKey);
+  if (cached) return cached;
+
   const row = await getAgentConfig(agentName);
-  if (row) return row;
+  if (row) {
+    memoryCache.set(cacheKey, row, 60);
+    return row;
+  }
 
   // Return a synthetic row from defaults
   const defaults = AGENT_DEFAULTS[agentName];
   if (!defaults) {
     throw new Error(`Unknown agent: ${agentName}`);
   }
-  return {
+  const synthetic: AgentConfigRow = {
     id: "",
     agentName,
     displayName: defaults.displayName,
@@ -149,12 +159,24 @@ export async function getAgentConfigWithDefaults(agentName: string): Promise<Age
     createdAt: new Date(),
     updatedAt: new Date(),
   };
+  memoryCache.set(cacheKey, synthetic, 60);
+  return synthetic;
+}
+
+/** Invalidate cached agent config so next read fetches fresh from DB */
+export function invalidateAgentConfigCache(agentName?: string): void {
+  if (agentName) {
+    memoryCache.invalidate(`agent-config:${agentName}`);
+  } else {
+    memoryCache.invalidatePrefix("agent-config:");
+  }
 }
 
 /** Upsert (insert or update) an agent config by agent_name */
 export async function upsertAgentConfig(
   input: UpsertAgentConfigInput
 ): Promise<AgentConfigRow> {
+  invalidateAgentConfigCache(input.agentName);
   const existing = await getAgentConfig(input.agentName);
 
   if (existing) {
@@ -214,9 +236,19 @@ export async function seedAgentDefaults(): Promise<void> {
 
 /** Delete an agent config (rarely used — prefer disabling via isActive) */
 export async function deleteAgentConfig(agentName: string): Promise<boolean> {
+  invalidateAgentConfigCache(agentName);
   const result = await db
     .delete(agentConfigs)
     .where(eq(agentConfigs.agentName, agentName))
     .returning({ id: agentConfigs.id });
   return result.length > 0;
+}
+
+/** Reset a single agent to its built-in defaults */
+export async function resetAgentToDefaults(agentName: string): Promise<AgentConfigRow> {
+  const defaults = AGENT_DEFAULTS[agentName];
+  if (!defaults) throw new Error(`Unknown agent: ${agentName}`);
+  // Delete existing and re-insert from defaults
+  await deleteAgentConfig(agentName);
+  return upsertAgentConfig({ agentName, ...defaults });
 }

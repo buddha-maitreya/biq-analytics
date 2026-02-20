@@ -1,7 +1,8 @@
-import { createRouter } from "@agentuity/runtime";
+import { createRouter, validator } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
 import { authMiddleware } from "@services/auth";
 import { paginationSchema } from "@lib/pagination";
+import { createInvoiceSchema, recordPaymentSchema } from "@lib/validation";
 import * as svc from "@services/invoices";
 
 const router = createRouter();
@@ -25,14 +26,14 @@ router.get("/invoices/:id", async (c) => {
   return c.json({ data: invoice });
 });
 
-router.post("/invoices", async (c) => {
-  const body = await c.req.json();
+router.post("/invoices", validator({ input: createInvoiceSchema }), async (c) => {
+  const body = c.req.valid("json");
   const invoice = await svc.generateInvoice(body);
   return c.json({ data: invoice }, 201);
 });
 
-router.post("/invoices/:id/payment", async (c) => {
-  const body = await c.req.json();
+router.post("/invoices/:id/payment", validator({ input: recordPaymentSchema }), async (c) => {
+  const body = c.req.valid("json");
   const payment = await svc.recordPayment({
     ...body,
     invoiceId: c.req.param("id"),

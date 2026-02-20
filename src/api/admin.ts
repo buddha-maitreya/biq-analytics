@@ -1,6 +1,15 @@
-import { createRouter } from "@agentuity/runtime";
+import { createRouter, validator } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
 import { authMiddleware } from "@services/auth";
+import {
+  createAdminOrderStatusSchema,
+  updateAdminOrderStatusSchema,
+  createTaxRuleSchema,
+  updateTaxRuleSchema,
+  createUserSchema,
+  updateUserSchema,
+  updateUserPermissionsSchema,
+} from "@lib/validation";
 import * as adminSvc from "@services/admin";
 
 const router = createRouter();
@@ -28,14 +37,14 @@ router.get("/admin/order-statuses", async (c) => {
   return c.json({ data: result });
 });
 
-router.post("/admin/order-statuses", async (c) => {
-  const body = await c.req.json();
+router.post("/admin/order-statuses", validator({ input: createAdminOrderStatusSchema }), async (c) => {
+  const body = c.req.valid("json");
   const status = await adminSvc.createOrderStatus(body);
   return c.json({ data: status }, 201);
 });
 
-router.put("/admin/order-statuses/:id", async (c) => {
-  const body = await c.req.json();
+router.put("/admin/order-statuses/:id", validator({ input: updateAdminOrderStatusSchema }), async (c) => {
+  const body = c.req.valid("json");
   const status = await adminSvc.updateOrderStatus(c.req.param("id"), body);
   return c.json({ data: status });
 });
@@ -52,14 +61,14 @@ router.get("/admin/tax-rules", async (c) => {
   return c.json({ data: result });
 });
 
-router.post("/admin/tax-rules", async (c) => {
-  const body = await c.req.json();
+router.post("/admin/tax-rules", validator({ input: createTaxRuleSchema }), async (c) => {
+  const body = c.req.valid("json");
   const rule = await adminSvc.createTaxRule(body);
   return c.json({ data: rule }, 201);
 });
 
-router.put("/admin/tax-rules/:id", async (c) => {
-  const body = await c.req.json();
+router.put("/admin/tax-rules/:id", validator({ input: updateTaxRuleSchema }), async (c) => {
+  const body = c.req.valid("json");
   const rule = await adminSvc.updateTaxRule(c.req.param("id"), body);
   return c.json({ data: rule });
 });
@@ -83,23 +92,22 @@ router.get("/admin/users", async (c) => {
   return c.json({ data: result });
 });
 
-router.post("/admin/users", async (c) => {
-  const body = await c.req.json();
+router.post("/admin/users", validator({ input: createUserSchema }), async (c) => {
+  const body = c.req.valid("json");
   const user = await adminSvc.createUser(body);
   return c.json({ data: user }, 201);
 });
 
-router.put("/admin/users/:id", async (c) => {
-  const body = await c.req.json();
+router.put("/admin/users/:id", validator({ input: updateUserSchema }), async (c) => {
+  const body = c.req.valid("json");
   const user = await adminSvc.updateUser(c.req.param("id"), body);
   return c.json({ data: user });
 });
 
 /** Update permissions + warehouse access */
-router.put("/admin/users/:id/permissions", async (c) => {
-  const body = await c.req.json();
-  const { permissions, assignedWarehouses } = body;
-  const user = await adminSvc.updateUserPermissions(c.req.param("id"), permissions, assignedWarehouses);
+router.put("/admin/users/:id/permissions", validator({ input: updateUserPermissionsSchema }), async (c) => {
+  const body = c.req.valid("json");
+  const user = await adminSvc.updateUserPermissions(c.req.param("id"), body.permissions ?? [], body.assignedWarehouses);
   return c.json({ data: user });
 });
 
@@ -116,6 +124,37 @@ router.post("/admin/users/:id/activate", async (c) => {
 router.delete("/admin/users/:id", async (c) => {
   await adminSvc.deactivateUser(c.req.param("id"));
   return c.json({ deleted: true });
+});
+
+// ────────────────────────────────────────────────────────────
+// Sandbox Snapshot Management
+// ────────────────────────────────────────────────────────────
+
+router.post("/admin/sandbox/snapshot", async (c) => {
+  const { createAnalysisSnapshot, ANALYSIS_DEPENDENCIES } = await import("@lib/sandbox");
+  const body = await c.req.json().catch(() => ({}));
+  const runtime = (body as any)?.runtime ?? "bun:1";
+  const extraDeps = (body as any)?.extraDeps ?? [];
+  const sandboxApi = (c as any).var?.sandbox;
+
+  if (!sandboxApi) {
+    return c.json({ error: "Sandbox API not available" }, 500);
+  }
+
+  try {
+    c.var.logger.info("Creating sandbox snapshot", { runtime, extraDeps });
+    const { snapshotId } = await createAnalysisSnapshot(sandboxApi, runtime, extraDeps);
+    c.var.logger.info("Sandbox snapshot created", { snapshotId, runtime });
+    return c.json({
+      snapshotId,
+      runtime,
+      dependencies: [...ANALYSIS_DEPENDENCIES, ...extraDeps],
+      message: "Snapshot created. Set sandboxSnapshotId in agent config to use it.",
+    });
+  } catch (err: any) {
+    c.var.logger.error("Failed to create sandbox snapshot", { error: String(err) });
+    return c.json({ error: `Snapshot creation failed: ${err.message}` }, 500);
+  }
 });
 
 export default router;

@@ -7,5 +7,6 @@ export * as orderService from "./orders";
 export * as invoiceService from "./invoices";
 export * as pricingService from "./pricing";
 export * as adminService from "./admin";
+export * as approvalService from "./approvals";
 export * as telemetryService from "./telemetry";
 export * as toolAnalyticsService from "./tool-analytics";

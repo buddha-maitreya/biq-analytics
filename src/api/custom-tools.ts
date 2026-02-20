@@ -14,6 +14,12 @@ router.get("/custom-tools", async (c) => {
   return c.json({ data: tools });
 });
 
+/** GET /api/custom-tools/mcp — list only MCP-type tools */
+router.get("/custom-tools/mcp", async (c) => {
+  const tools = await toolsSvc.listMcpTools();
+  return c.json({ data: tools });
+});
+
 /** GET /api/custom-tools/:id — get a single tool */
 router.get("/custom-tools/:id", async (c) => {
   const tool = await toolsSvc.getToolById(c.req.param("id"));
@@ -48,6 +54,13 @@ router.post("/custom-tools/seed", async (c) => {
   const created = await toolsSvc.seedDefaultTools();
   const tools = await toolsSvc.listTools();
   return c.json({ data: tools, seeded: created });
+});
+
+/** POST /api/custom-tools/seed-mcp — seed default MCP integrations (idempotent) */
+router.post("/custom-tools/seed-mcp", async (c) => {
+  const created = await toolsSvc.seedMcpTools();
+  const mcpTools = await toolsSvc.listMcpTools();
+  return c.json({ data: mcpTools, seeded: created });
 });
 
 /** POST /api/custom-tools/:id/test — test-run a tool (server or client) */

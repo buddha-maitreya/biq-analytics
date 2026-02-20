@@ -368,6 +368,8 @@ export const users = pgTable(
     assignedWarehouses: jsonb("assigned_warehouses").$type<string[]>(),
     /** UUID of the user who created/invited this user (for hierarchy enforcement) */
     createdBy: uuid("created_by"),
+    /** UUID of the user's direct supervisor/manager (approval hierarchy) */
+    reportsTo: uuid("reports_to"),
     metadata: metadata(),
     ...timestamps(),
   },
@@ -375,6 +377,7 @@ export const users = pgTable(
     uniqueIndex("idx_users_email").on(t.email),
     index("idx_users_role").on(t.role),
     index("idx_users_active").on(t.isActive),
+    index("idx_users_reports_to").on(t.reportsTo),
   ]
 );
 
@@ -1475,5 +1478,156 @@ export const attachments = pgTable(
     index("idx_attachments_session").on(t.sessionId),
     index("idx_attachments_user").on(t.userId),
     index("idx_attachments_created").on(t.createdAt),
+  ]
+);
+
+// ============================================================
+// Approval Workflow System
+// ============================================================
+
+/**
+ * Approval Workflows — configurable approval chains for business actions.
+ * Each workflow defines what action type requires approval and under what conditions.
+ * Examples: inventory.delivery_request, inventory.adjustment, order.create
+ */
+export const approvalWorkflows = pgTable(
+  "approval_workflows",
+  {
+    id: id(),
+    /** Machine-readable action type: inventory.delivery_request, inventory.adjustment, order.create */
+    actionType: varchar("action_type", { length: 100 }).notNull(),
+    /** Human-readable name: "Inventory Delivery Request", "Stock Adjustment", "Large Order" */
+    name: varchar("name", { length: 255 }).notNull(),
+    /** Description of what this workflow covers */
+    description: text("description"),
+    /** Whether this workflow is active */
+    isActive: boolean("is_active").notNull().default(true),
+    /** Optional condition (JSON) — e.g. { "field": "amount", "operator": ">", "value": 50000 } */
+    condition: jsonb("condition").$type<Record<string, unknown>>(),
+    /** Number of approval steps required */
+    stepCount: integer("step_count").notNull().default(1),
+    /** Whether to auto-approve if the requester's role meets or exceeds the required level */
+    autoApproveAboveRole: varchar("auto_approve_above_role", { length: 50 }),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    uniqueIndex("idx_approval_workflows_action").on(t.actionType),
+    index("idx_approval_workflows_active").on(t.isActive),
+  ]
+);
+
+/**
+ * Approval Steps — ordered steps within a workflow.
+ * Each step specifies who must approve (by role level or specific user).
+ */
+export const approvalSteps = pgTable(
+  "approval_steps",
+  {
+    id: id(),
+    /** Which workflow this step belongs to */
+    workflowId: uuid("workflow_id")
+      .notNull()
+      .references(() => approvalWorkflows.id, { onDelete: "cascade" }),
+    /** Step order (1 = first approver, 2 = second, etc.) */
+    stepOrder: integer("step_order").notNull(),
+    /** Role required to approve this step: staff, manager, admin, super_admin */
+    approverRole: varchar("approver_role", { length: 50 }).notNull(),
+    /** Optional: specific user ID required (overrides role-based routing) */
+    approverUserId: uuid("approver_user_id").references(() => users.id),
+    /** Label for this step: "Warehouse Manager Review", "Admin Final Approval" */
+    label: varchar("label", { length: 255 }),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_approval_steps_workflow").on(t.workflowId),
+    index("idx_approval_steps_order").on(t.workflowId, t.stepOrder),
+  ]
+);
+
+/**
+ * Approval Requests — pending/completed approval instances.
+ * Created when a user performs an action that requires approval.
+ */
+export const approvalRequests = pgTable(
+  "approval_requests",
+  {
+    id: id(),
+    /** Workflow that governs this request */
+    workflowId: uuid("workflow_id")
+      .notNull()
+      .references(() => approvalWorkflows.id),
+    /** Action type (denormalized for fast queries) */
+    actionType: varchar("action_type", { length: 100 }).notNull(),
+    /** User who initiated the action */
+    requesterId: uuid("requester_id")
+      .notNull()
+      .references(() => users.id),
+    /** Current step in the approval chain (1-based) */
+    currentStep: integer("current_step").notNull().default(1),
+    /** Overall status: pending, approved, rejected, cancelled */
+    status: varchar("status", { length: 20 }).notNull().default("pending"),
+    /** Reference to the entity being approved (order, inventory record, etc.) */
+    entityType: varchar("entity_type", { length: 50 }).notNull(),
+    /** Entity ID (UUID of the order, inventory record, etc.) */
+    entityId: uuid("entity_id").notNull(),
+    /** Snapshot of the action data at request time (for audit) */
+    actionData: jsonb("action_data").$type<Record<string, unknown>>(),
+    /** Requester's note/reason */
+    requesterNote: text("requester_note"),
+    /** Warehouse/branch context (if applicable) */
+    warehouseId: uuid("warehouse_id").references(() => warehouses.id),
+    /** Resolved at (final approval or rejection timestamp) */
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_approval_requests_workflow").on(t.workflowId),
+    index("idx_approval_requests_requester").on(t.requesterId),
+    index("idx_approval_requests_status").on(t.status),
+    index("idx_approval_requests_entity").on(t.entityType, t.entityId),
+    index("idx_approval_requests_warehouse").on(t.warehouseId),
+    index("idx_approval_requests_created").on(t.createdAt),
+  ]
+);
+
+/**
+ * Approval Decisions — individual approve/reject decisions per step.
+ * One record per approver action on a specific request step.
+ */
+export const approvalDecisions = pgTable(
+  "approval_decisions",
+  {
+    id: id(),
+    /** Which request this decision belongs to */
+    requestId: uuid("request_id")
+      .notNull()
+      .references(() => approvalRequests.id, { onDelete: "cascade" }),
+    /** Which step this decision is for */
+    stepId: uuid("step_id")
+      .notNull()
+      .references(() => approvalSteps.id),
+    /** Which step number (denormalized) */
+    stepOrder: integer("step_order").notNull(),
+    /** User who made this decision */
+    deciderId: uuid("decider_id")
+      .notNull()
+      .references(() => users.id),
+    /** Decision: approved, rejected */
+    decision: varchar("decision", { length: 20 }).notNull(),
+    /** Approver's comment/reason */
+    comment: text("comment"),
+    /** Timestamp of the decision */
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_approval_decisions_request").on(t.requestId),
+    index("idx_approval_decisions_step").on(t.stepId),
+    index("idx_approval_decisions_decider").on(t.deciderId),
+    index("idx_approval_decisions_decided").on(t.decidedAt),
   ]
 );

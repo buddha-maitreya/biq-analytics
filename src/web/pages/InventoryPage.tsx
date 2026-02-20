@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import { useAPI } from "@agentuity/react";
 import type { AppConfig } from "../types";
 
@@ -31,6 +31,7 @@ export default function InventoryPage({ config }: InventoryPageProps) {
   const [expandedWh, setExpandedWh] = useState<Set<string>>(new Set());
   const [expandedCat, setExpandedCat] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState("");
+  const scanRef = useRef<HTMLInputElement>(null);
 
   const warehouses: WarehouseData[] = whData?.data ?? [];
   const lowStockItems: any[] = lowStock?.data ?? [];
@@ -170,6 +171,18 @@ export default function InventoryPage({ config }: InventoryPageProps) {
             onChange={(e) => setSearchTerm(e.target.value)}
           />
           {searchTerm && <button className="search-clear" onClick={() => setSearchTerm("")}>✕</button>}
+          {/* Scan stock sheet / barcode */}
+          <input ref={scanRef} type="file" accept="image/*" capture="environment" onChange={() => {
+            scanRef.current && (scanRef.current.value = "");
+            alert("📷 Stock sheet captured! For full OCR, use the AI Assistant — attach the photo and say \"read this stock sheet\".");
+          }} style={{ display: "none" }} />
+          <button
+            className="btn btn-icon scan-btn"
+            onClick={() => scanRef.current?.click()}
+            title="Scan stock sheet or barcode with camera"
+          >
+            📷
+          </button>
         </div>
         <span className="toolbar-count">
           {filteredGroups.length} location{filteredGroups.length !== 1 ? "s" : ""}

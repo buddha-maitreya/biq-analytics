@@ -9,6 +9,7 @@ export type Page =
   | "invoices"
   | "assistant"
   | "reports"
+  | "approvals"
   | "admin"
   | "settings"
   | "email"

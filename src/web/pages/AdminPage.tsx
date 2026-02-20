@@ -6,7 +6,7 @@ interface AdminPageProps {
   onSaved?: () => void;
 }
 
-type AdminTab = "users" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools" | "model" | "agents" | "prompts" | "evals" | "examples" | "scheduler" | "observability";
+type AdminTab = "users" | "approvals" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools" | "model" | "agents" | "prompts" | "evals" | "examples" | "scheduler" | "observability";
 
 /* ---------- Sub-types ---------- */
 interface RBACConfig {
@@ -30,6 +30,7 @@ interface User {
   isActive: boolean;
   permissions: string[];
   assignedWarehouses: string[] | null;
+  reportsTo: string | null;
   warehouseDetails: Warehouse[];
   allAccess: boolean;
   createdAt: string;
@@ -118,57 +119,163 @@ const PERM_LABELS: Record<string, { icon: string; label: string; desc: string }>
   settings: { icon: "🎨", label: "Settings", desc: "System configuration" },
 };
 
-/* =============================== */
+/* ═══════════════════════════════════════════════════════
+   Admin Console — Enterprise Layout
+   ═══════════════════════════════════════════════════════ */
+
+interface NavSection {
+  label: string;
+  items: { key: AdminTab; label: string; icon: string; badge?: string }[];
+}
+
+const NAV_SECTIONS: NavSection[] = [
+  {
+    label: "AI & Intelligence",
+    items: [
+      { key: "knowledge", label: "Knowledge Base", icon: "🧠" },
+      { key: "model", label: "AI Model", icon: "🤖" },
+      { key: "ai", label: "Prompt Engineering", icon: "✍️" },
+      { key: "tools", label: "Custom Tools", icon: "🧩" },
+      { key: "agents", label: "AI Agents", icon: "🧬" },
+      { key: "prompts", label: "Prompt Templates", icon: "📋" },
+      { key: "evals", label: "Evaluations", icon: "📊" },
+      { key: "examples", label: "Few-Shot Examples", icon: "💡" },
+    ],
+  },
+  {
+    label: "Operations",
+    items: [
+      { key: "users", label: "Users & Access", icon: "🔐" },
+      { key: "approvals", label: "Approval Workflows", icon: "✅" },
+      { key: "scheduler", label: "Scheduler", icon: "⏰" },
+      { key: "observability", label: "Observability", icon: "📡" },
+    ],
+  },
+  {
+    label: "Configuration",
+    items: [
+      { key: "settings", label: "Business Profile", icon: "🏢" },
+    ],
+  },
+];
+
+/** Section title labels */
+const TAB_TITLES: Record<AdminTab, string> = {
+  knowledge: "Knowledge Base",
+  model: "AI Model Configuration",
+  ai: "Prompt Engineering",
+  tools: "Custom Tools",
+  agents: "AI Agents",
+  prompts: "Prompt Templates",
+  evals: "Evaluation Dashboard",
+  examples: "Few-Shot Examples",
+  scheduler: "Task Scheduler",
+  observability: "Observability & Logs",
+  users: "Users & Access Control",
+  approvals: "Approval Workflows",
+  statuses: "Order Statuses",
+  tax: "Tax Rules",
+  settings: "Business Profile",
+};
+
+const TAB_DESCRIPTIONS: Record<AdminTab, string> = {
+  knowledge: "Train the AI with your business documents, policies, and procedures",
+  model: "Select your AI provider, model, and manage API credentials",
+  ai: "Configure AI personality, tone, reasoning, and safety guardrails",
+  tools: "Create custom tool integrations for the AI to use",
+  agents: "Fine-tune individual AI agent behavior and specializations",
+  prompts: "Manage reusable prompt templates for consistent AI responses",
+  evals: "Monitor AI response quality with automated evaluations",
+  examples: "Provide example interactions to improve AI accuracy",
+  scheduler: "Schedule automated tasks, reports, and maintenance jobs",
+  observability: "Monitor system health, logs, and performance metrics",
+  users: "Manage users, roles, permissions, and warehouse assignments",
+  approvals: "Configure multi-step approval chains for business actions",
+  statuses: "Define order lifecycle statuses and transitions",
+  tax: "Configure tax rules and compliance settings",
+  settings: "Company branding, payment providers, and system configuration",
+};
+
 export default function AdminPage({ config, onSaved }: AdminPageProps) {
   const [tab, setTab] = useState<AdminTab>("knowledge");
-
-  const tabs: { key: AdminTab; label: string; icon: string }[] = [
-    { key: "knowledge", label: "Knowledge Base", icon: "🧠" },
-    { key: "model", label: "AI Model", icon: "🤖" },
-    { key: "ai", label: "Prompt Engineering", icon: "✍️" },
-    { key: "tools", label: "Custom Tools", icon: "🧩" },
-    { key: "agents", label: "AI Agents", icon: "🧬" },
-    { key: "prompts", label: "Prompt Templates", icon: "📋" },
-    { key: "evals", label: "Eval Dashboard", icon: "📊" },
-    { key: "examples", label: "Few-Shot Examples", icon: "💡" },
-    { key: "scheduler", label: "Scheduler", icon: "⏰" },
-    { key: "observability", label: "Observability", icon: "📡" },
-    { key: "users", label: "Users & Access", icon: "🔐" },
-    { key: "settings", label: "Profile", icon: "🏢" },
-  ];
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   return (
-    <div className="page admin-page">
-      <div className="page-header">
-        <h2>⚙️ Admin Console</h2>
-        <span className="text-muted">System administration, configuration & intelligence</span>
-      </div>
-
-      <div className="admin-tabs">
-        {tabs.map((t) => (
+    <div className="admin-console">
+      {/* ── Admin Sidebar Navigation ── */}
+      <aside className={`admin-sidebar ${sidebarCollapsed ? "admin-sidebar-collapsed" : ""}`}>
+        <div className="admin-sidebar-header">
+          <div className="admin-sidebar-brand">
+            <span className="admin-sidebar-icon">⚙️</span>
+            {!sidebarCollapsed && <span className="admin-sidebar-title">Admin Console</span>}
+          </div>
           <button
-            key={t.key}
-            className={`tab-btn ${tab === t.key ? "active" : ""}`}
-            onClick={() => setTab(t.key)}
+            className="admin-sidebar-toggle"
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            title={sidebarCollapsed ? "Expand" : "Collapse"}
           >
-            {t.icon} {t.label}
+            {sidebarCollapsed ? "»" : "«"}
           </button>
-        ))}
-      </div>
+        </div>
 
-      <div className="admin-content">
-        {tab === "users" && <UsersAccessTab />}
-        {tab === "knowledge" && <KnowledgeBaseTab />}
-        {tab === "model" && <AIModelTab onSaved={onSaved} />}
-        {tab === "ai" && <AIConfigTab config={config} onSaved={onSaved} />}
-        {tab === "tools" && <CustomToolsTab />}
-        {tab === "agents" && <AIAgentsTab />}
-        {tab === "prompts" && <PromptTemplatesTab />}
-        {tab === "evals" && <EvalDashboardTab />}
-        {tab === "examples" && <FewShotExamplesTab />}
-        {tab === "scheduler" && <SchedulerTab />}
-        {tab === "observability" && <ObservabilityTab />}
-        {tab === "settings" && <SettingsTab config={config} onSaved={onSaved} />}
+        <nav className="admin-sidebar-nav">
+          {NAV_SECTIONS.map((section) => (
+            <div key={section.label} className="admin-nav-section">
+              {!sidebarCollapsed && (
+                <div className="admin-nav-section-label">{section.label}</div>
+              )}
+              {section.items.map((item) => (
+                <button
+                  key={item.key}
+                  className={`admin-nav-item ${tab === item.key ? "active" : ""}`}
+                  onClick={() => setTab(item.key)}
+                  title={sidebarCollapsed ? item.label : undefined}
+                >
+                  <span className="admin-nav-icon">{item.icon}</span>
+                  {!sidebarCollapsed && (
+                    <>
+                      <span className="admin-nav-label">{item.label}</span>
+                      {item.badge && <span className="admin-nav-badge">{item.badge}</span>}
+                    </>
+                  )}
+                </button>
+              ))}
+            </div>
+          ))}
+        </nav>
+      </aside>
+
+      {/* ── Content Area ── */}
+      <div className="admin-main">
+        {/* Content Header */}
+        <div className="admin-content-header">
+          <div className="admin-content-header-text">
+            <h2 className="admin-content-title">{TAB_TITLES[tab] ?? tab}</h2>
+            <p className="admin-content-desc">{TAB_DESCRIPTIONS[tab] ?? ""}</p>
+          </div>
+          <div className="admin-content-breadcrumb">
+            <span className="breadcrumb-muted">Admin</span>
+            <span className="breadcrumb-sep">/</span>
+            <span className="breadcrumb-current">{TAB_TITLES[tab] ?? tab}</span>
+          </div>
+        </div>
+
+        {/* Content Body */}
+        <div className="admin-content-body">
+          {tab === "users" && <UsersAccessTab />}
+          {tab === "approvals" && <ApprovalWorkflowsTab />}
+          {tab === "knowledge" && <KnowledgeBaseTab />}
+          {tab === "model" && <AIModelTab onSaved={onSaved} />}
+          {tab === "ai" && <AIConfigTab config={config} onSaved={onSaved} />}
+          {tab === "tools" && <CustomToolsTab />}
+          {tab === "agents" && <AIAgentsTab />}
+          {tab === "prompts" && <PromptTemplatesTab />}
+          {tab === "evals" && <EvalDashboardTab />}
+          {tab === "examples" && <FewShotExamplesTab />}
+          {tab === "scheduler" && <SchedulerTab />}
+          {tab === "observability" && <ObservabilityTab />}
+          {tab === "settings" && <SettingsTab config={config} onSaved={onSaved} />}
+        </div>
       </div>
     </div>
   );
@@ -192,6 +299,7 @@ function UsersAccessTab() {
     role: "staff" as string,
     permissions: [] as string[],
     assignedWarehouses: null as string[] | null,
+    reportsTo: null as string | null,
   });
 
   const load = async () => {
@@ -229,13 +337,13 @@ function UsersAccessTab() {
   }, [users, roleFilter, search]);
 
   const resetForm = () => {
-    setForm({ email: "", name: "", role: "staff", permissions: [], assignedWarehouses: null });
+    setForm({ email: "", name: "", role: "staff", permissions: [], assignedWarehouses: null, reportsTo: null });
     setEditUser(null);
     setShowForm(false);
   };
 
   const openEdit = (u: User) => {
-    setForm({ email: u.email, name: u.name, role: u.role, permissions: u.permissions ?? [], assignedWarehouses: u.assignedWarehouses });
+    setForm({ email: u.email, name: u.name, role: u.role, permissions: u.permissions ?? [], assignedWarehouses: u.assignedWarehouses, reportsTo: u.reportsTo });
     setEditUser(u);
     setShowForm(true);
   };
@@ -411,6 +519,25 @@ function UsersAccessTab() {
                 ))}
               </select>
             </label>
+            <label>
+              <span className="form-label">Reports To</span>
+              <select
+                value={form.reportsTo ?? ""}
+                onChange={(e) => setForm({ ...form, reportsTo: e.target.value || null })}
+              >
+                <option value="">— None (top-level) —</option>
+                {users
+                  .filter((u) => u.id !== editUser?.id && (rbac?.roleRank?.[u.role] ?? 0) > (rbac?.roleRank?.[form.role] ?? 0))
+                  .map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name} ({ROLE_LABELS[u.role] ?? u.role})
+                    </option>
+                  ))}
+              </select>
+              <span className="form-hint">Direct supervisor in the approval chain</span>
+            </label>
+          </div>
+          <div className="form-grid cols-4" style={{ marginTop: 8 }}>
             <div className="form-actions" style={{ alignSelf: "end" }}>
               <button className="btn btn-primary" onClick={save}>{editUser ? "Update" : "Create"}</button>
               <button className="btn btn-secondary" onClick={resetForm}>Cancel</button>
@@ -429,6 +556,7 @@ function UsersAccessTab() {
             <tr>
               <th>User</th>
               <th>Role</th>
+              <th>Reports To</th>
               <th>Permissions</th>
               <th>Warehouses</th>
               <th>Status</th>
@@ -444,6 +572,17 @@ function UsersAccessTab() {
                 </td>
                 <td>
                   <span className="role-pill" style={{ background: ROLE_COLORS[u.role] }}>{ROLE_LABELS[u.role] ?? u.role}</span>
+                </td>
+                <td>
+                  {u.reportsTo ? (() => {
+                    const supervisor = users.find((s) => s.id === u.reportsTo);
+                    return supervisor ? (
+                      <div>
+                        <div className="cell-main">{supervisor.name}</div>
+                        <div className="cell-sub">{ROLE_LABELS[supervisor.role] ?? supervisor.role}</div>
+                      </div>
+                    ) : <span className="text-muted">—</span>;
+                  })() : <span className="text-muted">— Top level —</span>}
                 </td>
                 <td>
                   <div className="perm-tags">
@@ -486,7 +625,7 @@ function UsersAccessTab() {
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={6} className="text-center text-muted">No users match</td></tr>
+              <tr><td colSpan={7} className="text-center text-muted">No users match</td></tr>
             )}
           </tbody>
         </table>
@@ -2269,11 +2408,12 @@ function AIAgentsTab() {
 }
 
 /* ===== CUSTOM TOOLS TAB ===== */
-type ToolType = "server" | "client";
+type ToolType = "server" | "client" | "mcp";
 
 interface CustomTool {
   id?: string;
   toolType: ToolType;
+  metadata?: Record<string, unknown>;
   name: string;
   label: string;
   description: string;
@@ -2838,25 +2978,301 @@ function CustomToolsTab() {
           Changes take effect immediately — no redeployment needed.
         </InfoBox>
 
-        {/* Phase 2.2: MCP Tools section — reserved for Model Context Protocol tools */}
-        <div style={{ marginTop: 32 }}>
-          <h3 style={{ margin: "0 0 12px 0" }}>🔌 MCP Tools (Model Context Protocol)</h3>
-          <div style={{
-            padding: 24,
-            background: "var(--bg-tertiary, #1a1a2e)",
-            borderRadius: 8,
-            border: "1px dashed var(--border-color, #333)",
-            textAlign: "center",
-          }}>
-            <p style={{ fontSize: 32, margin: "0 0 8px 0" }}>🔮</p>
-            <p style={{ fontWeight: 600, margin: "0 0 4px 0" }}>MCP Tools — Coming Soon</p>
-            <p className="text-muted" style={{ margin: 0 }}>
-              Connect external MCP-compatible tool servers to extend the AI assistant's capabilities.
-              MCP tools will appear here alongside your custom tools and can be enabled/disabled per deployment.
-            </p>
-          </div>
-        </div>
+        {/* MCP Tools Section */}
+        <McpToolsSection onTestTool={handleTest} />
       </div>
+    </div>
+  );
+}
+
+/* ===== MCP TOOLS SECTION ===== */
+
+function McpToolsSection({ onTestTool }: { onTestTool?: (id: string) => void }) {
+  const [mcpTools, setMcpTools] = useState<CustomTool[]>([]);
+  const [seeding, setSeeding] = useState(false);
+  const [testing, setTesting] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<Record<string, string | null>>({});
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [editingTool, setEditingTool] = useState<string | null>(null);
+  const [editValues, setEditValues] = useState<Record<string, unknown>>({});
+
+  const loadMcpTools = async () => {
+    try {
+      const res = await fetch("/api/custom-tools/mcp");
+      const json = await res.json();
+      if (json.data) setMcpTools(json.data);
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => { loadMcpTools(); }, []);
+
+  const handleSeedMcp = async () => {
+    setSeeding(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/custom-tools/seed-mcp", { method: "POST" });
+      const json = await res.json();
+      if (res.ok) {
+        const count = json.seeded ?? 0;
+        setMessage({ type: "success", text: count > 0 ? `${count} MCP integration(s) added!` : "All MCP integrations already exist." });
+        loadMcpTools();
+      } else {
+        setMessage({ type: "error", text: json.error || "Failed to seed MCP tools." });
+      }
+    } catch {
+      setMessage({ type: "error", text: "Network error seeding MCP tools." });
+    }
+    setSeeding(false);
+  };
+
+  const handleToggle = async (tool: CustomTool) => {
+    try {
+      await fetch(`/api/custom-tools/${tool.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: !tool.isActive }),
+      });
+      loadMcpTools();
+    } catch { /* ignore */ }
+  };
+
+  const handleTestMcp = async (tool: CustomTool) => {
+    setTesting(tool.id!);
+    setTestResult((prev) => ({ ...prev, [tool.id!]: null }));
+    try {
+      const meta = (tool.metadata ?? {}) as Record<string, unknown>;
+      const params = meta.mcpType === "weather"
+        ? { location: (meta.location as string) ?? "Nairobi" }
+        : { symbol: (meta.defaultSymbol as string) ?? "SCOM" };
+
+      const res = await fetch(`/api/custom-tools/${tool.id}/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ params }),
+      });
+      const json = await res.json();
+      setTestResult((prev) => ({ ...prev, [tool.id!]: JSON.stringify(json.data ?? json, null, 2) }));
+    } catch (err: any) {
+      setTestResult((prev) => ({ ...prev, [tool.id!]: `Error: ${err.message}` }));
+    }
+    setTesting(null);
+  };
+
+  const handleSaveConfig = async (tool: CustomTool) => {
+    try {
+      const updates: Record<string, unknown> = {};
+      const meta = { ...(tool.metadata ?? {}) } as Record<string, unknown>;
+
+      // Merge edit values into metadata
+      if (editValues.location !== undefined) meta.location = editValues.location;
+      if (editValues.latitude !== undefined) meta.latitude = Number(editValues.latitude);
+      if (editValues.longitude !== undefined) meta.longitude = Number(editValues.longitude);
+      if (editValues.timezone !== undefined) meta.timezone = editValues.timezone;
+      updates.metadata = meta;
+
+      // Handle API key updates
+      if (editValues.apiKey !== undefined) {
+        updates.authConfig = { ...(tool.authConfig ?? {}), apiKey: editValues.apiKey };
+      }
+
+      await fetch(`/api/custom-tools/${tool.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+      setMessage({ type: "success", text: `"${tool.label}" configuration saved!` });
+      setEditingTool(null);
+      setEditValues({});
+      loadMcpTools();
+    } catch {
+      setMessage({ type: "error", text: "Failed to save configuration." });
+    }
+  };
+
+  const handleDelete = async (tool: CustomTool) => {
+    if (!confirm(`Remove MCP integration "${tool.label}"? You can re-add it later via Seed.`)) return;
+    await fetch(`/api/custom-tools/${tool.id}`, { method: "DELETE" });
+    loadMcpTools();
+  };
+
+  const getStatusIcon = (tool: CustomTool) => {
+    const meta = (tool.metadata ?? {}) as Record<string, unknown>;
+    if (!tool.isActive) return "⚪";
+    if (meta.noApiKeyRequired) return "🟢";
+    // Check if API key is configured
+    const authCfg = (tool.authConfig ?? {}) as Record<string, string>;
+    return authCfg.apiKey ? "🟢" : "🟡";
+  };
+
+  const getStatusText = (tool: CustomTool) => {
+    const meta = (tool.metadata ?? {}) as Record<string, unknown>;
+    if (!tool.isActive) return "Disabled";
+    if (meta.noApiKeyRequired) return "Active — No key required";
+    const authCfg = (tool.authConfig ?? {}) as Record<string, string>;
+    return authCfg.apiKey ? "Active — API key configured" : "Needs API key";
+  };
+
+  const getCategoryIcon = (tool: CustomTool) => {
+    const meta = (tool.metadata ?? {}) as Record<string, unknown>;
+    switch (meta.category) {
+      case "weather": return "🌤️";
+      case "finance": return "📈";
+      default: return "🔌";
+    }
+  };
+
+  return (
+    <div style={{ gridColumn: "1 / -1", marginTop: 16 }}>
+      {message && (
+        <div className={`alert alert-${message.type}`} style={{ marginBottom: 12 }}>
+          {message.type === "success" ? "✅" : "❌"} {message.text}
+        </div>
+      )}
+
+      <div className="card settings-card">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <h3 style={{ margin: 0 }}>🔌 MCP Integrations ({mcpTools.length})</h3>
+          <button className="btn btn-sm btn-primary" onClick={handleSeedMcp} disabled={seeding} style={{ fontSize: 11 }}>
+            {seeding ? "…" : "🌱 Seed Defaults"}
+          </button>
+        </div>
+
+        {mcpTools.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "24px 16px" }}>
+            <p style={{ fontSize: 28, margin: "0 0 8px 0" }}>🔌</p>
+            <p style={{ fontWeight: 600, margin: "0 0 4px 0" }}>No MCP integrations configured</p>
+            <p className="text-muted" style={{ margin: "0 0 12px 0" }}>
+              Click "Seed Defaults" to add pre-configured integrations for weather data and NSE stock market.
+            </p>
+            <button className="btn btn-primary btn-sm" onClick={handleSeedMcp} disabled={seeding}>
+              {seeding ? "Seeding…" : "🌱 Seed Default Integrations"}
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {mcpTools.map((tool) => {
+              const meta = (tool.metadata ?? {}) as Record<string, unknown>;
+              const isEditing = editingTool === tool.id;
+
+              return (
+                <div key={tool.id} className={`tool-card ${!tool.isActive ? "tool-card-inactive" : ""}`}>
+                  <div className="tool-card-header">
+                    <div className="tool-card-title">
+                      <span className="tool-card-type-badge">{getCategoryIcon(tool)} MCP</span>
+                      <h4 style={{ margin: 0 }}>{tool.label}</h4>
+                      <code className="tool-card-name">{tool.name}</code>
+                    </div>
+                    <div className="tool-card-actions">
+                      <span title={getStatusText(tool)} style={{ cursor: "default" }}>{getStatusIcon(tool)}</span>
+                      <button className="btn btn-sm" onClick={() => handleToggle(tool)}
+                        title={tool.isActive ? "Deactivate" : "Activate"}>
+                        {tool.isActive ? "Disable" : "Enable"}
+                      </button>
+                      <button className="btn btn-sm" onClick={() => {
+                        setEditingTool(isEditing ? null : tool.id!);
+                        setEditValues({});
+                      }} title="Configure">⚙️</button>
+                      <button className="btn btn-sm" onClick={() => handleTestMcp(tool)}
+                        disabled={testing === tool.id} title="Test">
+                        {testing === tool.id ? "…" : "▶️"}
+                      </button>
+                      <button className="btn btn-sm" onClick={() => handleDelete(tool)}
+                        title="Remove" style={{ color: "var(--color-danger)" }}>🗑️</button>
+                    </div>
+                  </div>
+
+                  <p className="tool-card-desc">{tool.description}</p>
+
+                  <div className="tool-card-meta">
+                    <span>Provider: {meta.provider as string ?? "—"}</span>
+                    <span>Status: {getStatusText(tool)}</span>
+                    {meta.category === "weather" && <span>Location: {meta.location as string ?? "—"}</span>}
+                    {meta.category === "finance" && <span>Exchange: {meta.exchangeName as string ?? "—"}</span>}
+                  </div>
+
+                  {/* Inline config editor */}
+                  {isEditing && (
+                    <div style={{ marginTop: 12, padding: 12, background: "var(--bg-tertiary, #1a1a2e)", borderRadius: 6, border: "1px solid var(--color-border)" }}>
+                      <h5 style={{ margin: "0 0 8px 0", fontSize: 13 }}>⚙️ Configuration</h5>
+
+                      {meta.mcpType === "weather" && (
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                          <div>
+                            <label className="form-label" style={{ fontSize: 11 }}>Business Location</label>
+                            <input type="text"
+                              defaultValue={meta.location as string ?? "Nairobi"}
+                              onChange={(e) => setEditValues((prev) => ({ ...prev, location: e.target.value }))}
+                              placeholder="e.g. Mombasa" style={{ fontSize: 12 }} />
+                          </div>
+                          <div>
+                            <label className="form-label" style={{ fontSize: 11 }}>Latitude</label>
+                            <input type="number" step="0.0001"
+                              defaultValue={meta.latitude as number ?? -1.2921}
+                              onChange={(e) => setEditValues((prev) => ({ ...prev, latitude: e.target.value }))}
+                              style={{ fontSize: 12 }} />
+                          </div>
+                          <div>
+                            <label className="form-label" style={{ fontSize: 11 }}>Longitude</label>
+                            <input type="number" step="0.0001"
+                              defaultValue={meta.longitude as number ?? 36.8219}
+                              onChange={(e) => setEditValues((prev) => ({ ...prev, longitude: e.target.value }))}
+                              style={{ fontSize: 12 }} />
+                          </div>
+                        </div>
+                      )}
+
+                      {meta.mcpType === "stock_market" && (
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                          <div>
+                            <label className="form-label" style={{ fontSize: 11 }}>API Key (Marketstack)</label>
+                            <input type="password"
+                              defaultValue={(tool.authConfig as Record<string, string>)?.apiKey ?? ""}
+                              onChange={(e) => setEditValues((prev) => ({ ...prev, apiKey: e.target.value }))}
+                              placeholder="Your Marketstack API key"
+                              style={{ fontSize: 12 }} />
+                          </div>
+                          <div>
+                            <label className="form-label" style={{ fontSize: 11 }}>Setup</label>
+                            <p className="text-muted" style={{ fontSize: 11, margin: 0 }}>
+                              Get a free API key at{" "}
+                              <a href={meta.setupUrl as string ?? "#"} target="_blank" rel="noopener noreferrer"
+                                style={{ color: "var(--color-primary)" }}>
+                                marketstack.com/signup/free
+                              </a>{" "}
+                              ({meta.freeTier as string ?? "100 requests/month"})
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                        <button className="btn btn-sm btn-primary" onClick={() => handleSaveConfig(tool)}>Save</button>
+                        <button className="btn btn-sm btn-secondary" onClick={() => { setEditingTool(null); setEditValues({}); }}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Test result */}
+                  {testResult[tool.id!] && (
+                    <pre className="test-result-pre" style={{ marginTop: 8, maxHeight: 200 }}>
+                      {testResult[tool.id!]}
+                    </pre>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <InfoBox>
+        <strong>🔌 MCP Integrations</strong> are pre-configured external data sources the AI can query in real-time.
+        <strong> Weather</strong> uses Open-Meteo (free, no API key) — configure your business location above.
+        <strong> NSE Stocks</strong> uses Marketstack — requires a free API key from{" "}
+        <a href="https://marketstack.com/signup/free" target="_blank" rel="noopener noreferrer"
+          style={{ color: "inherit", textDecoration: "underline" }}>marketstack.com</a>.
+        More integrations will be added in future updates. Tools take effect immediately — no redeployment needed.
+      </InfoBox>
     </div>
   );
 }
@@ -4048,7 +4464,7 @@ function ObservabilityTab() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <h3 style={{ margin: 0 }}>📡 Observability</h3>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <label style={{ fontSize: 13, color: "#888" }}>Period:</label>
+          <label style={{ fontSize: 13, color: "var(--color-text-muted)" }}>Period:</label>
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="input" style={{ width: 120 }}>
             <option value={1}>Last 24h</option>
             <option value={7}>Last 7 days</option>
@@ -4070,7 +4486,7 @@ function ObservabilityTab() {
       </div>
 
       {/* Sub-nav */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 16, borderBottom: "1px solid #333", paddingBottom: 8 }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 16, borderBottom: "1px solid var(--color-border)", paddingBottom: 8 }}>
         {(["agents", "tools", "timeline"] as const).map((v) => (
           <button
             key={v}
@@ -4083,12 +4499,12 @@ function ObservabilityTab() {
         ))}
       </div>
 
-      {loading && <p style={{ color: "#888" }}>Loading telemetry data…</p>}
+      {loading && <p style={{ color: "var(--color-text-muted)" }}>Loading telemetry data…</p>}
 
       {!loading && view === "agents" && (
         <div className="table-wrap">
           {agents.length === 0 ? (
-            <p style={{ color: "#888", textAlign: "center", padding: 24 }}>
+            <p style={{ color: "var(--color-text-muted)", textAlign: "center", padding: 24 }}>
               No agent telemetry data yet. Data will appear once agents process requests with tracing enabled.
             </p>
           ) : (
@@ -4129,7 +4545,7 @@ function ObservabilityTab() {
       {!loading && view === "tools" && (
         <div className="table-wrap">
           {tools.length === 0 ? (
-            <p style={{ color: "#888", textAlign: "center", padding: 24 }}>
+            <p style={{ color: "var(--color-text-muted)", textAlign: "center", padding: 24 }}>
               No tool invocation data yet. Data will appear once AI tools are used.
             </p>
           ) : (
@@ -4153,7 +4569,7 @@ function ObservabilityTab() {
                     <td><code>{t.toolName}</code></td>
                     <td style={{ textAlign: "right" }}>{t.totalCalls.toLocaleString()}</td>
                     <td style={{ textAlign: "right", color: "#4ade80" }}>{t.successCount}</td>
-                    <td style={{ textAlign: "right", color: t.errorCount > 0 ? "#f87171" : "#888" }}>
+                    <td style={{ textAlign: "right", color: t.errorCount > 0 ? "#f87171" : "var(--color-text-muted)" }}>
                       {t.errorCount}{t.timeoutCount > 0 ? ` (${t.timeoutCount} T/O)` : ""}
                     </td>
                     <td style={{ textAlign: "right" }}>
@@ -4176,12 +4592,12 @@ function ObservabilityTab() {
       {!loading && view === "timeline" && (
         <div style={{ padding: 12 }}>
           {timeline.length === 0 ? (
-            <p style={{ color: "#888", textAlign: "center", padding: 24 }}>
+            <p style={{ color: "var(--color-text-muted)", textAlign: "center", padding: 24 }}>
               No timeline data available for the selected period.
             </p>
           ) : (
             <div>
-              <p style={{ color: "#888", fontSize: 13, marginBottom: 12 }}>
+              <p style={{ color: "var(--color-text-muted)", fontSize: 13, marginBottom: 12 }}>
                 Hourly span volume &amp; error rate (last {Math.min(days, 14)} days)
               </p>
               <div style={{ display: "flex", alignItems: "flex-end", gap: 1, height: 120, padding: "0 4px" }}>
@@ -4213,7 +4629,7 @@ function ObservabilityTab() {
                   });
                 })()}
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#666", marginTop: 4 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--color-text-muted)", marginTop: 4 }}>
                 <span>{timeline.length > 0 ? new Date(timeline[Math.max(timeline.length - 48, 0)]?.hour).toLocaleDateString() : ""}</span>
                 <span>Now</span>
               </div>
@@ -4233,20 +4649,435 @@ function ObservabilityTab() {
   );
 }
 
+/* ===== APPROVAL WORKFLOWS TAB ===== */
+
+interface ApprovalWorkflow {
+  id: string;
+  actionType: string;
+  name: string;
+  description: string | null;
+  isActive: boolean;
+  condition: Record<string, unknown> | null;
+  stepCount: number;
+  autoApproveAboveRole: string | null;
+  steps: ApprovalStep[];
+  createdAt: string;
+}
+
+interface ApprovalStep {
+  id: string;
+  workflowId: string;
+  stepOrder: number;
+  approverRole: string;
+  approverUserId: string | null;
+  label: string | null;
+}
+
+const ACTION_TYPE_LABELS: Record<string, { icon: string; label: string }> = {
+  "inventory.delivery_request": { icon: "🚚", label: "Inventory Delivery Request" },
+  "inventory.adjustment": { icon: "📦", label: "Stock Adjustment" },
+  "order.large_order": { icon: "💰", label: "Large Order" },
+};
+
+function ApprovalWorkflowsTab() {
+  const [workflows, setWorkflows] = useState<ApprovalWorkflow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editWf, setEditWf] = useState<ApprovalWorkflow | null>(null);
+  const [seeding, setSeeding] = useState(false);
+
+  const [form, setForm] = useState({
+    actionType: "",
+    name: "",
+    description: "",
+    isActive: true,
+    conditionField: "",
+    conditionOp: ">",
+    conditionValue: "",
+    autoApproveAboveRole: "",
+    steps: [{ stepOrder: 1, approverRole: "manager", approverUserId: "", label: "" }] as Array<{
+      stepOrder: number;
+      approverRole: string;
+      approverUserId: string;
+      label: string;
+    }>,
+  });
+
+  const load = async () => {
+    setLoading(true);
+    const res = await fetch("/api/approvals/workflows");
+    const data = await res.json();
+    setWorkflows(data.data ?? []);
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const resetForm = () => {
+    setForm({
+      actionType: "", name: "", description: "", isActive: true,
+      conditionField: "", conditionOp: ">", conditionValue: "",
+      autoApproveAboveRole: "",
+      steps: [{ stepOrder: 1, approverRole: "manager", approverUserId: "", label: "" }],
+    });
+    setEditWf(null);
+    setShowForm(false);
+  };
+
+  const openEdit = (wf: ApprovalWorkflow) => {
+    const cond = wf.condition as { field?: string; operator?: string; value?: number } | null;
+    setForm({
+      actionType: wf.actionType,
+      name: wf.name,
+      description: wf.description ?? "",
+      isActive: wf.isActive,
+      conditionField: cond?.field ?? "",
+      conditionOp: cond?.operator ?? ">",
+      conditionValue: cond?.value != null ? String(cond.value) : "",
+      autoApproveAboveRole: wf.autoApproveAboveRole ?? "",
+      steps: wf.steps.map((s) => ({
+        stepOrder: s.stepOrder,
+        approverRole: s.approverRole,
+        approverUserId: s.approverUserId ?? "",
+        label: s.label ?? "",
+      })),
+    });
+    setEditWf(wf);
+    setShowForm(true);
+  };
+
+  const addStep = () => {
+    setForm((f) => ({
+      ...f,
+      steps: [...f.steps, { stepOrder: f.steps.length + 1, approverRole: "admin", approverUserId: "", label: "" }],
+    }));
+  };
+
+  const removeStep = (idx: number) => {
+    setForm((f) => ({
+      ...f,
+      steps: f.steps.filter((_, i) => i !== idx).map((s, i) => ({ ...s, stepOrder: i + 1 })),
+    }));
+  };
+
+  const updateStep = (idx: number, field: string, value: string) => {
+    setForm((f) => ({
+      ...f,
+      steps: f.steps.map((s, i) => i === idx ? { ...s, [field]: value } : s),
+    }));
+  };
+
+  const save = async () => {
+    const body: Record<string, unknown> = {
+      actionType: form.actionType,
+      name: form.name,
+      description: form.description || undefined,
+      isActive: form.isActive,
+      autoApproveAboveRole: form.autoApproveAboveRole || null,
+      steps: form.steps.map((s) => ({
+        stepOrder: s.stepOrder,
+        approverRole: s.approverRole,
+        approverUserId: s.approverUserId || null,
+        label: s.label || undefined,
+      })),
+    };
+    if (form.conditionField && form.conditionValue) {
+      body.condition = {
+        field: form.conditionField,
+        operator: form.conditionOp,
+        value: Number(form.conditionValue),
+      };
+    }
+
+    const method = editWf ? "PUT" : "POST";
+    const url = editWf ? `/api/approvals/workflows/${editWf.id}` : "/api/approvals/workflows";
+    await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    resetForm();
+    load();
+  };
+
+  const toggleActive = async (wf: ApprovalWorkflow) => {
+    await fetch(`/api/approvals/workflows/${wf.id}/toggle`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isActive: !wf.isActive }),
+    });
+    load();
+  };
+
+  const deleteWf = async (wf: ApprovalWorkflow) => {
+    if (!confirm(`Delete workflow "${wf.name}"?`)) return;
+    await fetch(`/api/approvals/workflows/${wf.id}`, { method: "DELETE" });
+    load();
+  };
+
+  const seedDefaults = async () => {
+    setSeeding(true);
+    await fetch("/api/approvals/workflows/seed", { method: "POST" });
+    await load();
+    setSeeding(false);
+  };
+
+  if (loading) return <div className="loading-state"><div className="spinner" />Loading workflows…</div>;
+
+  return (
+    <div>
+      {/* Info Box */}
+      <InfoBox>
+        <strong>✅ Approval Workflows</strong> define multi-step approval chains for business actions.
+        When a user performs an action that requires approval (e.g., requesting inventory delivery,
+        adjusting stock, or creating a large order), the request is routed through the configured
+        approval chain — from staff → manager → admin. Each user's <strong>"Reports To"</strong> field
+        (set in Users & Access) determines who reviews their requests.
+      </InfoBox>
+
+      {/* Toolbar */}
+      <div className="toolbar" style={{ marginBottom: 16 }}>
+        <span className="toolbar-count">{workflows.length} workflow{workflows.length !== 1 ? "s" : ""} configured</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          {workflows.length === 0 && (
+            <button className="btn btn-secondary btn-sm" onClick={seedDefaults} disabled={seeding}>
+              {seeding ? "Seeding…" : "🌱 Seed Defaults"}
+            </button>
+          )}
+          <button className="btn btn-primary btn-sm" onClick={() => { resetForm(); setShowForm(true); }}>+ New Workflow</button>
+        </div>
+      </div>
+
+      {/* Create/Edit Form */}
+      {showForm && (
+        <div className="card" style={{ marginBottom: 16, padding: 20 }}>
+          <h4 style={{ marginBottom: 12 }}>{editWf ? `Edit — ${editWf.name}` : "New Approval Workflow"}</h4>
+
+          <div className="form-grid cols-3">
+            <label>
+              <span className="form-label">Action Type</span>
+              <input
+                value={form.actionType}
+                onChange={(e) => setForm({ ...form, actionType: e.target.value })}
+                placeholder="e.g. inventory.delivery_request"
+              />
+              <span className="form-hint">Machine-readable identifier</span>
+            </label>
+            <label>
+              <span className="form-label">Name</span>
+              <input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="e.g. Inventory Delivery Request"
+              />
+            </label>
+            <label>
+              <span className="form-label">Auto-Approve Above Role</span>
+              <select
+                value={form.autoApproveAboveRole}
+                onChange={(e) => setForm({ ...form, autoApproveAboveRole: e.target.value })}
+              >
+                <option value="">— None —</option>
+                <option value="manager">Manager & above</option>
+                <option value="admin">Admin & above</option>
+                <option value="super_admin">Super Admin only</option>
+              </select>
+              <span className="form-hint">Skip approval for users at this role or higher</span>
+            </label>
+          </div>
+
+          <div className="form-grid cols-2" style={{ marginTop: 12 }}>
+            <label>
+              <span className="form-label">Description</span>
+              <textarea
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="When should this workflow be triggered?"
+                rows={2}
+              />
+            </label>
+            <div>
+              <span className="form-label">Condition (Optional)</span>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  style={{ flex: 1 }}
+                  value={form.conditionField}
+                  onChange={(e) => setForm({ ...form, conditionField: e.target.value })}
+                  placeholder="Field (e.g. totalAmount)"
+                />
+                <select
+                  style={{ width: 60 }}
+                  value={form.conditionOp}
+                  onChange={(e) => setForm({ ...form, conditionOp: e.target.value })}
+                >
+                  <option value=">">&gt;</option>
+                  <option value=">=">&gt;=</option>
+                  <option value="<">&lt;</option>
+                  <option value="<=">&lt;=</option>
+                  <option value="==">=</option>
+                </select>
+                <input
+                  style={{ width: 100 }}
+                  type="number"
+                  value={form.conditionValue}
+                  onChange={(e) => setForm({ ...form, conditionValue: e.target.value })}
+                  placeholder="Value"
+                />
+              </div>
+              <span className="form-hint">Only trigger when condition is met (leave empty for always)</span>
+            </div>
+          </div>
+
+          {/* Approval Steps */}
+          <div style={{ marginTop: 16, marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <h4 style={{ margin: 0 }}>Approval Steps</h4>
+              <button className="btn btn-secondary btn-xs" onClick={addStep}>+ Add Step</button>
+            </div>
+            <div className="approval-steps-editor">
+              {form.steps.map((step, idx) => (
+                <div key={idx} className="approval-step-row" style={{
+                  display: "flex", gap: 12, alignItems: "center",
+                  padding: "10px 12px", background: "#1a1a2e", borderRadius: 8, marginBottom: 8,
+                  border: "1px solid #333",
+                }}>
+                  <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#3b82f6", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>
+                    {step.stepOrder}
+                  </div>
+                  <label style={{ flex: 1 }}>
+                    <span className="form-label">Approver Role</span>
+                    <select value={step.approverRole} onChange={(e) => updateStep(idx, "approverRole", e.target.value)}>
+                      <option value="staff">Staff</option>
+                      <option value="manager">Manager</option>
+                      <option value="admin">Admin</option>
+                      <option value="super_admin">Super Admin</option>
+                    </select>
+                  </label>
+                  <label style={{ flex: 1.5 }}>
+                    <span className="form-label">Step Label</span>
+                    <input
+                      value={step.label}
+                      onChange={(e) => updateStep(idx, "label", e.target.value)}
+                      placeholder="e.g. Manager Review"
+                    />
+                  </label>
+                  {form.steps.length > 1 && (
+                    <button
+                      className="btn btn-xs btn-warning"
+                      onClick={() => removeStep(idx)}
+                      style={{ alignSelf: "flex-end", marginBottom: 4 }}
+                    >✕</button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <p className="form-hint">Steps are executed in order. Step 1 is reviewed first, then step 2, etc.</p>
+          </div>
+
+          <div className="form-actions" style={{ display: "flex", gap: 8 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, marginRight: "auto" }}>
+              <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />
+              Active
+            </label>
+            <button className="btn btn-primary" onClick={save}>{editWf ? "Update Workflow" : "Create Workflow"}</button>
+            <button className="btn btn-secondary" onClick={resetForm}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Workflows List */}
+      {workflows.length === 0 && !showForm ? (
+        <div className="card" style={{ padding: 40, textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+          <h3>No Approval Workflows Configured</h3>
+          <p className="text-muted" style={{ marginBottom: 16 }}>
+            Set up approval chains to route business actions through your management hierarchy.
+          </p>
+          <button className="btn btn-primary" onClick={seedDefaults} disabled={seeding}>
+            {seeding ? "Seeding…" : "🌱 Seed Default Workflows"}
+          </button>
+        </div>
+      ) : (
+        <div className="card table-card">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Workflow</th>
+                <th>Action Type</th>
+                <th>Approval Chain</th>
+                <th>Condition</th>
+                <th>Status</th>
+                <th style={{ textAlign: "right" }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {workflows.map((wf) => {
+                const info = ACTION_TYPE_LABELS[wf.actionType];
+                const cond = wf.condition as { field?: string; operator?: string; value?: number } | null;
+                return (
+                  <tr key={wf.id}>
+                    <td>
+                      <div className="cell-main">{wf.name}</div>
+                      {wf.description && <div className="cell-sub">{wf.description}</div>}
+                    </td>
+                    <td>
+                      <span className="perm-tag">{info?.icon ?? "📋"} {info?.label ?? wf.actionType}</span>
+                    </td>
+                    <td>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+                        {wf.steps.map((step, i) => (
+                          <React.Fragment key={step.id}>
+                            <span className="role-pill" style={{
+                              background: ROLE_COLORS[step.approverRole] ?? "#555",
+                              fontSize: 11,
+                              padding: "2px 8px",
+                            }}>
+                              {step.label || ROLE_LABELS[step.approverRole] || step.approverRole}
+                            </span>
+                            {i < wf.steps.length - 1 && <span style={{ color: "var(--color-text-muted)", fontSize: 12 }}>→</span>}
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    </td>
+                    <td>
+                      {cond?.field ? (
+                        <span className="text-muted" style={{ fontSize: 12 }}>
+                          {cond.field} {cond.operator} {cond.value?.toLocaleString()}
+                        </span>
+                      ) : (
+                        <span className="text-muted">Always</span>
+                      )}
+                    </td>
+                    <td>
+                      <span
+                        className={`status-badge ${wf.isActive ? "status-active" : "status-inactive"}`}
+                        style={{ cursor: "pointer" }}
+                        onClick={() => toggleActive(wf)}
+                      >
+                        {wf.isActive ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="action-cell">
+                        <button className="btn btn-xs btn-secondary" onClick={() => openEdit(wf)}>Edit</button>
+                        <button className="btn btn-xs btn-warning" onClick={() => deleteWf(wf)}>Delete</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ===== Shared Helpers ===== */
 
 function SummaryCard({ label, value, icon }: { label: string; value: string; icon: string }) {
   return (
-    <div style={{
-      background: "#1e1e2e",
-      border: "1px solid #333",
-      borderRadius: 8,
-      padding: "14px 16px",
-      textAlign: "center",
-    }}>
-      <div style={{ fontSize: 22, marginBottom: 4 }}>{icon}</div>
-      <div style={{ fontSize: 20, fontWeight: 700, color: "#e2e8f0" }}>{value}</div>
-      <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{label}</div>
+    <div className="obs-summary-card">
+      <div className="obs-summary-icon">{icon}</div>
+      <div className="obs-summary-value">{value}</div>
+      <div className="obs-summary-label">{label}</div>
     </div>
   );
 }

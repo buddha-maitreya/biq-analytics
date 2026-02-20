@@ -197,6 +197,7 @@ export const userSchema = z.object({
   role: z.enum(ROLES).default("staff"),
   permissions: z.array(z.string()).optional(),
   assignedWarehouses: z.array(z.string().uuid()).optional().nullable(),
+  reportsTo: z.string().uuid().optional().nullable(),
   isActive: z.boolean().optional(),
 });
 
@@ -243,6 +244,7 @@ export async function createUser(data: unknown) {
       role: parsed.role,
       permissions: perms,
       assignedWarehouses: parsed.assignedWarehouses ?? null,
+      reportsTo: parsed.reportsTo ?? null,
     })
     .returning({
       id: users.id,
@@ -252,6 +254,7 @@ export async function createUser(data: unknown) {
       isActive: users.isActive,
       permissions: users.permissions,
       assignedWarehouses: users.assignedWarehouses,
+      reportsTo: users.reportsTo,
       createdAt: users.createdAt,
     });
 
@@ -267,6 +270,7 @@ export async function updateUser(id: string, data: unknown) {
   if (parsed.role != null) vals.role = parsed.role;
   if (parsed.permissions !== undefined) vals.permissions = parsed.permissions;
   if (parsed.assignedWarehouses !== undefined) vals.assignedWarehouses = parsed.assignedWarehouses;
+  if (parsed.reportsTo !== undefined) vals.reportsTo = parsed.reportsTo;
   if (parsed.isActive !== undefined) vals.isActive = parsed.isActive;
 
   const [user] = await db
@@ -281,6 +285,7 @@ export async function updateUser(id: string, data: unknown) {
       isActive: users.isActive,
       permissions: users.permissions,
       assignedWarehouses: users.assignedWarehouses,
+      reportsTo: users.reportsTo,
     });
 
   if (!user) throw new NotFoundError("User", id);

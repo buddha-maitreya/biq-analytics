@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import type { Page, AppConfig, AuthUser } from "../types";
 
 interface SidebarProps {
@@ -37,6 +37,7 @@ const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"]
   { page: "customers", icon: "👥", labelKey: "customerPlural", fallback: "Customers" },
   { page: "inventory", icon: "🏭", labelKey: "warehouse", fallback: "Inventory" },
   { page: "invoices", icon: "📄", labelKey: "invoice", fallback: "Invoices" },
+  { page: "approvals", icon: "✅", labelKey: null, fallback: "Approvals" },
   { page: "reports", icon: "📈", labelKey: null, fallback: "Reports" },
   { page: "admin", icon: "⚙️", labelKey: null, fallback: "Admin" },
   { page: "email", icon: "📧", labelKey: null, fallback: "Email" },
@@ -45,10 +46,10 @@ const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"]
 
 /** Pages restricted by role (base access — can be extended via permissions) */
 const ROLE_VISIBLE: Record<string, Page[]> = {
-  viewer: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "about"],
-  staff: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "about"],
-  manager: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "about"],
-  admin: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "reports", "admin", "about"],
+  viewer: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "approvals", "reports", "about"],
+  staff: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "approvals", "reports", "about"],
+  manager: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "approvals", "reports", "about"],
+  admin: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "approvals", "reports", "admin", "about"],
 };
 
 /** Pages that can be unlocked via the permissions array (regardless of role) */
@@ -57,6 +58,27 @@ const PERMISSION_PAGES: Record<string, Page> = {
 };
 
 export default function Sidebar({ config, currentPage, onNavigate, user, onLogout, mobileOpen, onCloseMobile }: SidebarProps) {
+  // ── Pending approval count badge ──
+  const [pendingCount, setPendingCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const fetchCount = async () => {
+      try {
+        const token = typeof window !== "undefined" ? localStorage.getItem("biq_token") : null;
+        const hdrs: Record<string, string> = {};
+        if (token) hdrs["Authorization"] = `Bearer ${token}`;
+        const res = await fetch("/api/approvals/pending/count", { headers: hdrs });
+        if (res.ok && !cancelled) {
+          const json = await res.json();
+          setPendingCount(json.data?.count ?? 0);
+        }
+      } catch { /* ignore */ }
+    };
+    fetchCount();
+    const interval = setInterval(fetchCount, 60_000); // poll every 60s
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
   // super_admin sees everything; others get role-based pages + permission-granted pages
   let visiblePages: Page[] | null = null; // null = all pages (super_admin)
   if (ROLE_VISIBLE[user.role]) {
@@ -107,6 +129,9 @@ export default function Sidebar({ config, currentPage, onNavigate, user, onLogou
                 <span className="nav-label">
                   {item.labelKey ? config.labels[item.labelKey] : item.fallback}
                 </span>
+                {item.page === "approvals" && pendingCount > 0 && (
+                  <span className="nav-badge">{pendingCount > 99 ? "99+" : pendingCount}</span>
+                )}
               </button>
             ))}
         </nav>

@@ -532,7 +532,7 @@ export function useChatStream() {
   // ── Send message (fire-and-forget) ─────────────────────
 
   const sendMessage = useCallback(
-    async (message: string) => {
+    async (message: string, attachmentIds?: string[]) => {
       let sessionId = state.activeSessionId;
 
       // Auto-create session if none active
@@ -568,7 +568,7 @@ export function useChatStream() {
             "Content-Type": "application/json",
             ...getAuthHeaders(),
           },
-          body: JSON.stringify({ message }),
+          body: JSON.stringify({ message, ...(attachmentIds?.length ? { attachmentIds } : {}) }),
         });
 
         if (!res.ok) {

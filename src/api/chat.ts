@@ -9,6 +9,7 @@ import {
   db,
   chatSessions,
   chatMessages,
+  attachments as attachmentsTable,
 } from "@db/index";
 import { eq, desc, and } from "drizzle-orm";
 import { streamText } from "ai";
@@ -281,7 +282,7 @@ chat.get("/chat/sessions/:id/events", sse((c, stream) => {
 chat.post("/chat/sessions/:id/send", validator({ input: chatMessageSchema }), async (c) => {
   const user = getUser(c);
   const sessionId = c.req.param("id");
-  const { message } = c.req.valid("json");
+  const { message, attachmentIds } = c.req.valid("json");
 
   if (typeof message !== "string") {
     throw new ValidationError("message must be a string");
@@ -296,11 +297,36 @@ chat.post("/chat/sessions/:id/send", validator({ input: chatMessageSchema }), as
   });
   if (!session) throw new NotFoundError("Chat session", sessionId);
 
+  // Resolve attachment metadata for image/document context
+  let attachmentContext = "";
+  if (attachmentIds?.length) {
+    try {
+      const rows = await db.query.attachments.findMany({
+        where: and(
+          eq(attachmentsTable.sessionId, sessionId),
+        ),
+      });
+      const matched = rows.filter((r: any) => attachmentIds.includes(r.id));
+      if (matched.length > 0) {
+        const descriptions = matched.map((a: any) => {
+          const isImage = a.contentType?.startsWith("image/");
+          return `[Attached ${isImage ? "image" : "file"}: "${a.filename}" (${a.contentType}, ${Math.round((a.sizeBytes || 0) / 1024)}KB)]`;
+        });
+        attachmentContext = "\n\n" + descriptions.join("\n") +
+          "\n\nThe user has uploaded the above file(s). If they contain barcodes, QR codes, invoices, or stock sheets, " +
+          "use the document-scanner agent capabilities to process them. Describe what you see and take the requested action.";
+      }
+    } catch {
+      // Non-critical — continue without attachment context
+    }
+  }
+
   // Persist user message
   await db.insert(chatMessages).values({
     sessionId,
     role: "user",
-    content: message,
+    content: message + attachmentContext,
+    ...(attachmentIds?.length ? { metadata: { attachmentIds } } : {}),
   });
 
   // Broadcast: session is busy

@@ -1,0 +1,129 @@
+import { createRouter } from "@agentuity/runtime";
+import { errorMiddleware } from "@lib/errors";
+import { authMiddleware, type AuthPayload } from "@services/auth";
+import * as approvalSvc from "@services/approvals";
+
+const router = createRouter();
+router.use(errorMiddleware());
+router.use(authMiddleware());
+
+// ─── Workflow CRUD (admin only) ──────────────────────────────
+
+router.get("/approvals/workflows", async (c) => {
+  const workflows = await approvalSvc.listWorkflows();
+  return c.json({ data: workflows });
+});
+
+router.get("/approvals/workflows/:id", async (c) => {
+  const workflow = await approvalSvc.getWorkflow(c.req.param("id"));
+  return c.json({ data: workflow });
+});
+
+router.post("/approvals/workflows", async (c) => {
+  const body = await c.req.json();
+  const workflow = await approvalSvc.createWorkflow(body);
+  return c.json({ data: workflow }, 201);
+});
+
+router.put("/approvals/workflows/:id", async (c) => {
+  const body = await c.req.json();
+  const workflow = await approvalSvc.updateWorkflow(c.req.param("id"), body);
+  return c.json({ data: workflow });
+});
+
+router.delete("/approvals/workflows/:id", async (c) => {
+  await approvalSvc.deleteWorkflow(c.req.param("id"));
+  return c.json({ success: true });
+});
+
+router.post("/approvals/workflows/:id/toggle", async (c) => {
+  const body = await c.req.json();
+  const workflow = await approvalSvc.toggleWorkflow(c.req.param("id"), body.isActive);
+  return c.json({ data: workflow });
+});
+
+router.post("/approvals/workflows/seed", async (c) => {
+  const result = await approvalSvc.seedDefaultWorkflows();
+  return c.json({ data: result });
+});
+
+// ─── Approval Requests ──────────────────────────────────────
+
+/** Submit an action for approval */
+router.post("/approvals/submit", async (c) => {
+  const auth = c.get("auth") as AuthPayload;
+  const body = await c.req.json();
+  const result = await approvalSvc.submitForApproval(auth.userId, body);
+
+  if (!result) {
+    return c.json({ data: { requiresApproval: false } });
+  }
+  return c.json({ data: { requiresApproval: !result.autoApproved, ...result } }, 201);
+});
+
+/** Get pending approvals for the current user */
+router.get("/approvals/pending", async (c) => {
+  const auth = c.get("auth") as AuthPayload;
+  const pending = await approvalSvc.getPendingApprovalsForUser(auth.userId);
+  return c.json({ data: pending });
+});
+
+/** Get pending approval count (for badge) */
+router.get("/approvals/pending/count", async (c) => {
+  const auth = c.get("auth") as AuthPayload;
+  const count = await approvalSvc.getPendingApprovalCount(auth.userId);
+  return c.json({ data: { count } });
+});
+
+/** List all approval requests (with optional filters) */
+router.get("/approvals/requests", async (c) => {
+  const status = c.req.query("status") || undefined;
+  const actionType = c.req.query("actionType") || undefined;
+  const requesterId = c.req.query("requesterId") || undefined;
+  const limit = c.req.query("limit") ? parseInt(c.req.query("limit")!) : undefined;
+  const requests = await approvalSvc.listApprovalRequests({ status, actionType, requesterId, limit });
+  return c.json({ data: requests });
+});
+
+/** Get single approval request with full details */
+router.get("/approvals/requests/:id", async (c) => {
+  const request = await approvalSvc.getApprovalRequest(c.req.param("id"));
+  return c.json({ data: request });
+});
+
+/** Make a decision (approve/reject) */
+router.post("/approvals/requests/:id/decide", async (c) => {
+  const auth = c.get("auth") as AuthPayload;
+  const body = await c.req.json();
+  const result = await approvalSvc.makeDecision(c.req.param("id"), auth.userId, body);
+  return c.json({ data: result });
+});
+
+/** Cancel an approval request (by requester) */
+router.post("/approvals/requests/:id/cancel", async (c) => {
+  const auth = c.get("auth") as AuthPayload;
+  const result = await approvalSvc.cancelRequest(c.req.param("id"), auth.userId);
+  return c.json({ data: result });
+});
+
+// ─── Org Hierarchy ──────────────────────────────────────────
+
+/** Get supervisor chain for a user */
+router.get("/approvals/hierarchy/:userId", async (c) => {
+  const chain = await approvalSvc.getSupervisorChain(c.req.param("userId"));
+  return c.json({ data: chain });
+});
+
+/** Get direct reports for a user */
+router.get("/approvals/reports/:userId", async (c) => {
+  const reports = await approvalSvc.getDirectReports(c.req.param("userId"));
+  return c.json({ data: reports });
+});
+
+/** Get full org tree */
+router.get("/approvals/org-tree", async (c) => {
+  const tree = await approvalSvc.getOrgTree();
+  return c.json({ data: tree });
+});
+
+export default router;

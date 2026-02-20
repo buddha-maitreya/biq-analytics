@@ -90,6 +90,7 @@ export interface CreateToolInput {
   // Common
   isActive?: boolean;
   sortOrder?: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface UpdateToolInput extends Partial<CreateToolInput> {}
@@ -154,6 +155,7 @@ export async function createTool(input: CreateToolInput): Promise<CustomToolRow>
       // Common
       isActive: input.isActive ?? true,
       sortOrder: input.sortOrder ?? 0,
+      metadata: input.metadata ?? {},
     })
     .returning();
   return row as CustomToolRow;
@@ -189,6 +191,7 @@ export async function updateTool(
   if (input.dynamicVariableAssignments !== undefined) updates.dynamicVariableAssignments = input.dynamicVariableAssignments;
   if (input.isActive !== undefined) updates.isActive = input.isActive;
   if (input.sortOrder !== undefined) updates.sortOrder = input.sortOrder;
+  if (input.metadata !== undefined) updates.metadata = input.metadata;
 
   if (Object.keys(updates).length === 0) {
     return getToolById(id);
@@ -521,6 +524,9 @@ export async function executeTool(
     case "client":
       return buildClientToolAction(tool, params);
 
+    case "mcp":
+      return executeMcpTool(tool, params);
+
     default:
       return { error: `Unsupported tool type "${tool.toolType}" for tool "${tool.label}"` };
   }
@@ -532,6 +538,301 @@ export async function executeTool(
 // URLs are placeholders — each deployment configures their own
 // endpoints via the Admin Console.
 // ──────────────────────────────────────────────────────────
+
+// ── MCP Tool Execution ─────────────────────────────────────
+//
+// MCP (Model Context Protocol) tools are pre-configured external
+// integrations with specialized request building and response
+// formatting. Each mcpType has a dedicated handler. Unknown types
+// fall back to standard HTTP execution (executeServerTool).
+// ──────────────────────────────────────────────────────────
+
+/** WMO standard weather codes used by Open-Meteo */
+const WMO_WEATHER_CODES: Record<number, string> = {
+  0: "Clear sky",
+  1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+  45: "Foggy", 48: "Depositing rime fog",
+  51: "Light drizzle", 53: "Moderate drizzle", 55: "Dense drizzle",
+  56: "Freezing light drizzle", 57: "Freezing dense drizzle",
+  61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
+  66: "Freezing light rain", 67: "Freezing heavy rain",
+  71: "Slight snow fall", 73: "Moderate snow fall", 75: "Heavy snow fall",
+  77: "Snow grains",
+  80: "Slight rain showers", 81: "Moderate rain showers", 82: "Violent rain showers",
+  85: "Slight snow showers", 86: "Heavy snow showers",
+  95: "Thunderstorm", 96: "Thunderstorm with slight hail", 99: "Thunderstorm with heavy hail",
+};
+
+/** Kenyan city coordinates for quick location resolution */
+const KENYA_LOCATIONS: Record<string, { lat: number; lon: number }> = {
+  nairobi: { lat: -1.2921, lon: 36.8219 },
+  mombasa: { lat: -4.0435, lon: 39.6682 },
+  kisumu: { lat: -0.1022, lon: 34.7617 },
+  nakuru: { lat: -0.3031, lon: 36.0800 },
+  eldoret: { lat: 0.5143, lon: 35.2698 },
+  thika: { lat: -1.0396, lon: 37.0900 },
+  malindi: { lat: -3.2138, lon: 40.1169 },
+  nanyuki: { lat: 0.0067, lon: 37.0722 },
+  kitale: { lat: 1.0187, lon: 35.0020 },
+  garissa: { lat: -0.4532, lon: 39.6461 },
+  lamu: { lat: -2.2717, lon: 40.9020 },
+  nyeri: { lat: -0.4197, lon: 36.9511 },
+  machakos: { lat: -1.5177, lon: 37.2634 },
+  naivasha: { lat: -0.7172, lon: 36.4310 },
+  meru: { lat: 0.0480, lon: 37.6559 },
+};
+
+/** Common NSE (Nairobi Securities Exchange) stock symbols */
+const NSE_SYMBOLS: Record<string, string> = {
+  SCOM: "Safaricom PLC",
+  EQTY: "Equity Group Holdings",
+  KCB: "KCB Group PLC",
+  COOP: "Co-operative Bank",
+  ABSA: "ABSA Bank Kenya",
+  SBIC: "Stanbic Holdings",
+  EABL: "East African Breweries",
+  BAT: "BAT Kenya",
+  BAMB: "Bamburi Cement",
+  KQ: "Kenya Airways",
+  SCAN: "ScanGroup",
+  JUB: "Jubilee Holdings",
+  NCBA: "NCBA Group",
+  DTK: "Diamond Trust Bank Kenya",
+  NBK: "National Bank of Kenya",
+};
+
+/**
+ * Execute an MCP-type tool.
+ * MCP tools are pre-configured integrations with specialized request building
+ * and response formatting. Unknown MCP types fall back to standard HTTP execution.
+ */
+export async function executeMcpTool(
+  tool: CustomToolRow,
+  params: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const meta = (tool.metadata ?? {}) as Record<string, unknown>;
+  const mcpType = meta.mcpType as string;
+
+  switch (mcpType) {
+    case "weather":
+      return executeMcpWeather(tool, params);
+    case "stock_market":
+      return executeMcpStockMarket(tool, params);
+    default:
+      // Unknown MCP type — fall back to standard HTTP execution
+      return executeServerTool(tool, params);
+  }
+}
+
+/**
+ * Execute weather MCP tool using Open-Meteo API (free, no auth required).
+ * Supports configurable location via tool metadata or runtime params.
+ * @param tool - MCP tool with metadata.location, metadata.latitude, metadata.longitude
+ * @param params - Optional: location (city name), latitude, longitude overrides
+ */
+async function executeMcpWeather(
+  tool: CustomToolRow,
+  params: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const meta = (tool.metadata ?? {}) as Record<string, unknown>;
+
+  // Resolve location: runtime params override > tool metadata defaults
+  let lat = Number(meta.latitude ?? -1.2921);
+  let lon = Number(meta.longitude ?? 36.8219);
+  let location = String(meta.location ?? "Nairobi");
+  const tz = String(meta.timezone ?? "Africa/Nairobi");
+
+  // If a city name was provided, try to resolve coordinates from our Kenya lookup
+  if (params.location && typeof params.location === "string") {
+    const cityKey = params.location.toLowerCase().trim();
+    const cityCoords = KENYA_LOCATIONS[cityKey];
+    if (cityCoords) {
+      lat = cityCoords.lat;
+      lon = cityCoords.lon;
+      location = params.location as string;
+    } else {
+      // Use provided name but keep configured coords unless lat/lon also provided
+      location = params.location as string;
+    }
+  }
+
+  // Allow explicit lat/lon overrides
+  if (params.latitude !== undefined) lat = Number(params.latitude);
+  if (params.longitude !== undefined) lon = Number(params.longitude);
+
+  const url =
+    `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+    `&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_direction_10m` +
+    `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max` +
+    `&timezone=${encodeURIComponent(tz)}&forecast_days=3`;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      return { error: `Weather API returned HTTP ${res.status}`, status: res.status };
+    }
+
+    const data = await res.json() as Record<string, any>;
+    const current = data.current;
+
+    // Format the 3-day forecast
+    const forecast: Array<Record<string, string>> = [];
+    if (data.daily) {
+      for (let i = 0; i < (data.daily.time?.length ?? 0); i++) {
+        forecast.push({
+          date: data.daily.time[i],
+          high: `${data.daily.temperature_2m_max[i]}°C`,
+          low: `${data.daily.temperature_2m_min[i]}°C`,
+          precipitation: `${data.daily.precipitation_sum[i]} mm`,
+          maxWind: `${data.daily.wind_speed_10m_max[i]} km/h`,
+          description: WMO_WEATHER_CODES[data.daily.weather_code[i]] ?? "Unknown",
+        });
+      }
+    }
+
+    return {
+      location,
+      coordinates: { latitude: lat, longitude: lon },
+      current: {
+        temperature: `${current.temperature_2m}°C`,
+        feelsLike: `${current.apparent_temperature}°C`,
+        humidity: `${current.relative_humidity_2m}%`,
+        windSpeed: `${current.wind_speed_10m} km/h`,
+        windDirection: `${current.wind_direction_10m}°`,
+        precipitation: `${current.precipitation} mm`,
+        description: WMO_WEATHER_CODES[current.weather_code] ?? "Unknown",
+      },
+      forecast,
+      timestamp: current.time,
+      timezone: tz,
+    };
+  } catch (err: any) {
+    if (err.name === "AbortError") {
+      return { error: "Weather API request timed out" };
+    }
+    return { error: `Weather fetch failed: ${err.message ?? String(err)}` };
+  }
+}
+
+/**
+ * Execute NSE stock market MCP tool.
+ * Uses the Marketstack API (free tier available) to fetch stock quotes
+ * from the Nairobi Securities Exchange (XNAI).
+ * @param tool - MCP tool with metadata.apiUrl, authConfig.apiKey
+ * @param params - symbol or company name to look up
+ */
+async function executeMcpStockMarket(
+  tool: CustomToolRow,
+  params: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const meta = (tool.metadata ?? {}) as Record<string, unknown>;
+  const apiKey =
+    (tool.authConfig as Record<string, string>)?.apiKey ||
+    (meta.apiKey as string) ||
+    "";
+
+  if (!apiKey) {
+    return {
+      error:
+        "NSE stock tool requires an API key. Sign up for a free Marketstack API key at https://marketstack.com/signup/free and configure it in Admin → Custom Tools → MCP Tools.",
+      setup: {
+        provider: "Marketstack",
+        signupUrl: "https://marketstack.com/signup/free",
+        freeTier: "100 requests/month",
+        instructions:
+          "After signup, copy your API key and paste it in the MCP tool's Auth Config → apiKey field.",
+      },
+      availableSymbols: NSE_SYMBOLS,
+    };
+  }
+
+  // Resolve symbol(s) — accept ticker, company name, or partial match
+  const symbolInput = String(
+    params.symbol ?? params.stock ?? params.company ?? meta.defaultSymbol ?? "SCOM"
+  );
+  const symbolUpper = symbolInput.toUpperCase().trim();
+
+  let symbol = symbolUpper;
+
+  // Direct ticker match
+  if (!NSE_SYMBOLS[symbol]) {
+    // Try partial company name match
+    const match = Object.entries(NSE_SYMBOLS).find(([_, name]) =>
+      name.toLowerCase().includes(symbolInput.toLowerCase())
+    );
+    if (match) symbol = match[0];
+  }
+
+  // Marketstack uses .XNAI suffix for Nairobi Securities Exchange
+  const exchangeSymbol = `${symbol}.XNAI`;
+  const baseUrl = String(meta.apiUrl ?? "http://api.marketstack.com/v1");
+  const url = `${baseUrl}/eod?access_key=${apiKey}&symbols=${exchangeSymbol}&limit=5`;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      return {
+        error: `Stock API returned HTTP ${res.status}`,
+        status: res.status,
+        details: errText.slice(0, 500),
+      };
+    }
+
+    const data = (await res.json()) as Record<string, any>;
+
+    if (data.error) {
+      return { error: data.error.message ?? "API error", code: data.error.code };
+    }
+
+    const quotes = ((data.data ?? []) as Array<Record<string, any>>).map(
+      (q: Record<string, any>) => ({
+        date: q.date?.split("T")[0],
+        open: q.open,
+        high: q.high,
+        low: q.low,
+        close: q.close,
+        volume: q.volume,
+        exchange: q.exchange,
+      })
+    );
+
+    const latest = quotes[0];
+    const previous = quotes[1];
+    const change =
+      latest && previous
+        ? {
+            amount: (latest.close - previous.close).toFixed(2),
+            percent:
+              (((latest.close - previous.close) / previous.close) * 100).toFixed(2) + "%",
+          }
+        : null;
+
+    return {
+      symbol: symbol.toUpperCase(),
+      company: NSE_SYMBOLS[symbol.toUpperCase()] ?? symbol,
+      exchange: "NSE (Nairobi Securities Exchange)",
+      latest: latest ?? null,
+      change,
+      history: quotes,
+      currency: "KES",
+    };
+  } catch (err: any) {
+    if (err.name === "AbortError") {
+      return { error: "Stock API request timed out" };
+    }
+    return { error: `Stock data fetch failed: ${err.message ?? String(err)}` };
+  }
+}
 
 const DEFAULT_TOOLS: CreateToolInput[] = [
   // ── SERVER TOOLS (external API calls) ─────────────────────
@@ -879,3 +1180,132 @@ export async function seedDefaultTools(): Promise<number> {
 
 /** Get the list of default tool names (for display in UI) */
 export const DEFAULT_TOOL_NAMES = DEFAULT_TOOLS.map((t) => t.name);
+
+// ── MCP Default Integrations ───────────────────────────────
+//
+// Pre-configured MCP tool integrations. These are "official" external
+// service integrations that ship with the platform. Unlike custom tools
+// (which are user-defined), MCP tools have specialized execution handlers
+// with built-in request building and response formatting.
+// ──────────────────────────────────────────────────────────
+
+const MCP_DEFAULT_TOOLS: CreateToolInput[] = [
+  {
+    toolType: "mcp",
+    name: "mcp_weather",
+    label: "Weather Data (Kenya)",
+    description:
+      "Get real-time weather data and 3-day forecast for any location in Kenya. " +
+      "Powered by Open-Meteo (free, no API key required). Use when the user asks about " +
+      "weather, temperature, rain, or climate conditions for business planning, logistics, " +
+      "or general information.",
+    parameterSchema: {
+      location: {
+        type: "string",
+        description:
+          "City name in Kenya (Nairobi, Mombasa, Kisumu, Nakuru, Eldoret, Thika, Malindi, " +
+          "Nanyuki, Kitale, Garissa, Lamu, Nyeri, Machakos, Naivasha, Meru). " +
+          "Defaults to configured business location.",
+      },
+      latitude: {
+        type: "number",
+        description: "Custom latitude (optional — overrides city lookup)",
+      },
+      longitude: {
+        type: "number",
+        description: "Custom longitude (optional — overrides city lookup)",
+      },
+    },
+    webhookUrl: "https://api.open-meteo.com/v1/forecast",
+    webhookMethod: "GET",
+    webhookHeaders: {},
+    webhookTimeoutSecs: 15,
+    authType: "none",
+    authConfig: {},
+    executionMode: "immediate",
+    isActive: true, // Works immediately — no API key required
+    sortOrder: 100,
+    metadata: {
+      mcpType: "weather",
+      provider: "Open-Meteo",
+      location: "Nairobi",
+      latitude: -1.2921,
+      longitude: 36.8219,
+      timezone: "Africa/Nairobi",
+      category: "weather",
+      noApiKeyRequired: true,
+      supportedCities: Object.keys(KENYA_LOCATIONS),
+    },
+  },
+  {
+    toolType: "mcp",
+    name: "mcp_nse_stocks",
+    label: "NSE Stock Market Data",
+    description:
+      "Get stock market data from the Nairobi Securities Exchange (NSE). " +
+      "Supports major Kenyan stocks: Safaricom (SCOM), Equity (EQTY), KCB, Co-op Bank (COOP), " +
+      "ABSA, Stanbic (SBIC), EABL, BAT, and more. Requires a free Marketstack API key. " +
+      "Use when the user asks about stock prices, market performance, or financial data " +
+      "for Kenyan companies.",
+    parameterSchema: {
+      symbol: {
+        type: "string",
+        description:
+          "Stock ticker symbol (e.g. SCOM for Safaricom, EQTY for Equity, KCB for KCB Group) " +
+          "or company name",
+        required: true,
+      },
+    },
+    webhookUrl: "http://api.marketstack.com/v1/eod",
+    webhookMethod: "GET",
+    webhookHeaders: {},
+    webhookTimeoutSecs: 20,
+    authType: "api_key",
+    authConfig: { headerName: "access_key", apiKey: "" },
+    executionMode: "immediate",
+    isActive: false, // Inactive until API key is configured
+    sortOrder: 101,
+    metadata: {
+      mcpType: "stock_market",
+      provider: "Marketstack",
+      exchange: "XNAI",
+      exchangeName: "Nairobi Securities Exchange",
+      category: "finance",
+      apiUrl: "http://api.marketstack.com/v1",
+      defaultSymbol: "SCOM",
+      setupUrl: "https://marketstack.com/signup/free",
+      freeTier: "100 requests/month",
+      symbols: NSE_SYMBOLS,
+    },
+  },
+];
+
+/**
+ * Seed default MCP integrations (idempotent — skips tools whose name already exists).
+ * Returns the count of newly created tools.
+ */
+export async function seedMcpTools(): Promise<number> {
+  let created = 0;
+  for (const def of MCP_DEFAULT_TOOLS) {
+    const existing = await db.query.customTools.findFirst({
+      where: eq(customTools.name, def.name),
+    });
+    if (!existing) {
+      await createTool(def);
+      created++;
+    }
+  }
+  return created;
+}
+
+/** List only MCP-type tools */
+export async function listMcpTools(): Promise<CustomToolRow[]> {
+  const rows = await db.query.customTools.findMany({
+    where: eq(customTools.toolType, "mcp"),
+    orderBy: [asc(customTools.sortOrder), asc(customTools.name)],
+  });
+  return rows as CustomToolRow[];
+}
+
+/** Get the list of default MCP tool names */
+export const MCP_DEFAULT_TOOL_NAMES = MCP_DEFAULT_TOOLS.map((t) => t.name);

@@ -18,6 +18,15 @@ import SessionSidebar from "../components/chat/SessionSidebar";
 import MessageBubble from "../components/chat/MessageBubble";
 import ToolCallCard from "../components/chat/ToolCallCard";
 
+/** Pending attachment before send */
+interface PendingAttachment {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  previewUrl?: string;
+}
+
 interface AssistantPageProps {
   config: AppConfig;
 }
@@ -43,8 +52,12 @@ export default function AssistantPage({ config }: AssistantPageProps) {
 
   const [input, setInput] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const [uploading, setUploading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   /** Map tool names to agent display labels */
   const getAgentLabel = (toolCalls: ToolCall[]): string | null => {
@@ -72,9 +85,55 @@ export default function AssistantPage({ config }: AssistantPageProps) {
 
   const handleSend = async () => {
     const text = input.trim();
-    if (!text || streaming) return;
+    if ((!text && pendingAttachments.length === 0) || streaming) return;
+    const attachmentIds = pendingAttachments.map((a) => a.id);
     setInput("");
-    await sendMessage(text);
+    setPendingAttachments([]);
+    await sendMessage(text || "Please analyze the attached file(s).", attachmentIds.length > 0 ? attachmentIds : undefined);
+  };
+
+  /** Upload a file and add it as a pending attachment */
+  const handleFileUpload = async (file: File) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      // Auto-create session if needed
+      let sessionId = activeSessionId;
+      if (!sessionId) {
+        sessionId = await createSession();
+        if (!sessionId) { setUploading(false); return; }
+      }
+
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`/api/chat/sessions/${sessionId}/attachments`, {
+        method: "POST",
+        body: formData,
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const att = json.data;
+        const isImage = att.contentType?.startsWith("image/");
+        setPendingAttachments((prev) => [...prev, {
+          id: att.id,
+          filename: att.filename,
+          contentType: att.contentType,
+          sizeBytes: att.sizeBytes,
+          previewUrl: isImage ? att.downloadUrl : undefined,
+        }]);
+      }
+    } catch { /* ignore */ }
+    setUploading(false);
+  };
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFileUpload(file);
+    e.target.value = ""; // reset so same file can be re-selected
+  };
+
+  const removeAttachment = (id: string) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
   };
 
   const handleSuggestion = async (text: string) => {
@@ -223,11 +282,52 @@ export default function AssistantPage({ config }: AssistantPageProps) {
           <div ref={messagesEndRef} />
         </div>
 
+        {/* Pending attachments preview */}
+        {pendingAttachments.length > 0 && (
+          <div className="chat-attachments-preview">
+            {pendingAttachments.map((att) => (
+              <div key={att.id} className="chat-attachment-chip">
+                {att.previewUrl ? (
+                  <img src={att.previewUrl} alt={att.filename} className="attachment-thumb" />
+                ) : (
+                  <span className="attachment-icon">📄</span>
+                )}
+                <span className="attachment-name">{att.filename}</span>
+                <button className="attachment-remove" onClick={() => removeAttachment(att.id)} title="Remove">✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Input area */}
         <div className="chat-input">
+          {/* Hidden file inputs */}
+          <input ref={fileInputRef} type="file" accept="image/*,.pdf,.csv,.json,.txt,.md,.xlsx,.xls" onChange={handleFileInput} style={{ display: "none" }} />
+          <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleFileInput} style={{ display: "none" }} />
+
+          {/* Attach button */}
+          <button
+            className="btn btn-icon chat-attach-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={streaming || uploading}
+            title="Attach file (images, documents, spreadsheets)"
+          >
+            {uploading ? "⏳" : "📎"}
+          </button>
+
+          {/* Camera button (opens camera on mobile, file picker on desktop) */}
+          <button
+            className="btn btn-icon chat-attach-btn"
+            onClick={() => cameraInputRef.current?.click()}
+            disabled={streaming || uploading}
+            title="Take photo — scan barcode, invoice, stock sheet"
+          >
+            📷
+          </button>
+
           <input
             type="text"
-            placeholder="Ask a question about your business..."
+            placeholder={pendingAttachments.length > 0 ? "Add instructions for the attached file(s)..." : "Ask a question about your business..."}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -254,7 +354,7 @@ export default function AssistantPage({ config }: AssistantPageProps) {
             <button
               className="btn btn-primary"
               onClick={handleSend}
-              disabled={!input.trim() || streaming}
+              disabled={(!input.trim() && pendingAttachments.length === 0) || streaming}
             >
               Send
             </button>

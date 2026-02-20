@@ -139,6 +139,8 @@ export const recordPaymentSchema = z.object({
 export const chatMessageSchema = z.object({
   message: z.string().min(1),
   context: z.record(z.unknown()).optional(),
+  /** Attachment IDs from a prior upload (images, documents) */
+  attachmentIds: z.array(z.string().uuid()).optional(),
 });
 
 export const chatFeedbackSchema = z.object({

@@ -7969,3 +7969,360 @@ textarea {
 [data-theme="dark"] .approval-step-card + .approval-step-card::before {
   background: rgba(99, 102, 241, 0.3);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   ADMIN FORM PANEL — Enhanced Polish
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Softer, more polished form inputs inside admin panels */
+.admin-form-panel-body input,
+.admin-form-panel-body select,
+.admin-form-panel-body textarea {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: var(--color-surface);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.admin-form-panel-body input:focus,
+.admin-form-panel-body select:focus,
+.admin-form-panel-body textarea:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+  outline: none;
+}
+
+.admin-form-panel-body .form-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  display: block;
+}
+
+.admin-form-panel-body .form-hint {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+/* Form grid refinements */
+.admin-form-panel-body .form-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-form-panel-body .form-grid.cols-2 {
+  grid-template-columns: 1fr 1fr;
+}
+
+.admin-form-panel-body .form-grid.cols-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+@media (max-width: 768px) {
+  .admin-form-panel-body .form-grid.cols-2,
+  .admin-form-panel-body .form-grid.cols-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Better step card style */
+.approval-step-card .form-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 3px;
+}
+
+.approval-step-card select,
+.approval-step-card input {
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  width: 100%;
+}
+
+.approval-step-card select:focus,
+.approval-step-card input:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+  outline: none;
+}
+
+/* Panel footer with soft divider line */
+.admin-form-panel-footer {
+  border-top: 1px solid var(--color-border);
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: linear-gradient(180deg, rgba(248,250,252,0.8) 0%, rgba(241,245,249,1) 100%);
+}
+
+[data-theme="dark"] .admin-form-panel-footer {
+  background: linear-gradient(180deg, rgba(15,23,42,0.8) 0%, rgba(15,23,42,1) 100%);
+}
+
+/* Better section header styling */
+.admin-form-section-header {
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(99, 102, 241, 0.1);
+  margin-bottom: 14px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   OCR SCAN REVIEW PANEL — Used by Inventory & Invoice pages
+   ═══════════════════════════════════════════════════════════════ */
+
+.scan-review-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+  animation: adminPanelSlideIn 0.3s cubic-bezier(.4,0,.2,1);
+  margin-bottom: 20px;
+}
+
+.scan-review-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.06) 0%, rgba(59, 130, 246, 0.04) 100%);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.scan-review-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.scan-review-header-left h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.scan-review-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #10b981, #34d399);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.scan-warnings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 20px;
+  background: rgba(251, 191, 36, 0.06);
+  border-bottom: 1px solid rgba(251, 191, 36, 0.15);
+}
+
+.scan-warning-badge {
+  font-size: 12px;
+  color: #92400e;
+  background: rgba(251, 191, 36, 0.15);
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-weight: 500;
+}
+
+.scan-review-body {
+  padding: 20px;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.scan-warehouse-select {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: rgba(99, 102, 241, 0.04);
+  border-radius: 8px;
+  border: 1px solid rgba(99, 102, 241, 0.1);
+}
+
+.scan-warehouse-select select {
+  flex: 1;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  border: 1px solid var(--color-border);
+}
+
+.scan-review-table {
+  font-size: 13px;
+}
+
+.scan-review-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--color-border);
+}
+
+.scan-review-table td {
+  padding: 8px 10px;
+  vertical-align: middle;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.scan-row-excluded {
+  opacity: 0.4;
+}
+
+.scan-match-select {
+  width: 100%;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+}
+
+.scan-no-match {
+  font-size: 12px;
+  font-style: italic;
+}
+
+.scan-apply-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  background: rgba(34, 197, 94, 0.08);
+  border-top: 1px solid rgba(34, 197, 94, 0.15);
+  font-size: 13px;
+  font-weight: 500;
+  color: #166534;
+}
+
+.scan-apply-result-icon {
+  font-size: 18px;
+}
+
+.scan-apply-duplicate {
+  background: rgba(251, 191, 36, 0.08);
+  border-top-color: rgba(251, 191, 36, 0.15);
+  color: #92400e;
+}
+
+.scan-review-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  background: var(--color-bg);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Scanned invoice grid */
+.scan-invoice-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.scan-invoice-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.scan-invoice-field .form-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-text-muted);
+}
+
+.scan-invoice-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.scan-invoice-value.amount-total {
+  font-weight: 700;
+  color: #059669;
+  font-size: 15px;
+}
+
+@media (max-width: 768px) {
+  .scan-invoice-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Dark mode for scan panels */
+[data-theme="dark"] .scan-review-panel {
+  background: #1e293b;
+  border-color: #334155;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="dark"] .scan-review-header {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(59, 130, 246, 0.06) 100%);
+  border-bottom-color: #334155;
+}
+
+[data-theme="dark"] .scan-review-footer {
+  background: #0f172a;
+  border-top-color: #334155;
+}
+
+[data-theme="dark"] .scan-warnings {
+  background: rgba(251, 191, 36, 0.08);
+  border-bottom-color: rgba(251, 191, 36, 0.2);
+}
+
+[data-theme="dark"] .scan-warning-badge {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.15);
+}
+
+[data-theme="dark"] .scan-apply-result {
+  background: rgba(34, 197, 94, 0.1);
+  color: #4ade80;
+}
+
+[data-theme="dark"] .scan-apply-duplicate {
+  background: rgba(251, 191, 36, 0.1);
+  color: #fbbf24;
+}
+
+[data-theme="dark"] .scan-warehouse-select {
+  background: rgba(99, 102, 241, 0.06);
+  border-color: rgba(99, 102, 241, 0.15);
+}
+
+[data-theme="dark"] .scan-review-table td {
+  border-bottom-color: rgba(255, 255, 255, 0.04);
+}
+
+[data-theme="dark"] .scan-invoice-value.amount-total {
+  color: #34d399;
+}

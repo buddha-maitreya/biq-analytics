@@ -59,4 +59,14 @@ router.get("/inventory/transactions/:productId", async (c) => {
   return c.json({ data: result });
 });
 
+/** POST /inventory/bulk-adjust — Apply OCR-scanned stock sheet data */
+router.post("/inventory/bulk-adjust", async (c) => {
+  const { items } = await c.req.json();
+  if (!Array.isArray(items) || items.length === 0) {
+    return c.json({ error: "items array is required" }, 400);
+  }
+  const result = await svc.bulkAdjustStock(items);
+  return c.json({ data: result });
+});
+
 export default router;

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import type { AppConfig } from "../types";
 
 interface InvoiceCheckerPageProps {
@@ -41,6 +41,31 @@ interface HistoryEntry {
   totalAmount: number | null;
 }
 
+/** OCR-extracted invoice data from document-scanner agent */
+interface ScannedInvoice {
+  invoiceNumber: string | null;
+  supplierName: string | null;
+  supplierAddress: string | null;
+  supplierContact: string | null;
+  invoiceDate: string | null;
+  dueDate: string | null;
+  currency: string | null;
+  subtotal: number | null;
+  taxAmount: number | null;
+  totalAmount: number | null;
+  lineItems: Array<{
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+    sku: string | null;
+  }>;
+  paymentTerms: string | null;
+  bankDetails: string | null;
+  confidence: number;
+  warnings: string[];
+}
+
 export default function InvoiceCheckerPage({ config }: InvoiceCheckerPageProps) {
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [invoiceDate, setInvoiceDate] = useState("");
@@ -49,6 +74,12 @@ export default function InvoiceCheckerPage({ config }: InvoiceCheckerPageProps) 
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const scanRef = useRef<HTMLInputElement>(null);
+
+  // OCR scan state
+  const [scanning, setScanning] = useState(false);
+  const [scannedInvoice, setScannedInvoice] = useState<ScannedInvoice | null>(null);
+  const [savingInvoice, setSavingInvoice] = useState(false);
+  const [saveResult, setSaveResult] = useState<any>(null);
 
   const fmt = (n: number | null) =>
     n != null
@@ -135,6 +166,99 @@ export default function InvoiceCheckerPage({ config }: InvoiceCheckerPageProps) 
     setError(null);
   };
 
+  /** Handle invoice scan via camera */
+  const handleInvoiceScan = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    setScanning(true);
+    setScannedInvoice(null);
+    setSaveResult(null);
+
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = (reader.result as string).split(",")[1];
+        try {
+          const res = await fetch("/api/scan/invoice", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ imageData: base64 }),
+          });
+          const data = await res.json();
+
+          if (!data.success || !data.data) {
+            alert("Could not extract invoice data from the image. Try a clearer photo.");
+            setScanning(false);
+            return;
+          }
+
+          setScannedInvoice({
+            invoiceNumber: data.data.invoiceNumber ?? null,
+            supplierName: data.data.supplierName ?? null,
+            supplierAddress: data.data.supplierAddress ?? null,
+            supplierContact: data.data.supplierContact ?? null,
+            invoiceDate: data.data.invoiceDate ?? null,
+            dueDate: data.data.dueDate ?? null,
+            currency: data.data.currency ?? config.currency,
+            subtotal: data.data.subtotal ?? null,
+            taxAmount: data.data.taxAmount ?? null,
+            totalAmount: data.data.totalAmount ?? null,
+            lineItems: data.data.lineItems ?? [],
+            paymentTerms: data.data.paymentTerms ?? null,
+            bankDetails: data.data.bankDetails ?? null,
+            confidence: data.data.confidence ?? 0.5,
+            warnings: data.data.warnings ?? [],
+          });
+
+          // Auto-fill the checker fields if invoice number extracted
+          if (data.data.invoiceNumber) {
+            setInvoiceNumber(data.data.invoiceNumber);
+          }
+          if (data.data.invoiceDate) {
+            setInvoiceDate(data.data.invoiceDate);
+          }
+        } catch {
+          alert("Failed to process invoice scan. Please try again.");
+        }
+        setScanning(false);
+      };
+      reader.readAsDataURL(file);
+    } catch {
+      setScanning(false);
+    }
+  }, [config.currency]);
+
+  /** Save scanned invoice to system */
+  const saveScannedInvoice = async () => {
+    if (!scannedInvoice?.invoiceNumber) {
+      alert("Invoice number is required to save.");
+      return;
+    }
+    setSavingInvoice(true);
+    try {
+      const res = await fetch("/api/invoices/from-scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoiceNumber: scannedInvoice.invoiceNumber,
+          supplierName: scannedInvoice.supplierName,
+          invoiceDate: scannedInvoice.invoiceDate,
+          dueDate: scannedInvoice.dueDate,
+          subtotal: scannedInvoice.subtotal,
+          taxAmount: scannedInvoice.taxAmount,
+          totalAmount: scannedInvoice.totalAmount,
+          lineItems: scannedInvoice.lineItems,
+        }),
+      });
+      const data = await res.json();
+      setSaveResult(data.data);
+    } catch {
+      alert("Failed to save invoice.");
+    }
+    setSavingInvoice(false);
+  };
+
   const d = result?.invoiceDetails;
 
   return (
@@ -172,16 +296,14 @@ export default function InvoiceCheckerPage({ config }: InvoiceCheckerPageProps) 
                     style={{ flex: 1 }}
                   />
                   {/* Scan invoice barcode / QR code */}
-                  <input ref={scanRef} type="file" accept="image/*" capture="environment" onChange={() => {
-                    scanRef.current && (scanRef.current.value = "");
-                    alert("📷 Invoice captured! For full OCR extraction, use the AI Assistant — attach the photo and say \"scan this invoice\".");
-                  }} style={{ display: "none" }} />
+                  <input ref={scanRef} type="file" accept="image/*" capture="environment" onChange={handleInvoiceScan} style={{ display: "none" }} />
                   <button
                     className="btn btn-icon scan-btn"
                     onClick={() => scanRef.current?.click()}
+                    disabled={scanning}
                     title="Scan invoice with camera"
                   >
-                    📷
+                    {scanning ? "⏳" : "📷"}
                   </button>
                 </div>
                 <span className="form-hint">
@@ -373,6 +495,126 @@ export default function InvoiceCheckerPage({ config }: InvoiceCheckerPageProps) 
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ── Scanned Invoice Review Panel ── */}
+          {scannedInvoice && (
+            <div className="scan-review-panel" style={{ marginTop: 16 }}>
+              <div className="scan-review-header">
+                <div className="scan-review-header-left">
+                  <span className="scan-review-icon">🧾</span>
+                  <div>
+                    <h3>Scanned Invoice Data</h3>
+                    <span className="text-muted">
+                      Confidence: {Math.round(scannedInvoice.confidence * 100)}%
+                      {scannedInvoice.supplierName && ` · ${scannedInvoice.supplierName}`}
+                    </span>
+                  </div>
+                </div>
+                <button className="btn btn-xs btn-secondary" onClick={() => { setScannedInvoice(null); setSaveResult(null); }}>✕ Close</button>
+              </div>
+
+              {scannedInvoice.warnings.length > 0 && (
+                <div className="scan-warnings">
+                  {scannedInvoice.warnings.map((w, i) => (
+                    <span key={i} className="scan-warning-badge">⚠ {w}</span>
+                  ))}
+                </div>
+              )}
+
+              <div className="scan-review-body">
+                {/* Invoice header info */}
+                <div className="scan-invoice-grid">
+                  <div className="scan-invoice-field">
+                    <span className="form-label">Invoice #</span>
+                    <span className="scan-invoice-value mono">{scannedInvoice.invoiceNumber ?? "Not detected"}</span>
+                  </div>
+                  <div className="scan-invoice-field">
+                    <span className="form-label">Supplier</span>
+                    <span className="scan-invoice-value">{scannedInvoice.supplierName ?? "Not detected"}</span>
+                  </div>
+                  <div className="scan-invoice-field">
+                    <span className="form-label">Invoice Date</span>
+                    <span className="scan-invoice-value">{scannedInvoice.invoiceDate ?? "—"}</span>
+                  </div>
+                  <div className="scan-invoice-field">
+                    <span className="form-label">Due Date</span>
+                    <span className="scan-invoice-value">{scannedInvoice.dueDate ?? "—"}</span>
+                  </div>
+                  <div className="scan-invoice-field">
+                    <span className="form-label">Subtotal</span>
+                    <span className="scan-invoice-value">{scannedInvoice.subtotal != null ? fmt(scannedInvoice.subtotal) : "—"}</span>
+                  </div>
+                  <div className="scan-invoice-field">
+                    <span className="form-label">Tax</span>
+                    <span className="scan-invoice-value">{scannedInvoice.taxAmount != null ? fmt(scannedInvoice.taxAmount) : "—"}</span>
+                  </div>
+                  <div className="scan-invoice-field">
+                    <span className="form-label">Total</span>
+                    <span className="scan-invoice-value amount-total">{scannedInvoice.totalAmount != null ? fmt(scannedInvoice.totalAmount) : "—"}</span>
+                  </div>
+                  <div className="scan-invoice-field">
+                    <span className="form-label">Payment Terms</span>
+                    <span className="scan-invoice-value">{scannedInvoice.paymentTerms ?? "—"}</span>
+                  </div>
+                </div>
+
+                {/* Line items */}
+                {scannedInvoice.lineItems.length > 0 && (
+                  <div style={{ marginTop: 16 }}>
+                    <h4 style={{ fontSize: 14, marginBottom: 8 }}>Line Items ({scannedInvoice.lineItems.length})</h4>
+                    <table className="data-table scan-review-table">
+                      <thead>
+                        <tr>
+                          <th>Description</th>
+                          <th className="text-right">Qty</th>
+                          <th className="text-right">Unit Price</th>
+                          <th className="text-right">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {scannedInvoice.lineItems.map((item, idx) => (
+                          <tr key={idx}>
+                            <td>
+                              <div className="cell-main">{item.description}</div>
+                              {item.sku && <div className="cell-sub">SKU: {item.sku}</div>}
+                            </td>
+                            <td className="text-right">{item.quantity}</td>
+                            <td className="text-right">{fmt(item.unitPrice)}</td>
+                            <td className="text-right font-semibold">{fmt(item.totalPrice)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Save result feedback */}
+              {saveResult && (
+                <div className={`scan-apply-result ${saveResult.duplicate ? "scan-apply-duplicate" : ""}`}>
+                  <span className="scan-apply-result-icon">{saveResult.duplicate ? "⚠️" : "✅"}</span>
+                  <span>{saveResult.duplicate ? saveResult.message : `Invoice saved successfully (ID: ${saveResult.invoice?.id})`}</span>
+                </div>
+              )}
+
+              {/* Footer */}
+              <div className="scan-review-footer">
+                <span className="text-muted">
+                  Review the extracted data above before saving
+                </span>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="btn btn-secondary" onClick={() => { setScannedInvoice(null); setSaveResult(null); }}>Dismiss</button>
+                  <button
+                    className="btn btn-primary"
+                    disabled={savingInvoice || !scannedInvoice.invoiceNumber || !!saveResult}
+                    onClick={saveScannedInvoice}
+                  >
+                    {savingInvoice ? "Saving…" : "💾 Save Invoice to System"}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>

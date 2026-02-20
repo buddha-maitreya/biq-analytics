@@ -49,4 +49,21 @@ router.delete("/products/:id", async (c) => {
   return c.json({ deleted: true });
 });
 
+/** POST /products/lookup-barcode — find product by barcode value */
+router.post("/products/lookup-barcode", async (c) => {
+  const { barcode } = await c.req.json();
+  if (!barcode) return c.json({ error: "barcode is required" }, 400);
+  const product = await svc.lookupByBarcode(barcode);
+  if (!product) return c.json({ data: null, found: false });
+  return c.json({ data: product, found: true });
+});
+
+/** POST /products/fuzzy-match — match OCR-extracted names to existing products */
+router.post("/products/fuzzy-match", async (c) => {
+  const { names } = await c.req.json();
+  if (!Array.isArray(names)) return c.json({ error: "names array required" }, 400);
+  const results = await svc.fuzzyMatchProducts(names);
+  return c.json({ data: results });
+});
+
 export default router;

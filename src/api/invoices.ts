@@ -51,4 +51,23 @@ router.post("/invoices/:id/void", async (c) => {
   return c.json({ data: invoice });
 });
 
+/** POST /invoices/check-duplicate — check if invoice number exists */
+router.post("/invoices/check-duplicate", async (c) => {
+  const { invoiceNumber } = await c.req.json();
+  if (!invoiceNumber) return c.json({ error: "invoiceNumber required" }, 400);
+  const existing = await svc.checkInvoiceExists(invoiceNumber);
+  return c.json({ exists: !!existing, invoice: existing });
+});
+
+/** POST /invoices/from-scan — create invoice from OCR data */
+router.post("/invoices/from-scan", async (c) => {
+  const body = await c.req.json();
+  if (!body.invoiceNumber) return c.json({ error: "invoiceNumber required" }, 400);
+  const result = await svc.createFromScan(body);
+  if (result.duplicate) {
+    return c.json({ data: result }, 409);
+  }
+  return c.json({ data: result }, 201);
+});
+
 export default router;

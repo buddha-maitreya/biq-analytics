@@ -116,22 +116,52 @@ export default function POSPage({ config }: POSPageProps) {
     e.target.value = "";
     setScanning(true);
     try {
-      // Send image to document-scanner agent via chat attachment flow
-      const formData = new FormData();
-      formData.append("file", file);
-      // Use a temporary scan approach — send to a simple barcode extraction endpoint
-      // For now, we'll extract any visible text/barcode using the AI
       const reader = new FileReader();
-      reader.onload = () => {
-        // Use the image data to search by any extracted barcode visually
-        // Set as search term to help user find the product
-        setProductSearch("[scanning...]");
-        // Simulate: In production, this calls the document-scanner agent
-        setTimeout(() => {
-          setProductSearch("");
-          alert("📷 Barcode scanner captured! For full barcode recognition, use the AI Assistant — attach the photo and say \"scan this barcode\".");
+      reader.onload = async () => {
+        const base64 = (reader.result as string).split(",")[1];
+        try {
+          // Step 1: Send image to document-scanner agent for barcode extraction
+          const scanRes = await fetch("/api/scan/barcode", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ imageData: base64 }),
+          });
+          const scanData = await scanRes.json();
+
+          if (!scanData.success || !scanData.data?.found) {
+            alert("No barcode or QR code detected in the image. Try a clearer photo or enter the code manually.");
+            setScanning(false);
+            return;
+          }
+
+          const barcodeValue = scanData.data.value ?? scanData.data.codes?.[0]?.value;
+          if (!barcodeValue) {
+            alert("Could not read barcode value. Try again with a clearer image.");
+            setScanning(false);
+            return;
+          }
+
+          // Step 2: Look up product by barcode
+          const lookupRes = await fetch("/api/products/lookup-barcode", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ barcode: barcodeValue }),
+          });
+          const lookupData = await lookupRes.json();
+
+          if (lookupData.found && lookupData.data) {
+            addToCart(lookupData.data);
+            setScanning(false);
+          } else {
+            // Barcode found but product not matched — search by the value
+            setProductSearch(barcodeValue);
+            alert(`Barcode "${barcodeValue}" scanned but no matching product found. Showing search results.`);
+            setScanning(false);
+          }
+        } catch {
+          alert("Failed to process barcode scan. Please try again.");
           setScanning(false);
-        }, 500);
+        }
       };
       reader.readAsDataURL(file);
     } catch {

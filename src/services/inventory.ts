@@ -200,3 +200,41 @@ export async function getTransactionHistory(
     orderBy: [desc(inventoryTransactions.createdAt)],
   });
 }
+
+/** Bulk adjust stock from OCR-scanned stock sheet */
+export async function bulkAdjustStock(
+  items: Array<{
+    productId: string;
+    warehouseId: string;
+    quantity: number;
+    notes?: string;
+  }>
+) {
+  const results: Array<{ productId: string; success: boolean; error?: string }> = [];
+
+  for (const item of items) {
+    try {
+      await adjustStock({
+        productId: item.productId,
+        warehouseId: item.warehouseId,
+        quantity: item.quantity,
+        type: "adjustment",
+        notes: item.notes ?? "OCR stock sheet import",
+      });
+      results.push({ productId: item.productId, success: true });
+    } catch (err: any) {
+      results.push({
+        productId: item.productId,
+        success: false,
+        error: err.message?.slice(0, 200),
+      });
+    }
+  }
+
+  return {
+    total: items.length,
+    succeeded: results.filter((r) => r.success).length,
+    failed: results.filter((r) => !r.success).length,
+    results,
+  };
+}

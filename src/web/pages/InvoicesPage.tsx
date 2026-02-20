@@ -68,24 +68,68 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
     setUploadingInvoice(true);
     setUploadMessage(null);
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const token = localStorage.getItem("biq_token");
-      const res = await fetch("/api/invoices/upload", {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: formData,
+      // Step 1: Read file as base64
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          resolve(result.includes(",") ? result.split(",")[1] : result);
+        };
+        reader.onerror = () => reject(new Error("Failed to read file"));
+        reader.readAsDataURL(file);
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Upload failed");
-      setUploadMessage({ type: "success", text: `Invoice uploaded successfully${json.data?.invoiceNumber ? ` — #${json.data.invoiceNumber}` : ""}` });
-      refetch();
+
+      const token = localStorage.getItem("biq_token");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      // Step 2: Send to document scanner agent for OCR
+      setUploadMessage({ type: "success", text: "Scanning invoice with AI..." });
+      const scanRes = await fetch("/api/scan/invoice", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ imageData: base64 }),
+      });
+      const scanJson = await scanRes.json();
+      if (!scanRes.ok) throw new Error(scanJson.error || "Invoice scan failed");
+      if (!scanJson.success || !scanJson.data) throw new Error("AI could not extract invoice data from this image");
+
+      const ocrData = scanJson.data;
+
+      // Step 3: Save the extracted invoice via from-scan endpoint
+      setUploadMessage({ type: "success", text: "Saving extracted invoice..." });
+      const saveRes = await fetch("/api/invoices/from-scan", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          invoiceNumber: ocrData.invoiceNumber || `SCAN-${Date.now()}`,
+          supplierName: ocrData.supplierName,
+          supplierTaxId: ocrData.supplierTaxId,
+          invoiceDate: ocrData.invoiceDate,
+          dueDate: ocrData.dueDate,
+          subtotal: ocrData.subtotal,
+          taxAmount: ocrData.taxAmount,
+          totalAmount: ocrData.totalAmount,
+          lineItems: ocrData.lineItems || [],
+          confidence: ocrData.confidence,
+          warnings: ocrData.warnings,
+        }),
+      });
+      const saveJson = await saveRes.json();
+      if (saveRes.status === 409) {
+        setUploadMessage({ type: "error", text: `Duplicate invoice — #${ocrData.invoiceNumber} already exists` });
+      } else if (!saveRes.ok) {
+        throw new Error(saveJson.error || "Failed to save invoice");
+      } else {
+        setUploadMessage({ type: "success", text: `Invoice uploaded — #${saveJson.data?.invoiceNumber || ocrData.invoiceNumber}` });
+        refetch();
+      }
     } catch (err: any) {
       setUploadMessage({ type: "error", text: err.message || "Failed to upload invoice" });
     } finally {
       setUploadingInvoice(false);
       if (invoiceFileRef.current) invoiceFileRef.current.value = "";
-      setTimeout(() => setUploadMessage(null), 5000);
+      setTimeout(() => setUploadMessage(null), 8000);
     }
   };
 

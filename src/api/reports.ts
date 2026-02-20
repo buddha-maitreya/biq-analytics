@@ -23,7 +23,7 @@ reports.use(authMiddleware());
  * GET /reports/types — List available report and analysis types.
  * Used by the frontend to populate dropdowns dynamically.
  */
-reports.get("/types", async (c) => {
+reports.get("/reports/types", async (c) => {
   const [reportTypes, analysisTypes] = await Promise.all([
     getReportTypes(),
     getAnalysisTypes(),
@@ -41,7 +41,7 @@ reports.get("/types", async (c) => {
  * Output schema:
  *   { title, reportType, period: { start, end }, content, generatedAt }
  */
-reports.post("/generate", validator({ input: generateReportSchema }), async (c) => {
+reports.post("/reports/generate", validator({ input: generateReportSchema }), async (c) => {
   const { type, periodDays } = c.req.valid("json");
 
   // Calculate date range from periodDays (default 30)
@@ -81,7 +81,7 @@ reports.post("/generate", validator({ input: generateReportSchema }), async (c) 
  * GET /reports/saved — List saved reports with optional type filter.
  * Query params: reportType?, limit?, offset?
  */
-reports.get("/saved", async (c) => {
+reports.get("/reports/saved", async (c) => {
   const reportType = c.req.query("reportType") ?? undefined;
   const limit = Number(c.req.query("limit")) || 50;
   const offset = Number(c.req.query("offset")) || 0;
@@ -93,7 +93,7 @@ reports.get("/saved", async (c) => {
 /**
  * GET /reports/saved/:id — Get a full saved report by ID.
  */
-reports.get("/saved/:id", async (c) => {
+reports.get("/reports/saved/:id", async (c) => {
   const id = c.req.param("id");
   const report = await getReportById(id);
   if (!report) {
@@ -106,7 +106,7 @@ reports.get("/saved/:id", async (c) => {
  * GET /reports/versions — Get all versions of a report type + period.
  * Query params: reportType (required), periodStart (required), periodEnd (required)
  */
-reports.get("/versions", async (c) => {
+reports.get("/reports/versions", async (c) => {
   const reportType = c.req.query("reportType");
   const periodStart = c.req.query("periodStart");
   const periodEnd = c.req.query("periodEnd");
@@ -125,7 +125,7 @@ reports.get("/versions", async (c) => {
 /**
  * DELETE /reports/saved/:id — Delete a saved report.
  */
-reports.delete("/saved/:id", async (c) => {
+reports.delete("/reports/saved/:id", async (c) => {
   const id = c.req.param("id");
   const deleted = await deleteReport(id);
   if (!deleted) {
@@ -165,7 +165,7 @@ function formatToExtension(format: string): string {
  * Returns a durable stream URL that can be shared or downloaded.
  * The stream persists for 7 days.
  */
-reports.post("/saved/:id/export", async (c) => {
+reports.post("/reports/saved/:id/export", async (c) => {
   const id = c.req.param("id");
   const report = await getReportById(id);
   if (!report) {
@@ -215,7 +215,7 @@ reports.post("/saved/:id/export", async (c) => {
  * GET /reports/exports — List all exported report streams.
  * Query params: limit?, offset?
  */
-reports.get("/exports", async (c) => {
+reports.get("/reports/exports", async (c) => {
   const stream = c.var.stream as any;
   if (!stream?.list) {
     return c.json({ error: "Durable streams not available" }, 501);
@@ -242,7 +242,7 @@ reports.get("/exports", async (c) => {
  * Stores the report content permanently in S3 object storage.
  * Returns a presigned download URL (1h expiry).
  */
-reports.post("/saved/:id/archive", async (c) => {
+reports.post("/reports/saved/:id/archive", async (c) => {
   const id = c.req.param("id");
   const report = await getReportById(id);
   if (!report) {
@@ -270,7 +270,7 @@ reports.post("/saved/:id/archive", async (c) => {
  * GET /reports/saved/:id/download — Get a presigned S3 download URL.
  * Query params: expiresIn? (seconds, default 3600)
  */
-reports.get("/saved/:id/download", async (c) => {
+reports.get("/reports/saved/:id/download", async (c) => {
   const id = c.req.param("id");
   const report = await getReportById(id);
   if (!report) {
@@ -303,7 +303,7 @@ reports.get("/saved/:id/download", async (c) => {
 /**
  * DELETE /reports/saved/:id/archive — Remove a report from S3.
  */
-reports.delete("/saved/:id/archive", async (c) => {
+reports.delete("/reports/saved/:id/archive", async (c) => {
   const id = c.req.param("id");
   const report = await getReportById(id);
   if (!report) {

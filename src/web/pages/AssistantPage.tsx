@@ -106,23 +106,30 @@ export default function AssistantPage({ config }: AssistantPageProps) {
 
       const formData = new FormData();
       formData.append("file", file);
+      const token = localStorage.getItem("biq_token");
       const res = await fetch(`/api/chat/sessions/${sessionId}/attachments`, {
         method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
       });
-      if (res.ok) {
-        const json = await res.json();
-        const att = json.data;
-        const isImage = att.contentType?.startsWith("image/");
-        setPendingAttachments((prev) => [...prev, {
-          id: att.id,
-          filename: att.filename,
-          contentType: att.contentType,
-          sizeBytes: att.sizeBytes,
-          previewUrl: isImage ? att.downloadUrl : undefined,
-        }]);
+      if (!res.ok) {
+        let errMsg = `Upload failed (${res.status})`;
+        try { const j = await res.json(); errMsg = j.error || errMsg; } catch {}
+        throw new Error(errMsg);
       }
-    } catch { /* ignore */ }
+      const json = await res.json();
+      const att = json.data;
+      const isImage = att.contentType?.startsWith("image/");
+      setPendingAttachments((prev) => [...prev, {
+        id: att.id,
+        filename: att.filename,
+        contentType: att.contentType,
+        sizeBytes: att.sizeBytes,
+        previewUrl: isImage ? att.downloadUrl : undefined,
+      }]);
+    } catch (err: any) {
+      alert(err?.message || "File upload failed");
+    }
     setUploading(false);
   };
 

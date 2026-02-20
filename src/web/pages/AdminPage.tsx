@@ -3074,6 +3074,7 @@ function McpToolsSection({ onTestTool }: { onTestTool?: (id: string) => void }) 
       if (editValues.latitude !== undefined) meta.latitude = Number(editValues.latitude);
       if (editValues.longitude !== undefined) meta.longitude = Number(editValues.longitude);
       if (editValues.timezone !== undefined) meta.timezone = editValues.timezone;
+      if (editValues.forecastDays !== undefined) meta.forecastDays = Number(editValues.forecastDays);
       updates.metadata = meta;
 
       // Handle API key updates
@@ -3202,7 +3203,7 @@ function McpToolsSection({ onTestTool }: { onTestTool?: (id: string) => void }) 
                       <h5 style={{ margin: "0 0 8px 0", fontSize: 13 }}>⚙️ Configuration</h5>
 
                       {meta.mcpType === "weather" && (
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
                           <div>
                             <label className="form-label" style={{ fontSize: 11 }}>Business Location</label>
                             <input type="text"
@@ -3223,6 +3224,14 @@ function McpToolsSection({ onTestTool }: { onTestTool?: (id: string) => void }) 
                               defaultValue={meta.longitude as number ?? 36.8219}
                               onChange={(e) => setEditValues((prev) => ({ ...prev, longitude: e.target.value }))}
                               style={{ fontSize: 12 }} />
+                          </div>
+                          <div>
+                            <label className="form-label" style={{ fontSize: 11 }}>Forecast Days</label>
+                            <input type="number" min={1} max={16}
+                              defaultValue={meta.forecastDays as number ?? 7}
+                              onChange={(e) => setEditValues((prev) => ({ ...prev, forecastDays: e.target.value }))}
+                              style={{ fontSize: 12 }} />
+                            <span className="form-hint" style={{ fontSize: 10 }}>1–16 days</span>
                           </div>
                         </div>
                       )}
@@ -3311,6 +3320,8 @@ function PromptTemplatesTab() {
   const [testInput, setTestInput] = useState("");
   const [testResult, setTestResult] = useState("");
   const [testing, setTesting] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [seedMessage, setSeedMessage] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
 
   const fetchTemplates = async () => {
     setLoading(true);
@@ -3320,7 +3331,7 @@ function PromptTemplatesTab() {
         : "/api/admin/prompts";
       const res = await fetch(url, { credentials: "include" });
       const data = await res.json();
-      setTemplates(data.templates ?? []);
+      setTemplates(data.data ?? data.templates ?? []);
     } catch {
       setError("Failed to load prompt templates");
     } finally {
@@ -3399,16 +3410,66 @@ function PromptTemplatesTab() {
     }
   };
 
-  const agents = ["data-science", "insights-analyzer", "report-generator", "knowledge-base"];
+  const agents = ["*", "data-science", "insights-analyzer", "report-generator", "knowledge-base"];
+
+  const handleSeedTemplates = async () => {
+    setSeeding(true);
+    setSeedMessage({ type: "info", text: "🤖 AI is generating industry-specific prompt templates… this may take 15–30 seconds." });
+    try {
+      const res = await fetch("/api/admin/prompts/seed", {
+        method: "POST",
+        credentials: "include",
+      });
+      const json = await res.json();
+      if (res.ok) {
+        const count = json.seeded ?? 0;
+        setSeedMessage({
+          type: count > 0 ? "success" : "info",
+          text: json.message || `✅ AI seeded ${count} template(s).`,
+        });
+        fetchTemplates();
+      } else {
+        setSeedMessage({ type: "error", text: json.error || "Failed to seed templates." });
+      }
+    } catch (err: any) {
+      setSeedMessage({ type: "error", text: `Network error: ${err.message}` });
+    }
+    setSeeding(false);
+  };
 
   return (
     <div className="admin-section">
       <div className="section-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h3>📋 Prompt Templates</h3>
-        <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)}>
-          {showForm ? "Cancel" : "+ New Template"}
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={handleSeedTemplates}
+            disabled={seeding}
+            title="Use AI to generate industry-specific prompt templates based on your business profile"
+            style={{ fontSize: 11 }}
+          >
+            {seeding ? "🤖 Generating…" : "🌱 AI Seed"}
+          </button>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)}>
+            {showForm ? "Cancel" : "+ New Template"}
+          </button>
+        </div>
       </div>
+
+      {seedMessage && (
+        <div className={`alert alert-${seedMessage.type}`} style={{ marginBottom: 12 }}>
+          {seedMessage.text}
+          {seedMessage.type !== "info" && (
+            <button
+              onClick={() => setSeedMessage(null)}
+              style={{ float: "right", background: "none", border: "none", cursor: "pointer", fontSize: 14 }}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      )}
 
       {error && <div className="alert alert-error">{error}</div>}
 
@@ -3483,7 +3544,16 @@ function PromptTemplatesTab() {
       {loading ? (
         <div className="text-muted">Loading templates...</div>
       ) : templates.length === 0 ? (
-        <div className="text-muted">No prompt templates yet. Create one to start versioning your prompts.</div>
+        <div className="empty-state" style={{ textAlign: "center", padding: "32px 16px" }}>
+          <p className="text-muted" style={{ marginBottom: 12 }}>No prompt templates yet.</p>
+          <p className="text-muted" style={{ fontSize: 12, marginBottom: 16 }}>
+            Set your industry in <strong>Settings → Business Identity</strong>, then click <strong>AI Seed</strong> to
+            auto-generate industry-specific templates using your configured LLM.
+          </p>
+          <button className="btn btn-primary btn-sm" onClick={handleSeedTemplates} disabled={seeding} style={{ marginTop: 4 }}>
+            {seeding ? "🤖 Generating…" : "🌱 AI Seed Templates"}
+          </button>
+        </div>
       ) : (
         <table className="data-table">
           <thead>
@@ -3533,6 +3603,7 @@ function PromptTemplatesTab() {
       <InfoBox>
         <strong>💡 Prompt versioning</strong> lets you track and roll back changes to agent system prompts.
         Each save creates a new version. Only one version per agent+section can be active at a time.
+        Use <strong>🌱 AI Seed</strong> to auto-generate industry-specific templates based on your business profile (Settings → Industry).
         Use the <strong>Test</strong> feature to preview how prompt changes affect agent responses before activating.
       </InfoBox>
     </div>

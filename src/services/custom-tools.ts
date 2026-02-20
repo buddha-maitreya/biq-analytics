@@ -641,6 +641,7 @@ async function executeMcpWeather(
   let lon = Number(meta.longitude ?? 36.8219);
   let location = String(meta.location ?? "Nairobi");
   const tz = String(meta.timezone ?? "Africa/Nairobi");
+  const forecastDays = Number(meta.forecastDays ?? 7);
 
   // If a city name was provided, try to resolve coordinates from our Kenya lookup
   if (params.location && typeof params.location === "string") {
@@ -664,7 +665,7 @@ async function executeMcpWeather(
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
     `&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_direction_10m` +
     `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max` +
-    `&timezone=${encodeURIComponent(tz)}&forecast_days=3`;
+    `&timezone=${encodeURIComponent(tz)}&forecast_days=${forecastDays}`;
 
   try {
     const controller = new AbortController();
@@ -680,7 +681,7 @@ async function executeMcpWeather(
     const data = await res.json() as Record<string, any>;
     const current = data.current;
 
-    // Format the 3-day forecast
+    // Format the forecast
     const forecast: Array<Record<string, string>> = [];
     if (data.daily) {
       for (let i = 0; i < (data.daily.time?.length ?? 0); i++) {
@@ -1195,10 +1196,10 @@ const MCP_DEFAULT_TOOLS: CreateToolInput[] = [
     name: "mcp_weather",
     label: "Weather Data (Kenya)",
     description:
-      "Get real-time weather data and 3-day forecast for any location in Kenya. " +
-      "Powered by Open-Meteo (free, no API key required). Use when the user asks about " +
-      "weather, temperature, rain, or climate conditions for business planning, logistics, " +
-      "or general information.",
+      "Get real-time weather data and forecast for any location in Kenya. " +
+      "Powered by Open-Meteo (free, no API key required). Forecast range is configurable " +
+      "(default 7 days). Use when the user asks about weather, temperature, rain, or " +
+      "climate conditions for business planning, logistics, or general information.",
     parameterSchema: {
       location: {
         type: "string",
@@ -1232,6 +1233,7 @@ const MCP_DEFAULT_TOOLS: CreateToolInput[] = [
       latitude: -1.2921,
       longitude: 36.8219,
       timezone: "Africa/Nairobi",
+      forecastDays: 7,
       category: "weather",
       noApiKeyRequired: true,
       supportedCities: Object.keys(KENYA_LOCATIONS),

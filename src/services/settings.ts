@@ -8,6 +8,12 @@ const DEFAULTS: Record<string, string> = {
   businessTagline: "",
   primaryColor: "#3b82f6",
 
+  // ── Industry ──────────────────────────────────────────────
+  /** Industry vertical (e.g. Hospitality, Retail, Agriculture). Drives prompt templates. */
+  industry: "",
+  /** Sub-industry within the vertical (e.g. Tourism, Fashion, Dairy). Drives prompt templates. */
+  subIndustry: "",
+
   // ── Localization ──────────────────────────────────────────
   /** Currency code (e.g. USD, KES, EUR). Falls back to env CURRENCY. */
   currency: "",
@@ -102,6 +108,28 @@ export async function updateSettings(
   }
   return getAllSettings();
 }
+
+/**
+ * Industry → Sub-industry map.
+ * Used by the UI for cascading dropdowns and by seed scripts
+ * to generate industry-appropriate prompt templates.
+ */
+export const INDUSTRY_MAP: Record<string, string[]> = {
+  Hospitality: ["Tourism", "Hotels & Lodging", "Restaurants & Catering", "Events & Conferences", "Travel Agencies"],
+  Retail: ["Fashion & Apparel", "Electronics", "Grocery & Supermarket", "Furniture & Home", "Pharmacy", "General Merchandise"],
+  "Food & Beverage": ["Restaurants", "Bars & Nightlife", "Bakeries & Confectionery", "Catering Services", "Food Processing"],
+  Agriculture: ["Crop Farming", "Dairy", "Livestock", "Horticulture", "Aquaculture", "Agro-Processing"],
+  Manufacturing: ["Textiles", "Food Processing", "Construction Materials", "Chemicals", "Plastics", "Metal & Engineering"],
+  Healthcare: ["Hospitals & Clinics", "Pharmaceuticals", "Medical Devices", "Wellness & Fitness", "Dental", "Veterinary"],
+  Education: ["Schools (K-12)", "Higher Education", "Vocational Training", "E-Learning", "Tutoring Services"],
+  Technology: ["Software & SaaS", "IT Consulting", "Cybersecurity", "E-Commerce", "Fintech", "Hardware"],
+  Construction: ["Residential", "Commercial", "Infrastructure", "Real Estate Development", "Interior Design"],
+  Transport: ["Logistics & Freight", "Passenger Transport", "Vehicle Hire", "Courier & Delivery"],
+  "Professional Services": ["Legal", "Accounting & Tax", "HR & Recruitment", "Marketing & Advertising", "Consulting"],
+  "Beauty & Personal Care": ["Salons & Spas", "Cosmetics", "Barbershops", "Skincare"],
+  Energy: ["Solar & Renewables", "Oil & Gas", "Utilities", "Fuel Distribution"],
+  "Arts & Entertainment": ["Media & Production", "Music", "Gaming", "Sports & Recreation"],
+};
 
 /** AI setting keys */
 const AI_KEYS = [

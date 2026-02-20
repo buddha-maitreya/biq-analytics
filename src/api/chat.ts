@@ -195,73 +195,77 @@ chat.get("/chat/sessions/:id/messages", async (c) => {
  * Auth via query param ?token= (EventSource can't set headers).
  * Uses SDK sse() middleware for transport. Sends keepalive pings every 15s.
  * Events arrive when the user sends a message via POST /sessions/:id/send.
+ *
+ * IMPORTANT: The handler MUST be async and MUST await a promise that only
+ * resolves when the client disconnects. If the handler returns/resolves,
+ * the sse() middleware closes the stream — which causes the frontend's
+ * EventSource to fire onerror and enter a reconnect loop, spamming
+ * Agentuity sessions.
  */
-chat.get("/chat/sessions/:id/events", sse((c, stream) => {
+chat.get("/chat/sessions/:id/events", sse(async (c, stream) => {
   const sessionId = c.req.param("id");
 
   // Auth from query param (EventSource limitation)
   const url = new URL(c.req.url);
   const token = url.searchParams.get("token");
   if (!token) {
-    stream.writeSSE({
+    await stream.writeSSE({
       data: JSON.stringify({ type: "error", properties: { message: "Token required" } }),
     });
     stream.close();
     return;
   }
 
-  // Async auth + setup (sse handler can be sync or async, but we fire-and-forget
-  // so the handler returns immediately and the stream stays open via onAbort)
-  (async () => {
-    const payload = await verifyToken(token);
-    if (!payload) {
-      await stream.writeSSE({
-        data: JSON.stringify({ type: "error", properties: { message: "Invalid token" } }),
-      });
-      stream.close();
-      return;
-    }
-
-    // Verify session ownership
-    const session = await db.query.chatSessions.findFirst({
-      where: and(
-        eq(chatSessions.id, sessionId),
-        eq(chatSessions.userId, payload.sub!)
-      ),
-    });
-    if (!session) {
-      await stream.writeSSE({
-        data: JSON.stringify({ type: "error", properties: { message: "Session not found" } }),
-      });
-      stream.close();
-      return;
-    }
-
-    // Register stream in session bus
-    addStream(sessionId, stream);
-
-    // Send connected event
+  const payload = await verifyToken(token);
+  if (!payload) {
     await stream.writeSSE({
-      data: JSON.stringify({ type: "session.connected", properties: { sessionId } }),
+      data: JSON.stringify({ type: "error", properties: { message: "Invalid token" } }),
     });
+    stream.close();
+    return;
+  }
 
-    // Keepalive ping every 15s
-    const pingInterval = setInterval(() => {
-      stream.writeSSE({
-        data: JSON.stringify({ type: "ping", properties: { ts: Date.now() } }),
-      }).catch(() => {
-        clearInterval(pingInterval);
-      });
-    }, 15_000);
+  // Verify session ownership
+  const session = await db.query.chatSessions.findFirst({
+    where: and(
+      eq(chatSessions.id, sessionId),
+      eq(chatSessions.userId, payload.sub!)
+    ),
+  });
+  if (!session) {
+    await stream.writeSSE({
+      data: JSON.stringify({ type: "error", properties: { message: "Session not found" } }),
+    });
+    stream.close();
+    return;
+  }
 
-    // Cleanup on client disconnect
+  // Register stream in session bus
+  addStream(sessionId, stream);
+
+  // Send connected event
+  await stream.writeSSE({
+    data: JSON.stringify({ type: "session.connected", properties: { sessionId } }),
+  });
+
+  // Keepalive ping every 15s
+  const pingInterval = setInterval(() => {
+    stream.writeSSE({
+      data: JSON.stringify({ type: "ping", properties: { ts: Date.now() } }),
+    }).catch(() => {
+      clearInterval(pingInterval);
+    });
+  }, 15_000);
+
+  // Keep the handler alive until the client disconnects.
+  // When the client closes the EventSource, stream.onAbort fires,
+  // which resolves this promise and lets the handler return cleanly.
+  await new Promise<void>((resolve) => {
     stream.onAbort(() => {
       clearInterval(pingInterval);
       removeStream(sessionId, stream);
+      resolve();
     });
-  })().catch(() => {
-    // If async setup fails, close the stream
-    stream.close();
   });
 }));
 
@@ -880,5 +884,17 @@ chat.get("/chat/ws", websocket((c, ws) => {
     }
   });
 }));
+
+// ════════════════════════════════════════════════════════════
+// ATTACHMENT ROUTES (mounted here to ensure CLI discovery)
+// ════════════════════════════════════════════════════════════
+
+/**
+ * Attachment upload and retrieval routes are defined in attachments.ts
+ * but mounted through chat.ts to guarantee they're available in the
+ * deployed app (the Agentuity CLI auto-discovers chat.ts reliably).
+ */
+import attachmentRoutes from "./attachments";
+chat.route("/", attachmentRoutes);
 
 export default chat;

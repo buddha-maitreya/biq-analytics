@@ -1,5 +1,28 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import type { AppConfig } from "../types";
+
+interface SettingsPageProps {
+  config: AppConfig;
+  onSaved: () => void;
+}
+
+/** Industry → Sub-industry map (mirrors server-side INDUSTRY_MAP in settings.ts) */
+const INDUSTRY_MAP: Record<string, string[]> = {
+  Hospitality: ["Tourism", "Hotels & Lodging", "Restaurants & Catering", "Events & Conferences", "Travel Agencies"],
+  Retail: ["Fashion & Apparel", "Electronics", "Grocery & Supermarket", "Furniture & Home", "Pharmacy", "General Merchandise"],
+  "Food & Beverage": ["Restaurants", "Bars & Nightlife", "Bakeries & Confectionery", "Catering Services", "Food Processing"],
+  Agriculture: ["Crop Farming", "Dairy", "Livestock", "Horticulture", "Aquaculture", "Agro-Processing"],
+  Manufacturing: ["Textiles", "Food Processing", "Construction Materials", "Chemicals", "Plastics", "Metal & Engineering"],
+  Healthcare: ["Hospitals & Clinics", "Pharmaceuticals", "Medical Devices", "Wellness & Fitness", "Dental", "Veterinary"],
+  Education: ["Schools (K-12)", "Higher Education", "Vocational Training", "E-Learning", "Tutoring Services"],
+  Technology: ["Software & SaaS", "IT Consulting", "Cybersecurity", "E-Commerce", "Fintech", "Hardware"],
+  Construction: ["Residential", "Commercial", "Infrastructure", "Real Estate Development", "Interior Design"],
+  Transport: ["Logistics & Freight", "Passenger Transport", "Vehicle Hire", "Courier & Delivery"],
+  "Professional Services": ["Legal", "Accounting & Tax", "HR & Recruitment", "Marketing & Advertising", "Consulting"],
+  "Beauty & Personal Care": ["Salons & Spas", "Cosmetics", "Barbershops", "Skincare"],
+  Energy: ["Solar & Renewables", "Oil & Gas", "Utilities", "Fuel Distribution"],
+  "Arts & Entertainment": ["Media & Production", "Music", "Gaming", "Sports & Recreation"],
+};
 
 interface SettingsPageProps {
   config: AppConfig;
@@ -59,6 +82,8 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
     primaryColor: "#3b82f6",
     currency: "",
     timezone: "",
+    industry: "",
+    subIndustry: "",
     ...PAYMENT_DEFAULTS,
     ...AI_DEFAULTS,
   });
@@ -161,6 +186,8 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
           primaryColor: json.data.primaryColor || "#3b82f6",
           currency: json.data.currency || "",
           timezone: json.data.timezone || "",
+          industry: json.data.industry || "",
+          subIndustry: json.data.subIndustry || "",
           // Payment settings
           ...Object.fromEntries(
             Object.keys(PAYMENT_DEFAULTS).map((k) => [k, json.data[k] ?? (PAYMENT_DEFAULTS as Record<string, string>)[k]])
@@ -324,6 +351,41 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
                   onChange={(e) => upd("timezone", e.target.value)}
                 />
                 <span className="form-hint">IANA timezone for date/time displays. Leave empty for environment default ({config.timezone}).</span>
+              </label>
+
+              {/* ── Industry / Sub-Industry ── */}
+              <label>
+                <span className="form-label">Industry</span>
+                <select
+                  value={settings.industry}
+                  onChange={(e) => {
+                    upd("industry", e.target.value);
+                    upd("subIndustry", ""); // reset sub-industry when industry changes
+                  }}
+                  style={{ width: "100%" }}
+                >
+                  <option value="">— Select industry —</option>
+                  {Object.keys(INDUSTRY_MAP).map((ind) => (
+                    <option key={ind} value={ind}>{ind}</option>
+                  ))}
+                </select>
+                <span className="form-hint">Your business vertical — used to tailor AI prompts and seed data</span>
+              </label>
+
+              <label>
+                <span className="form-label">Sub-Industry</span>
+                <select
+                  value={settings.subIndustry}
+                  onChange={(e) => upd("subIndustry", e.target.value)}
+                  disabled={!settings.industry}
+                  style={{ width: "100%" }}
+                >
+                  <option value="">— Select sub-industry —</option>
+                  {(INDUSTRY_MAP[settings.industry] ?? []).map((sub) => (
+                    <option key={sub} value={sub}>{sub}</option>
+                  ))}
+                </select>
+                <span className="form-hint">{settings.industry ? `Specialization within ${settings.industry}` : "Select an industry first"}</span>
               </label>
             </div>
 

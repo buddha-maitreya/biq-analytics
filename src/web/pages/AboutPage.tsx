@@ -19,6 +19,18 @@ const CAPABILITIES = [
       "Ask your business questions in plain English. The AI Assistant understands your data, generates insights, and can execute actions — no dashboards to learn, no reports to build.",
   },
   {
+    icon: "�",
+    title: "Document Scanning & OCR",
+    description:
+      "Scan barcodes and QR codes to instantly look up products. Photograph stock sheets for bulk inventory import, or snap supplier invoices for automatic data extraction — all powered by GPT-4o vision.",
+  },
+  {
+    icon: "✅",
+    title: "Approval Workflows",
+    description:
+      "Configurable multi-step approval chains for business actions — delivery requests, large orders, price changes, refunds. Route through your management hierarchy with auto-approve rules.",
+  },
+  {
     icon: "📊",
     title: "AI-Generated Reports",
     description:
@@ -28,7 +40,7 @@ const CAPABILITIES = [
     icon: "🔍",
     title: "KRA/eTIMS Compliance",
     description:
-      "Built-in KRA PIN validation, TCC verification, eTIMS invoice submission, and VAT withholding — keeping your business compliant with Kenyan tax regulations automatically.",
+      "Built-in KRA PIN validation, TCC verification, eTIMS invoice verification, and VAT withholding — keeping your business compliant with Kenyan tax regulations automatically.",
   },
   {
     icon: "🏭",
@@ -40,7 +52,7 @@ const CAPABILITIES = [
     icon: "🔐",
     title: "Enterprise Security",
     description:
-      "JWT authentication, role-based access control with 5-tier permissions, per-warehouse access scoping, and complete audit trails. Your data stays yours.",
+      "JWT authentication, role-based access control with 5-tier permissions, reporting chain hierarchy, per-warehouse access scoping, and complete audit trails.",
   },
   {
     icon: "🌍",
@@ -58,14 +70,19 @@ const CAPABILITIES = [
 
 const DIFFERENTIATORS = [
   {
-    stat: "Zero",
-    label: "External AI Libraries",
-    detail: "Pure Agentuity agents — no LangChain, no vector DB bolt-ons",
+    stat: "5",
+    label: "AI Agents",
+    detail: "Document scanner, insights analyzer, knowledge base, report generator, data science",
   },
   {
     stat: "5-Tier",
     label: "Role Hierarchy",
-    detail: "Super Admin → Admin → Manager → Staff → Viewer",
+    detail: "Super Admin → Admin → Manager → Staff → Viewer with approval chains",
+  },
+  {
+    stat: "3 Modes",
+    label: "Document OCR",
+    detail: "Barcode/QR scanning, stock sheet import, invoice extraction via GPT-4o",
   },
   {
     stat: "100%",
@@ -141,6 +158,8 @@ export default function AboutPage({ config }: AboutPageProps) {
             { name: "Neon Postgres", role: "Database" },
             { name: "Drizzle ORM", role: "Data Layer" },
             { name: "Vercel AI SDK", role: "AI Integration" },
+            { name: "GPT-4o Vision", role: "Document OCR" },
+            { name: "Zod", role: "Schema Validation" },
             { name: "jose", role: "JWT Auth" },
           ].map((t, i) => (
             <div key={i} className="about-tech-chip">
@@ -152,6 +171,39 @@ export default function AboutPage({ config }: AboutPageProps) {
       </section>
 
       {/* Philosophy */}
+      {/* Recent Updates */}
+      <section className="about-section">
+        <h2 className="about-section-title">Recent Updates</h2>
+        <div className="about-capabilities-grid">
+          <div className="about-capability-card">
+            <div className="about-capability-icon">📷</div>
+            <h3 className="about-capability-title">Live Document Scanning</h3>
+            <p className="about-capability-desc">
+              Camera buttons on POS, Inventory, and Invoice pages now connect to the AI document scanner.
+              Scan barcodes to add products to cart, photograph stock sheets for bulk import with a review table,
+              or snap invoices for automatic data extraction with deduplication checks.
+            </p>
+          </div>
+          <div className="about-capability-card">
+            <div className="about-capability-icon">✅</div>
+            <h3 className="about-capability-title">Approval Workflow Engine</h3>
+            <p className="about-capability-desc">
+              Multi-step approval chains configurable per action type (delivery requests, large orders, price changes,
+              refunds, and more). Supports auto-approve rules, role-based routing via the Reports To hierarchy,
+              and a dedicated approval inbox with real-time badge counts.
+            </p>
+          </div>
+          <div className="about-capability-card">
+            <div className="about-capability-icon">🎨</div>
+            <h3 className="about-capability-title">Admin Console Refresh</h3>
+            <p className="about-capability-desc">
+              Redesigned admin sidebar with gradient accents, section-specific color coding (AI, Operations, Config),
+              polished form panels with slide-in animations, themed approval step cards, and custom toggle switches.
+            </p>
+          </div>
+        </div>
+      </section>
+
       <section className="about-section about-philosophy">
         <blockquote className="about-quote">
           "The best business software is the one that runs itself. We built
@@ -159,7 +211,7 @@ export default function AboutPage({ config }: AboutPageProps) {
           while AI handles the rest."
         </blockquote>
         <div className="about-version">
-          <span>Business IQ Enterprise v1.0.0</span>
+          <span>Business IQ Enterprise v1.2.0</span>
           <span className="about-separator">·</span>
           <span>© 2026 Ruskins AI Consulting LTD</span>
         </div>

@@ -115,7 +115,8 @@ business-iq-enterprise/
 │
 ├── src/
 │   ├── agent/                  # AI Agents (auto-discovered at build time)
-│   │   ├── business-assistant/ #   Natural language business queries
+│   │   ├── data-science/       #   Advanced analytics & data processing
+│   │   ├── document-scanner/   #   Barcode/QR, OCR stock sheets & invoices
 │   │   ├── insights-analyzer/  #   Demand forecasting, anomaly detection
 │   │   ├── knowledge-base/     #   Document ingestion & semantic search
 │   │   └── report-generator/   #   Automated report generation
@@ -129,11 +130,15 @@ business-iq-enterprise/
 │   │   ├── warehouses.ts       #   /api/warehouses CRUD
 │   │   ├── inventory.ts        #   /api/inventory (stock, adjustments, transfers)
 │   │   ├── orders.ts           #   /api/orders CRUD + status management
-│   │   ├── invoices.ts         #   /api/invoices CRUD + payments
+│   │   ├── invoices.ts         #   /api/invoices CRUD + payments + from-scan
 │   │   ├── pricing.ts          #   /api/pricing calculations + tax rules
-│   │   ├── admin.ts            #   /api/admin (stats, users, config)
+│   │   ├── scanning.ts         #   /api/scan/* (barcode, stock sheet, invoice OCR)
+│   │   ├── admin.ts            #   /api/admin (stats, users, config, approvals)
 │   │   ├── documents.ts        #   /api/admin/documents (knowledge base)
 │   │   ├── chat.ts             #   /api/chat (AI assistant)
+│   │   ├── kra.ts              #   /api/kra (eTIMS invoice verification)
+│   │   ├── settings.ts         #   /api/settings (system preferences)
+│   │   ├── auth.ts             #   /api/auth (login, JWT, sessions)
 │   │   └── reports.ts          #   /api/reports (AI report generation)
 │   │
 │   ├── db/                     # Database Layer
@@ -147,9 +152,14 @@ business-iq-enterprise/
 │   │   ├── warehouses.ts       #   Warehouse operations
 │   │   ├── inventory.ts        #   Stock management + transactions
 │   │   ├── orders.ts           #   Order lifecycle management
-│   │   ├── invoices.ts         #   Invoice generation + payments
+│   │   ├── invoices.ts         #   Invoice generation + payments + from-scan
 │   │   ├── pricing.ts          #   Price calculation + tax rules
 │   │   ├── admin.ts            #   Admin operations + statistics
+│   │   ├── auth.ts             #   JWT authentication + RBAC
+│   │   ├── agent-configs.ts    #   AI agent configuration management
+│   │   ├── kra-etims.ts        #   KRA eTIMS integration
+│   │   ├── payments-integration.ts #  Payment gateway integrations
+│   │   ├── settings.ts         #   System settings persistence
 │   │   └── index.ts            #   Service barrel file
 │   │
 │   ├── lib/                    # Shared Utilities
@@ -173,8 +183,14 @@ business-iq-enterprise/
 │   │   │   ├── CustomersPage.tsx#    Customer management
 │   │   │   ├── InventoryPage.tsx#    Stock levels + warehouses
 │   │   │   ├── InvoicesPage.tsx#     Invoice management
-│   │   │   ├── AdminPage.tsx   #     System administration
-│   │   │   ├── AssistantPage.tsx#    AI chat assistant
+│   │   │   ├── AdminPage.tsx   #     System admin + approval workflows
+│   │   │   ├── AssistantPage.tsx#    AI chat assistant + scanner
+│   │   │   ├── POSPage.tsx     #     Point of Sale + barcode scanning
+│   │   │   ├── InvoiceCheckerPage.tsx # KRA eTIMS + OCR invoice import
+│   │   │   ├── LoginPage.tsx   #     Authentication
+│   │   │   ├── SettingsPage.tsx#     User preferences
+│   │   │   ├── AboutPage.tsx   #     Platform info
+│   │   │   ├── EmailPage.tsx   #     Email management
 │   │   │   └── ReportsPage.tsx #     AI report generation
 │   │   └── styles/             #   CSS stylesheets
 │   │
@@ -195,12 +211,25 @@ business-iq-enterprise/
 
 | Agent | Purpose | Input | Output |
 |-------|---------|-------|--------|
-| **business-assistant** | Natural language queries about business data | `{ message, context? }` | `{ reply, data?, suggestedActions? }` |
+| **data-science** | Advanced analytics, data processing, and statistical analysis | `{ query, dataset?, parameters? }` | `{ results, visualizations?, summary }` |
+| **document-scanner** | Barcode/QR scanning, OCR stock sheets, OCR invoices via GPT-4o vision | `{ mode, imageData?, imageUrl? }` | `{ success, mode, data, confidence }` |
 | **insights-analyzer** | Demand forecasting, anomaly detection, restock recommendations, sales trends | `{ analysis, timeframeDays, productId?, limit }` | `{ analysisType, insights[], summary }` |
 | **knowledge-base** | Document ingestion, semantic search, and retrieval | `{ action, question?, documents?, keys? }` | `{ answer?, sources?, success }` |
 | **report-generator** | Automated business reports (sales, inventory, customer, financial) | `{ reportType, startDate?, endDate?, format }` | `{ title, period, content, generatedAt }` |
 
 Agents communicate via typed schemas (Zod) and can call each other cross-agent. The business assistant orchestrates other agents to answer complex questions.
+
+### Document Scanner Agent
+
+The **document-scanner** agent uses multimodal AI (GPT-4o vision) to process images in three modes:
+
+| Mode | What It Does | Output |
+|------|-------------|--------|
+| `barcode` | Extracts barcode/QR code values (EAN-13, UPC-A, Code-128, QR, DataMatrix) | `{ found, type, value, format, confidence }` |
+| `stock-sheet` | OCR reads tabular inventory data from photos of stock sheets | `{ items[{name, sku, quantity, unit, location}], documentDate, confidence }` |
+| `invoice` | Extracts supplier invoice fields (number, supplier, amounts, line items) | `{ invoiceNumber, supplierName, lineItems[], totalAmount, confidence }` |
+
+All three modes are exposed via API endpoints (`POST /api/scan/barcode`, `/api/scan/stock`, `/api/scan/invoice`) and integrated into the frontend with **review & confirm** UIs — users review extracted data before applying changes.
 
 ---
 
@@ -223,7 +252,13 @@ The database is **industry-neutral** — generic column names with `metadata` JS
 | `invoice_items` | Line items within invoices |
 | `payments` | Payment records against invoices |
 | `tax_rules` | Configurable tax calculation rules |
-| `users` | System users (admin, staff, etc.) |
+| `users` | System users with role hierarchy and `reportsTo` chain |
+| `approval_workflows` | Configurable multi-step approval chains per action type |
+| `approval_workflow_steps` | Individual steps within approval workflows (role + order) |
+| `approval_requests` | Pending/approved/rejected approval requests |
+| `approval_request_steps` | Step-by-step audit trail for each approval request |
+| `chat_sessions` | AI assistant conversation sessions |
+| `chat_messages` | Individual messages within chat sessions |
 
 ---
 
@@ -521,7 +556,7 @@ The client's data, configuration, and environment variables are preserved across
 │  URL: acme-corp-biq-org.agentuity.run          │
 │                                                │
 │  ┌──────────┐  ┌──────────┐  ┌──────────────┐ │
-│  │ Frontend │  │  Server  │  │  4 AI Agents │ │
+│  │ Frontend │  │  Server  │  │  5 AI Agents │ │
 │  │ (React)  │  │  (Hono)  │  │              │ │
 │  └──────────┘  └──────────┘  └──────────────┘ │
 │                      │                         │
@@ -559,14 +594,26 @@ No data crosses between clients. No shared infrastructure. No tenant ID columns.
 | GET/POST/PUT/DELETE | `/api/categories` | Category CRUD + tree |
 | GET/POST/PUT/DELETE | `/api/customers` | Customer CRUD |
 | GET/POST/PUT/DELETE | `/api/warehouses` | Warehouse CRUD |
-| GET/POST | `/api/inventory/*` | Stock levels, adjustments, transfers |
+| GET/POST | `/api/inventory/*` | Stock levels, adjustments, transfers, bulk import |
+| POST | `/api/inventory/bulk-adjust` | Apply OCR-scanned stock sheet data |
 | GET/POST/PUT | `/api/orders` | Order lifecycle management |
 | GET/POST | `/api/invoices` | Invoice management + payments |
+| POST | `/api/invoices/from-scan` | Create invoice from OCR data (with dedup check) |
+| POST | `/api/invoices/check-duplicate` | Check if invoice number already exists |
 | GET/POST | `/api/pricing` | Price calculations + tax rules |
 | GET/POST/PUT/DELETE | `/api/admin/*` | Admin operations, users, config |
+| GET/POST/PUT/DELETE | `/api/approvals/*` | Approval workflows, requests, inbox |
 | POST | `/api/admin/documents` | Knowledge base document management |
-| POST | `/api/chat` | AI assistant chat |
+| POST | `/api/products/lookup-barcode` | Find product by barcode value |
+| POST | `/api/products/fuzzy-match` | Match OCR-extracted names to products |
+| POST | `/api/scan/barcode` | Scan barcode/QR code from image |
+| POST | `/api/scan/stock` | OCR stock sheet for bulk inventory import |
+| POST | `/api/scan/invoice` | OCR invoice for data extraction |
+| POST | `/api/chat` | AI assistant chat (streaming) |
 | POST | `/api/reports` | AI report generation |
+| POST | `/api/kra/invoice/check` | Verify invoice against KRA eTIMS |
+| POST | `/api/auth/login` | JWT authentication |
+| GET | `/api/settings` | User/system preferences |
 
 ---
 

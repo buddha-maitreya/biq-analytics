@@ -1,6 +1,6 @@
 import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware, type AuthPayload } from "@services/auth";
+import { authMiddleware, type AuthUser } from "@services/auth";
 import * as approvalSvc from "@services/approvals";
 
 const router = createRouter();
@@ -51,9 +51,9 @@ router.post("/approvals/workflows/seed", async (c) => {
 
 /** Submit an action for approval */
 router.post("/approvals/submit", async (c) => {
-  const auth = c.get("auth") as AuthPayload;
+  const auth = c.get("authUser" as any) as AuthUser;
   const body = await c.req.json();
-  const result = await approvalSvc.submitForApproval(auth.userId, body);
+  const result = await approvalSvc.submitForApproval(auth.id, body);
 
   if (!result) {
     return c.json({ data: { requiresApproval: false } });
@@ -63,15 +63,15 @@ router.post("/approvals/submit", async (c) => {
 
 /** Get pending approvals for the current user */
 router.get("/approvals/pending", async (c) => {
-  const auth = c.get("auth") as AuthPayload;
-  const pending = await approvalSvc.getPendingApprovalsForUser(auth.userId);
+  const auth = c.get("authUser" as any) as AuthUser;
+  const pending = await approvalSvc.getPendingApprovalsForUser(auth.id);
   return c.json({ data: pending });
 });
 
 /** Get pending approval count (for badge) */
 router.get("/approvals/pending/count", async (c) => {
-  const auth = c.get("auth") as AuthPayload;
-  const count = await approvalSvc.getPendingApprovalCount(auth.userId);
+  const auth = c.get("authUser" as any) as AuthUser;
+  const count = await approvalSvc.getPendingApprovalCount(auth.id);
   return c.json({ data: { count } });
 });
 
@@ -93,16 +93,16 @@ router.get("/approvals/requests/:id", async (c) => {
 
 /** Make a decision (approve/reject) */
 router.post("/approvals/requests/:id/decide", async (c) => {
-  const auth = c.get("auth") as AuthPayload;
+  const auth = c.get("authUser" as any) as AuthUser;
   const body = await c.req.json();
-  const result = await approvalSvc.makeDecision(c.req.param("id"), auth.userId, body);
+  const result = await approvalSvc.makeDecision(c.req.param("id"), auth.id, body);
   return c.json({ data: result });
 });
 
 /** Cancel an approval request (by requester) */
 router.post("/approvals/requests/:id/cancel", async (c) => {
-  const auth = c.get("auth") as AuthPayload;
-  const result = await approvalSvc.cancelRequest(c.req.param("id"), auth.userId);
+  const auth = c.get("authUser" as any) as AuthUser;
+  const result = await approvalSvc.cancelRequest(c.req.param("id"), auth.id);
   return c.json({ data: result });
 });
 

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import { useAPI } from "@agentuity/react";
 import type { AppConfig } from "../types";
 
@@ -56,6 +56,38 @@ interface HistoryEntry {
 
 export default function InvoicesPage({ config }: InvoicesPageProps) {
   const [activeTab, setActiveTab] = useState<"list" | "checker">("list");
+
+  // ── Upload state ──
+  const invoiceFileRef = useRef<HTMLInputElement>(null);
+  const [uploadingInvoice, setUploadingInvoice] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const handleInvoiceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingInvoice(true);
+    setUploadMessage(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const token = localStorage.getItem("biq_token");
+      const res = await fetch("/api/invoices/upload", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Upload failed");
+      setUploadMessage({ type: "success", text: `Invoice uploaded successfully${json.data?.invoiceNumber ? ` — #${json.data.invoiceNumber}` : ""}` });
+      refetch();
+    } catch (err: any) {
+      setUploadMessage({ type: "error", text: err.message || "Failed to upload invoice" });
+    } finally {
+      setUploadingInvoice(false);
+      if (invoiceFileRef.current) invoiceFileRef.current.value = "";
+      setTimeout(() => setUploadMessage(null), 5000);
+    }
+  };
 
   // ── Checker tab state ──
   const [ckInvoiceNumber, setCkInvoiceNumber] = useState("");
@@ -247,6 +279,15 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
 
   return (
     <div className="page">
+      {/* Hidden file input for invoice upload */}
+      <input
+        ref={invoiceFileRef}
+        type="file"
+        accept=".pdf,.csv,.xlsx,.xls,.json,image/*"
+        onChange={handleInvoiceUpload}
+        style={{ display: "none" }}
+      />
+
       <div className="page-header-row">
         <div>
           <h2>{config.labels.invoice}s</h2>
@@ -254,7 +295,32 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
             {summary.count} invoice{summary.count !== 1 ? "s" : ""} · {config.currency} {fmt(summary.grandTotal)} billed
           </span>
         </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button
+            className="btn btn-primary"
+            onClick={() => invoiceFileRef.current?.click()}
+            disabled={uploadingInvoice}
+          >
+            {uploadingInvoice ? "⏳ Uploading…" : "📤 Upload Invoice"}
+          </button>
+        </div>
       </div>
+
+      {/* Upload feedback */}
+      {uploadMessage && (
+        <div style={{
+          padding: "10px 16px",
+          borderRadius: "var(--radius)",
+          marginBottom: 16,
+          fontSize: 14,
+          fontWeight: 500,
+          background: uploadMessage.type === "success" ? "#d1fae5" : "#fee2e2",
+          color: uploadMessage.type === "success" ? "#065f46" : "#991b1b",
+          border: `1px solid ${uploadMessage.type === "success" ? "#a7f3d0" : "#fecaca"}`,
+        }}>
+          {uploadMessage.type === "success" ? "✅" : "❌"} {uploadMessage.text}
+        </div>
+      )}
 
       {/* Tab Bar */}
       <div style={{ display: "flex", gap: 0, borderBottom: "2px solid #e5e7eb", marginBottom: 16 }}>

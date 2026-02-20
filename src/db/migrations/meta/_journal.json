@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1771444449203,
+      "tag": "0000_cuddly_amazoness",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1771444449300,
+      "tag": "0005_add_all_remaining_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1771444449400,
+      "tag": "0006_add_approval_workflows",
+      "breakpoints": true
+    }
+  ]
+}

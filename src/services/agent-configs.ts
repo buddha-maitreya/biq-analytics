@@ -90,6 +90,36 @@ const AGENT_DEFAULTS: Record<string, Omit<UpsertAgentConfigInput, "agentName">> 
     executionPriority: 3,
     config: { topK: 5, similarityThreshold: 0.7 },
   },
+  "document-scanner": {
+    displayName: "The Scanner",
+    description:
+      "Document and image processing — barcode/QR scanning, OCR for stock sheets and invoices, bulk inventory import from images.",
+    isActive: true,
+    maxSteps: 4,
+    timeoutMs: 30000,
+    executionPriority: 4,
+    config: { supportedModes: ["barcode", "stock-sheet", "invoice"] },
+  },
+  "data-import": {
+    displayName: "The Importer",
+    description:
+      "Scheduled sync from external systems — REST APIs, CSV/JSON uploads, webhook payloads. Imports products, customers, inventory, orders.",
+    isActive: true,
+    maxSteps: 5,
+    timeoutMs: 60000,
+    executionPriority: 5,
+    config: {},
+  },
+  "scheduler": {
+    displayName: "The Clockmaker",
+    description:
+      "Executes scheduled tasks — report generation, insight analysis, alert checks, data cleanup, and custom recurring jobs.",
+    isActive: true,
+    maxSteps: 6,
+    timeoutMs: 90000,
+    executionPriority: 6,
+    config: {},
+  },
 };
 
 /** Well-known agent names (order matters for UI) */
@@ -98,6 +128,9 @@ export const AGENT_NAMES = [
   "insights-analyzer",
   "report-generator",
   "knowledge-base",
+  "document-scanner",
+  "data-import",
+  "scheduler",
 ] as const;
 
 export type AgentName = (typeof AGENT_NAMES)[number];
@@ -137,11 +170,16 @@ export async function getAgentConfigWithDefaults(agentName: string): Promise<Age
     return row;
   }
 
-  // Return a synthetic row from defaults
-  const defaults = AGENT_DEFAULTS[agentName];
-  if (!defaults) {
-    throw new Error(`Unknown agent: ${agentName}`);
-  }
+  // Return a synthetic row from defaults (graceful fallback for unknown agents)
+  const defaults = AGENT_DEFAULTS[agentName] ?? {
+    displayName: agentName,
+    description: null,
+    isActive: true,
+    maxSteps: 5,
+    timeoutMs: 30000,
+    executionPriority: 99,
+    config: {},
+  };
   const synthetic: AgentConfigRow = {
     id: "",
     agentName,

@@ -350,10 +350,15 @@ function dispatchSSEEvent(
 // Config
 // ────────────────────────────────────────────────────────────
 
-/** Reconnect delay in ms (from Coder) */
-const RECONNECT_DELAY_MS = 2_000;
-/** Max retries (from Coder) */
-const MAX_RETRIES = 15;
+/** Reconnect delay in ms */
+const RECONNECT_DELAY_MS = 3_000;
+/**
+ * Max SSE reconnection attempts before giving up.
+ * Kept low to avoid burning Agentuity sessions on persistent failures
+ * (auth expiry, server crash, etc.). Network hiccups typically resolve
+ * within 2-3 attempts.
+ */
+const MAX_RETRIES = 5;
 
 /** Auth headers — cookies are sent automatically by the browser for same-origin requests */
 function getAuthHeaders(): Record<string, string> {
@@ -373,11 +378,11 @@ export function useChatStream() {
   const lastUserMessageRef = useRef<string | null>(null);
 
   // ── SSE connection lifecycle ───────────────────────────
-  // Mirrors Coder's useSessionEvents useEffect:
-  // 1. Hydrate messages from REST
-  // 2. Connect EventSource
-  // 3. Exponential backoff reconnect
-  // 4. Cleanup on unmount / session change
+  // 1. Pre-flight auth check (prevents reconnect loop on 401)
+  // 2. Hydrate messages from REST
+  // 3. Connect EventSource
+  // 4. Capped exponential backoff reconnect (max 5 retries)
+  // 5. Cleanup on unmount / session change
 
   useEffect(() => {
     if (!state.activeSessionId) return;
@@ -386,24 +391,7 @@ export function useChatStream() {
     retryCountRef.current = 0;
     shouldReconnectRef.current = true;
 
-    // Hydrate existing messages (like Coder's initial fetch)
-    fetch(`/api/chat/sessions/${sessionId}/messages`, {
-      headers: getAuthHeaders(),
-    })
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then((body: { data: ChatMessage[] }) => {
-        if (body.data?.length) {
-          dispatch({ type: "INIT_MESSAGES", messages: body.data });
-        }
-      })
-      .catch(() => {
-        // Best-effort hydration (session might not exist yet)
-      });
-
-    // ── EventSource with reconnect (from Coder) ──────────
+    // ── EventSource with reconnect ───────────────────────
 
     function scheduleReconnect(reason?: string) {
       if (!shouldReconnectRef.current) return;
@@ -427,7 +415,47 @@ export function useChatStream() {
       }
     }
 
-    function connect() {
+    /**
+     * Pre-flight auth check + message hydration.
+     * EventSource can't expose HTTP status codes, so a 401 looks
+     * identical to a network error — both fire onerror. Without this
+     * guard, an expired session causes an infinite reconnect loop that
+     * burns Agentuity sessions.
+     *
+     * We hit the messages endpoint (same cookies) to both verify auth
+     * AND hydrate existing messages in a single request.
+     */
+    async function verifyAuthAndHydrate(): Promise<boolean> {
+      try {
+        const res = await fetch(`/api/chat/sessions/${sessionId}/messages`, {
+          headers: getAuthHeaders(),
+        });
+        if (res.status === 401 || res.status === 403) {
+          dispatch({
+            type: "DISCONNECTED",
+            error: "Session expired — please sign in again.",
+          });
+          shouldReconnectRef.current = false;
+          return false;
+        }
+        if (res.ok) {
+          const body: { data: ChatMessage[] } = await res.json();
+          if (body.data?.length) {
+            dispatch({ type: "INIT_MESSAGES", messages: body.data });
+          }
+        }
+        return true;
+      } catch {
+        // Network error — let the EventSource attempt proceed
+        return true;
+      }
+    }
+
+    async function connect() {
+      // Pre-flight: verify auth + hydrate messages before opening EventSource
+      const authOk = await verifyAuthAndHydrate();
+      if (!authOk || !shouldReconnectRef.current) return;
+
       // EventSource sends cookies automatically for same-origin requests
       const url = `/api/chat/sessions/${sessionId}/events`;
       const es = new EventSource(url);

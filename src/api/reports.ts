@@ -42,23 +42,31 @@ reports.post("/generate",
     Date.now() - days * 24 * 60 * 60 * 1000,
   ).toISOString();
 
-  // Agent input uses `reportType` (not `type`) and date strings
-  const result = await reportGenerator.run({
-    reportType: type,
-    startDate,
-    endDate,
-    format: "markdown" as const,
-  });
+  try {
+    // Agent input uses `reportType` (not `type`) and date strings
+    const result = await reportGenerator.run({
+      reportType: type,
+      startDate,
+      endDate,
+      format: "markdown" as const,
+    });
 
-  return c.json({
-    data: {
-      title: result.title,
-      reportType: result.reportType,
-      period: result.period,
-      content: result.content,
-      generatedAt: result.generatedAt,
-    },
-  });
+    return c.json({
+      data: {
+        title: result.title,
+        reportType: result.reportType,
+        period: result.period,
+        content: result.content,
+        generatedAt: result.generatedAt,
+      },
+    });
+  } catch (err: any) {
+    const message = err?.message ?? String(err);
+    return c.json(
+      { error: `Report generation failed: ${message}` },
+      500
+    );
+  }
 });
 
 // ════════════════════════════════════════════════════════════

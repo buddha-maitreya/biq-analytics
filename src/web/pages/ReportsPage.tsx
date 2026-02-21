@@ -161,7 +161,13 @@ export default function ReportsPage({ config }: ReportsPageProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(`Server returned invalid response (HTTP ${res.status}). Please try again.`);
+      }
       if (!res.ok) throw new Error(data.error || "Failed to generate report");
 
       const content = data.data?.content ?? data.data?.report ?? "No report data returned.";

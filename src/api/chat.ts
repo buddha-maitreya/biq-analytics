@@ -91,15 +91,10 @@ function broadcast(sessionId: string, event: string, data: unknown) {
 const chat = createRouter();
 chat.use(errorMiddleware());
 
-// Auth middleware for all routes EXCEPT SSE events endpoint
-// (EventSource can't set headers — SSE uses query param auth)
-chat.use("/chat/*", async (c, next) => {
-  if (c.req.path.endsWith("/events")) {
-    await next();
-    return;
-  }
-  return sessionMiddleware()(c, next);
-});
+// Auth middleware for ALL routes (including SSE events).
+// EventSource sends cookies automatically for same-origin requests,
+// so cookie-based session auth works without query params.
+chat.use("/chat/*", sessionMiddleware());
 
 // ── Helper: extract user from context ────────────────────────
 function getUser(c: any): AuthUser {
@@ -197,7 +192,8 @@ chat.get("/chat/sessions/:id/messages", async (c) => {
 /**
  * GET /sessions/:id/events — Server-Sent Events stream.
  *
- * Auth via query param ?token= (EventSource can't set headers).
+ * Auth via cookie-based session middleware (EventSource sends cookies
+ * automatically for same-origin requests — no query param needed).
  * Uses SDK sse() middleware for transport. Sends keepalive pings every 15s.
  * Events arrive when the user sends a message via POST /sessions/:id/send.
  *
@@ -209,32 +205,13 @@ chat.get("/chat/sessions/:id/messages", async (c) => {
  */
 chat.get("/chat/sessions/:id/events", sse(async (c, stream) => {
   const sessionId = c.req.param("id");
-
-  // Auth from query param (EventSource limitation)
-  const url = new URL(c.req.url);
-  const token = url.searchParams.get("token");
-  if (!token) {
-    await stream.writeSSE({
-      data: JSON.stringify({ type: "error", properties: { message: "Token required" } }),
-    });
-    stream.close();
-    return;
-  }
-
-  const payload = await verifyToken(token);
-  if (!payload) {
-    await stream.writeSSE({
-      data: JSON.stringify({ type: "error", properties: { message: "Invalid token" } }),
-    });
-    stream.close();
-    return;
-  }
+  const user = getUser(c);
 
   // Verify session ownership
   const session = await db.query.chatSessions.findFirst({
     where: and(
       eq(chatSessions.id, sessionId),
-      eq(chatSessions.userId, payload.sub!)
+      eq(chatSessions.userId, user.id)
     ),
   });
   if (!session) {

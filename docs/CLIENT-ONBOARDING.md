@@ -227,50 +227,110 @@ User asks analytical question
 
 ### Runtime
 
-The sandbox uses `python:3.14` with the `uv` package manager. This is an Agentuity-provided runtime — **no configuration needed in the console**.
+The sandbox uses `python:3.14` with the `uv` package manager (pre-installed by Agentuity). This is an Agentuity-provided runtime — **no configuration needed in the console**.
+
+**Important:** The Python runtime is `uv`-managed and externally locked. You **cannot** use `pip`, `pip3`, or `python3 -m ensurepip` directly. All package installation must go through `uv` with a virtual environment.
 
 ### Creating the Analytics Snapshot (One-Time, Post-Deploy)
 
 A **snapshot** pre-installs data science packages so they don't need to be installed on every sandbox execution. This is a **one-time setup per deployment**.
 
-#### Option A: Admin API Endpoint (Recommended)
+> **Note:** Even without a snapshot, the system works — it auto-installs packages via `uv` at runtime (~10s overhead per request). Snapshots eliminate this overhead for faster analytics responses.
+
+#### Option A: CLI from WSL (Recommended)
+
+Run these commands from inside WSL (or via `wsl -d Ubuntu-24.04 -- bash -lc "..."` from PowerShell). Execute them back-to-back without delay.
+
+**Step 1 — Create an interactive sandbox with network access:**
 
 ```bash
-curl -X POST https://<your-deployment-url>/api/admin/sandbox/snapshot \
-  -H "Authorization: Bearer <session-token>" \
-  -H "Content-Type: application/json" \
-  -d '{"runtime": "python:3.14"}'
+agentuity cloud sandbox create --runtime python:3.14 --memory 1Gi --disk 2Gi --network --idle-timeout 30m
+# Returns: sbx_<id>
 ```
 
-**Response:**
+**Step 2 — Create a virtual environment** (the Python runtime is `uv`-managed and locked — you cannot use `pip`/`pip3` directly):
 
-```json
-{
-  "data": {
-    "snapshotId": "snap_abc123...",
-    "runtime": "python:3.14",
-    "message": "Snapshot created. Set this snapshotId in the insights-analyzer agent config..."
-  }
-}
+```bash
+agentuity cloud sandbox exec <sbx_id> -- uv venv /var/agentuity/venv
 ```
 
-**With extra packages** (optional):
+> **Path matters:** Use `/var/agentuity/venv` — this is the writable workspace directory. `/tmp/` is transient and won't be captured by snapshots. `/home/user/` is permission-denied.
 
-```json
-{"runtime": "python:3.14", "extraDeps": ["xgboost", "prophet", "plotly"]}
+**Step 3 — Install data science packages:**
+
+```bash
+agentuity cloud sandbox exec <sbx_id> -- uv pip install --python /var/agentuity/venv/bin/python numpy pandas scipy scikit-learn statsmodels
 ```
 
-#### Option B: Agentuity Console (Manual)
+Expected output: `Installed 11 packages in ...` (~6-10 seconds)
 
-1. Go to **Agentuity Console → Sandbox → Create Sandbox**
-2. Select runtime: `python:3.14`
-3. In the sandbox terminal, run:
-   ```bash
-   uv pip install numpy pandas scipy scikit-learn statsmodels
+**Step 4 — Create the snapshot** (immediately after install — don't let the sandbox idle-timeout):
+
+```bash
+agentuity cloud sandbox snapshot create <sbx_id> --tag python-analysis
+```
+
+If snapshot creation returns a 500 error, see [Troubleshooting: Snapshot creation fails](#snapshot-creation-fails) below.
+
+**Step 5 — Copy the snapshot ID** from the output and clean up:
+
+```bash
+agentuity cloud sandbox delete <sbx_id>
+```
+
+#### Option B: Agentuity Dashboard (Manual)
+
+1. Go to **Agentuity Dashboard → Services → Sandbox → Create Sandbox**
+2. Fill in the settings:
+
+   | Field | Value |
+   |-------|-------|
+   | **Name** | Unique name (e.g. `biq-analysis-py314-v2`) — if a name is taken by an archived sandbox, use a different name |
+   | **Description** | `Data science stack for analytics` |
+   | **Runtime** | `python:3.14` |
+   | **Region** | Match your project region (e.g. `US East`) |
+   | **Memory** | `512Mi` |
+   | **CPU** | `1 core` (needed for compilation) |
+   | **Disk** | `1Gi` (packages need ~600-800MB installed) |
+   | **Execution Mode** | `Interactive` |
+   | **Idle Timeout** | `10m` |
+   | **Network Access** | **ON** (required to download packages) |
+   | **Expose Port** | _(leave blank)_ |
+
+   **CRITICAL — Startup screen:**
+
+   | Field | Value |
+   |-------|-------|
+   | **Command** | _(leave blank)_ |
+   | **Dependencies** | **LEAVE BLANK** — this field installs `apt` system packages (e.g. `git`, `curl`), NOT Python packages. Putting Python package names here will fail. |
+   | **Environment Variables** | _(leave blank)_ |
+   | **Files** | _(leave blank)_ |
+
+3. Click **Create Sandbox** and wait for the sandbox detail page.
+
+4. In the sandbox terminal, run these commands **one at a time** (the terminal does not support `&&` chaining, and wraps quoted strings incorrectly):
+
    ```
-4. Go to **Sandbox → Snapshots → Create Snapshot**
-5. Name it `analysis-python-3.14`, tag it `latest`
-6. Copy the `snapshotId`
+   uv venv /var/agentuity/venv
+   ```
+   ```
+   uv pip install --python /var/agentuity/venv/bin/python numpy pandas scipy scikit-learn statsmodels
+   ```
+
+5. Click the **Snapshot** button (top-right) → name it, tag it → **Create**.
+
+6. Copy the **snapshot ID**.
+
+#### Option C: Auto-Bootstrap (No Snapshot — Fallback)
+
+If snapshot creation is not possible (e.g., Agentuity API issues), the system automatically falls back to **runtime package installation**. When no `sandboxSnapshotId` is configured:
+
+- The sandbox enables network access temporarily
+- The Python script runs `uv venv` + `uv pip install` before importing packages
+- Adds ~6-10 seconds to each analytics request
+- The timeout is automatically extended to 60s minimum
+
+No configuration needed — this is the default behavior when no snapshot is set.
 
 #### Step 2: Configure the Agent to Use the Snapshot
 
@@ -338,9 +398,9 @@ The LLM will fall back to manual implementations of statistical methods. It work
 
 ### Sandbox Security
 
-- **Network: ALWAYS disabled** — no data exfiltration possible
+- **Network: Disabled when snapshot is set** — no data exfiltration possible. When no snapshot is configured, network is temporarily enabled for package installation only (the auto-bootstrap code runs `uv pip install` then proceeds with analysis).
 - **SQL: Read-only** — only SELECT/WITH queries allowed (validated server-side)
-- **Timeout: 30 seconds** (configurable via `sandboxTimeoutMs` in agent config)
+- **Timeout: 30 seconds default** (configurable via `sandboxTimeoutMs` in agent config). Auto-extended to 60s minimum when no snapshot is configured.
 - **Memory: 256Mi** (configurable via `sandboxMemoryMb` in agent config)
 - **Isolation: Full** — each execution runs in its own container, destroyed after use
 
@@ -468,9 +528,21 @@ agentuity login
 
 #### Analytics returns "No module named numpy" (or pandas, scipy, etc.)
 
-**Cause:** No snapshot configured. The raw `python:3.14` sandbox only has the Python standard library.
+**Cause:** No snapshot configured AND auto-bootstrap failed (usually due to network issues or sandbox limitations).
 
-**Fix:** Create a snapshot (see [Analytics Sandbox Setup](#analytics-sandbox-setup-python) above) and set the `sandboxSnapshotId` in agent config.
+**Fix:**
+1. The system should auto-install packages at runtime when no snapshot is set. If this isn't working, check that the sandbox runtime is `python:3.14` (auto-bootstrap uses `uv`, which is only available in Python runtimes).
+2. For best performance, create a snapshot (see [Analytics Sandbox Setup](#analytics-sandbox-setup-python) above) and set the `sandboxSnapshotId` in agent config.
+
+#### Snapshot creation fails with 500 error {#snapshot-creation-fails}
+
+**Cause:** Known Agentuity platform issue — the `snapshot create` API intermittently returns HTTP 500 Internal Server Error.
+
+**Workaround:**
+1. The system works without snapshots via auto-bootstrap (Option C above). No action needed.
+2. Retry snapshot creation later — this is a platform-side bug that Agentuity needs to fix.
+3. Try from the dashboard UI instead of CLI (or vice versa).
+4. Report to Agentuity support with the sandbox ID for investigation.
 
 #### Analytics timeout
 

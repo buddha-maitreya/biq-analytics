@@ -35,14 +35,14 @@ export const inputSchema = z.object({
     .refine((v) => v.length > 0, "Report type is required"),
   startDate: z
     .string()
-    .datetime()
     .optional()
-    .describe("Start of the reporting period (ISO 8601). Defaults to 30 days ago."),
+    .refine((v) => !v || !isNaN(Date.parse(v)), "Invalid date")
+    .describe("Start of the reporting period (ISO 8601 date or datetime, e.g. 2024-01-01 or 2024-01-01T00:00:00Z). Defaults to 30 days ago."),
   endDate: z
     .string()
-    .datetime()
     .optional()
-    .describe("End of the reporting period (ISO 8601). Defaults to now."),
+    .refine((v) => !v || !isNaN(Date.parse(v)), "Invalid date")
+    .describe("End of the reporting period (ISO 8601 date or datetime, e.g. 2024-01-31 or 2024-01-31T23:59:59Z). Defaults to now."),
   format: z
     .enum(REPORT_FORMATS)
     .default("markdown")

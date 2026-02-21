@@ -68,6 +68,11 @@ function normalizeRuntime(runtime: SandboxRuntime): string {
   }
 }
 
+/** Check if a runtime is Python-based. */
+function isPythonRuntime(runtime: SandboxRuntime): boolean {
+  return runtime === "python" || runtime.startsWith("python:");
+}
+
 /** Convert human-readable memory strings to Kubernetes-style (256MB → 256Mi). */
 function normalizeMemory(mem: string): string {
   const m = mem.match(/^(\d+)\s*(MB|GB)$/i);
@@ -408,10 +413,49 @@ function buildPythonScript(analysisCode: string): string {
 import sys
 import json
 import math
+import subprocess
+import os
 from datetime import datetime, timedelta, date
 from collections import Counter, defaultdict
 
-# ── Data science imports (pre-installed in snapshot) ────────
+# ── Auto-bootstrap: install packages if not available ───────
+# When no snapshot is configured, use uv to install packages at runtime.
+# This adds ~6-10s to the first execution but ensures packages are available.
+def _ensure_packages():
+    """Install data science packages via uv if not already available."""
+    try:
+        import numpy
+        return  # Packages already available (snapshot or previous install)
+    except ImportError:
+        pass
+    
+    venv_dir = "/var/agentuity/venv"
+    venv_python = os.path.join(venv_dir, "bin", "python")
+    
+    # Create venv if it doesn't exist
+    if not os.path.exists(venv_python):
+        subprocess.run(["uv", "venv", venv_dir], check=True,
+                       capture_output=True, timeout=30)
+    
+    # Install packages into the venv
+    subprocess.run(
+        ["uv", "pip", "install", "--python", venv_python,
+         "numpy", "pandas", "scipy", "scikit-learn", "statsmodels"],
+        check=True, capture_output=True, timeout=120
+    )
+    
+    # Add venv site-packages to sys.path so imports work
+    import glob
+    site_pkgs = glob.glob(os.path.join(venv_dir, "lib", "python*", "site-packages"))
+    if site_pkgs:
+        sys.path.insert(0, site_pkgs[0])
+
+try:
+    _ensure_packages()
+except Exception:
+    pass  # Fall back to stdlib if install fails
+
+# ── Data science imports ────────────────────────────────────
 try:
     import numpy as np
 except ImportError:
@@ -673,6 +717,11 @@ export async function executeSandbox(
   const dataJson = JSON.stringify(data);
 
   try {
+    // Add extra time for package installation when no snapshot
+    const effectiveTimeout = (!snapshotId && isPythonRuntime(runtime))
+      ? Math.max(timeoutMs, 60_000)  // At least 60s for uv install
+      : timeoutMs;
+
     // Build run options for one-shot sandbox execution (SDK pattern)
     const runOpts: Record<string, any> = {
       command: {
@@ -686,8 +735,9 @@ export async function executeSandbox(
         memory: normalizeMemory(memory),
         cpu: "500m",
       },
-      timeout: { execution: msToDuration(timeoutMs) },
-      network: { enabled: false },
+      timeout: { execution: msToDuration(effectiveTimeout) },
+      // Enable network when no snapshot — needed for uv pip install at runtime
+      network: { enabled: !snapshotId && isPythonRuntime(runtime) },
     };
 
     // Set runtime (resolve aliases like "python" → "python:3.14")

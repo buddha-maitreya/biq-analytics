@@ -1,0 +1,11 @@
+import numpy
+import pandas
+import scipy
+import sklearn
+import statsmodels
+print("All OK")
+print("numpy", numpy.__version__)
+print("pandas", pandas.__version__)
+print("scipy", scipy.__version__)
+print("sklearn", sklearn.__version__)
+print("statsmodels", statsmodels.__version__)

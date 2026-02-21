@@ -13,6 +13,19 @@ router.get("/custom-tools", async (c) => {
   return c.json({ data: tools });
 });
 
+/** GET /api/custom-tools/mcp — list MCP integration tools */
+router.get("/custom-tools/mcp", async (c) => {
+  const tools = await toolsSvc.listToolsByType("mcp");
+  return c.json({ data: tools });
+});
+
+/** POST /api/custom-tools/seed-mcp — seed default MCP integrations (idempotent) */
+router.post("/custom-tools/seed-mcp", async (c) => {
+  const created = await toolsSvc.seedMcpTools();
+  const tools = await toolsSvc.listToolsByType("mcp");
+  return c.json({ data: tools, seeded: created });
+});
+
 /** GET /api/custom-tools/:id — get a single tool */
 router.get("/custom-tools/:id", async (c) => {
   const tool = await toolsSvc.getToolById(c.req.param("id"));

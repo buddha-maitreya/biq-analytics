@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import type { AppConfig } from "../types";
 
 interface AdminPageProps {
@@ -1930,211 +1930,316 @@ function SettingsTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
   );
 }
 
-/* ===== AI CONFIG TAB ===== */
-const AI_DEFAULTS: Record<string, string> = {
-  aiPersonality: "",
-  aiEnvironment: "",
-  aiTone: "",
-  aiGoal: "",
-  aiBusinessContext: "",
-  aiResponseFormatting: "",
-  aiQueryReasoning: "",
-  aiToolGuidelines: "",
-  aiGuardrails: "",
-  aiInsightsInstructions: "",
-  aiReportInstructions: "",
-  aiWelcomeMessage: "",
-};
+/* ===== AI CONFIG TAB — Prompt Engineering ===== */
 
-/* ── Reusable form components ── */
-const FormField = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
-  <label className="ai-form-field">
-    <span className="form-label">{label}</span>
-    {children}
-    {hint && <span className="form-hint">{hint}</span>}
-  </label>
-);
+const AI_FIELDS = [
+  { key: "aiPersonality", label: "Personality", section: "identity", rows: 4, placeholder: "e.g. You are a knowledgeable business advisor — data-driven, strategic, and action-oriented.", hint: "Who the AI is — role, expertise, character traits." },
+  { key: "aiEnvironment", label: "Environment", section: "identity", rows: 4, placeholder: "e.g. You operate inside our company ERP. Users are managers and staff who need quick data answers.", hint: "Where/how the AI operates — interface context, user types, capabilities." },
+  { key: "aiGoal", label: "Goal", section: "identity", rows: 3, placeholder: "e.g. Help users make data-driven decisions quickly. Surface actionable insights proactively.", hint: "The AI's primary objective." },
+  { key: "aiWelcomeMessage", label: "Welcome Message", section: "identity", rows: 2, placeholder: "e.g. Hello! I'm your Business Assistant. Ask me about sales, inventory, or reports.", hint: "Greeting shown when a user starts a new chat." },
+  { key: "aiTone", label: "Tone", section: "style", rows: 3, placeholder: "e.g. Professional but approachable. Clear, direct language.", hint: "Voice and communication style." },
+  { key: "aiResponseFormatting", label: "Response Formatting", section: "style", rows: 5, placeholder: "e.g.\n- Use Markdown headers, bullet points, and tables\n- Always show currency with proper symbols\n- Bold key numbers", hint: "How to format output — markdown rules, currency display, tables." },
+  { key: "aiBusinessContext", label: "Business Context", section: "knowledge", rows: 5, placeholder: "e.g. We are a B2B wholesale distributor. Peak season is Q4. We serve 200+ retail clients across 3 regions.", hint: "Domain knowledge — products, policies, specialties, seasonality." },
+  { key: "aiQueryReasoning", label: "Query Reasoning", section: "tools", rows: 4, placeholder: "e.g.\n- Consider which date range makes sense\n- For financial questions, cross-check against the payments table", hint: "How the AI should think before calling tools." },
+  { key: "aiToolGuidelines", label: "Tool Usage Guidelines", section: "tools", rows: 5, placeholder: "e.g.\n- For inventory questions, query inventory + inventory_transactions\n- For customer insights, check orders + payments together", hint: "When to use which tool — overrides default selection." },
+  { key: "aiGuardrails", label: "Guardrails", section: "safety", rows: 5, placeholder: "e.g.\n- Never disclose raw employee salary data\n- Don't make promises about delivery dates\n- Escalate when user is frustrated", hint: "Safety rules, boundaries, topics to avoid, escalation policies." },
+  { key: "aiInsightsInstructions", label: "Insights Analysis", section: "agents", rows: 5, placeholder: "e.g.\n- Focus on conversion rates and seasonal demand\n- Flag month-over-month changes >20%", hint: "Custom instructions for demand forecasting, anomaly detection, trends." },
+  { key: "aiReportInstructions", label: "Report Generation", section: "agents", rows: 5, placeholder: "e.g.\n1. Executive Summary with key highlights\n2. Revenue breakdown by category\n3. Forward-looking recommendations", hint: "Custom structure and focus areas for generated reports." },
+] as const;
 
-const FormTextarea = ({ label, hint, rows = 3, placeholder, value, onChange }: {
-  label: string; hint?: string; rows?: number; placeholder?: string;
-  value: string; onChange: (val: string) => void;
-}) => (
-  <FormField label={label} hint={hint}>
-    <textarea rows={rows} placeholder={placeholder} value={value}
-      onChange={(e) => onChange(e.target.value)} style={{ resize: "vertical" }} />
-  </FormField>
-);
+const AI_SECTIONS = [
+  { key: "identity", icon: "💎", title: "Identity & Role", desc: "Define who the AI is, its operating environment, and objectives.", color: "#7c3aed" },
+  { key: "style", icon: "🎨", title: "Communication Style", desc: "Control tone, formatting, and response structure.", color: "#ec4899" },
+  { key: "knowledge", icon: "🏢", title: "Business Knowledge", desc: "Give the AI context about your business for more relevant answers.", color: "#f59e0b" },
+  { key: "tools", icon: "🔧", title: "Tool & Query Behavior", desc: "Guide how the AI reasons about questions and selects tools.", color: "#3b82f6" },
+  { key: "safety", icon: "🛡️", title: "Safety & Guardrails", desc: "Set boundaries and safety rules the AI must follow.", color: "#ef4444" },
+  { key: "agents", icon: "📊", title: "Specialized Agent Instructions", desc: "Customize the insights analyzer and report generator behavior.", color: "#059669" },
+] as const;
 
-const SectionCard = ({ icon, title, description, children }: {
-  icon: string; title: string; description: string; children: React.ReactNode;
-}) => (
-  <div className="card settings-card">
-    <h3>{icon} {title}</h3>
-    <p className="text-muted" style={{ marginBottom: 16 }}>{description}</p>
-    <div className="form-grid" style={{ gap: 16 }}>{children}</div>
-  </div>
-);
+const AI_DEFAULTS: Record<string, string> = Object.fromEntries(AI_FIELDS.map(f => [f.key, ""]));
 
-const InfoBox = ({ children }: { children: React.ReactNode }) => (
-  <div className="card ai-info-box">
-    <p style={{ margin: 0, fontSize: 13 }}>{children}</p>
-  </div>
-);
+/* ── Smart Textarea with character count, focus ring, and dirty indicator ── */
+function PromptTextarea({ field, value, originalValue, onChange }: {
+  field: typeof AI_FIELDS[number];
+  value: string;
+  originalValue: string;
+  onChange: (val: string) => void;
+}) {
+  const [focused, setFocused] = useState(false);
+  const isDirty = value !== originalValue;
+  const charCount = value.length;
+  const hasContent = value.trim().length > 0;
 
+  return (
+    <div className={`pe-field ${focused ? "pe-field--focused" : ""} ${hasContent ? "pe-field--filled" : ""} ${isDirty ? "pe-field--dirty" : ""}`}>
+      <div className="pe-field__header">
+        <label className="pe-field__label">
+          {hasContent && <span className="pe-field__check">✓</span>}
+          {field.label}
+        </label>
+        <div className="pe-field__meta">
+          {isDirty && <span className="pe-field__dirty-badge">Modified</span>}
+          {charCount > 0 && <span className="pe-field__chars">{charCount.toLocaleString()} chars</span>}
+        </div>
+      </div>
+      <textarea
+        className="pe-field__textarea"
+        rows={field.rows}
+        placeholder={field.placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+      />
+      <p className="pe-field__hint">{field.hint}</p>
+    </div>
+  );
+}
+
+/* ── Collapsible Section with animated expand/collapse ── */
+function PromptSection({ section, fields, settings, originals, onUpdate, isExpanded, onToggle }: {
+  section: typeof AI_SECTIONS[number];
+  fields: typeof AI_FIELDS[number][];
+  settings: Record<string, string>;
+  originals: Record<string, string>;
+  onUpdate: (key: string, val: string) => void;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const filledCount = fields.filter(f => (settings[f.key] ?? "").trim().length > 0).length;
+  const dirtyCount = fields.filter(f => settings[f.key] !== originals[f.key]).length;
+
+  return (
+    <div className={`pe-section ${isExpanded ? "pe-section--open" : ""}`} style={{ "--section-color": section.color } as React.CSSProperties}>
+      <button className="pe-section__header" onClick={onToggle} type="button">
+        <div className="pe-section__title-group">
+          <span className="pe-section__icon">{section.icon}</span>
+          <div>
+            <h3 className="pe-section__title">{section.title}</h3>
+            <p className="pe-section__desc">{section.desc}</p>
+          </div>
+        </div>
+        <div className="pe-section__indicators">
+          <span className={`pe-section__pill ${filledCount === fields.length ? "pe-section__pill--complete" : filledCount > 0 ? "pe-section__pill--partial" : ""}`}>
+            {filledCount}/{fields.length}
+          </span>
+          {dirtyCount > 0 && <span className="pe-section__pill pe-section__pill--dirty">{dirtyCount} unsaved</span>}
+          <span className={`pe-section__chevron ${isExpanded ? "pe-section__chevron--open" : ""}`}>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </span>
+        </div>
+      </button>
+      <div className={`pe-section__body ${isExpanded ? "pe-section__body--open" : ""}`}>
+        <div className="pe-section__fields">
+          {fields.map(f => (
+            <PromptTextarea key={f.key} field={f} value={settings[f.key] ?? ""} originalValue={originals[f.key] ?? ""} onChange={(val) => onUpdate(f.key, val)} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Main AI Config Tab ── */
 function AIConfigTab({ config, onSaved }: { config: AppConfig; onSaved?: () => void }) {
   const [settings, setSettings] = useState<Record<string, string>>({ ...AI_DEFAULTS });
+  const [originals, setOriginals] = useState<Record<string, string>>({ ...AI_DEFAULTS });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(["identity"]));
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>();
 
-  const toggleSection = (key: string) =>
-    setExpandedSections((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/settings");
-        const json = await res.json();
-        if (json.data) {
-          setSettings((prev) => ({
-            ...prev,
-            ...Object.fromEntries(Object.keys(AI_DEFAULTS).map((k) => [k, json.data[k] ?? ""])),
-          }));
-        }
-      } catch { /* defaults */ }
-      setLoading(false);
-    })();
+  const showToast = useCallback((type: "success" | "error", text: string) => {
+    setToast({ type, text });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 4000);
   }, []);
 
-  const handleSave = async () => {
+  const toggleSection = useCallback((key: string) => {
+    setExpandedSections(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }, []);
+
+  // Fetch settings from API
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/settings", { credentials: "same-origin" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        const json = await res.json();
+        if (!cancelled && json.data) {
+          const loaded = Object.fromEntries(
+            Object.keys(AI_DEFAULTS).map(k => [k, json.data[k] ?? ""])
+          );
+          setSettings(prev => ({ ...prev, ...loaded }));
+          setOriginals(prev => ({ ...prev, ...loaded }));
+        }
+      } catch (err: unknown) {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Failed to load settings";
+          setLoadError(msg);
+          console.error("[PromptEngineering] Load error:", msg);
+        }
+      }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const updateField = useCallback((key: string, val: string) => {
+    setSettings(prev => ({ ...prev, [key]: val }));
+  }, []);
+
+  const handleSave = useCallback(async () => {
     setSaving(true);
-    setMessage(null);
     try {
       const res = await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify(settings),
       });
       if (res.ok) {
-        setMessage({ type: "success", text: "AI configuration saved!" });
+        setOriginals({ ...settings });
+        showToast("success", "AI configuration saved successfully!");
         onSaved?.();
       } else {
-        setMessage({ type: "error", text: "Failed to save." });
+        const json = await res.json().catch(() => null);
+        showToast("error", json?.error ?? `Failed to save (HTTP ${res.status})`);
       }
     } catch {
-      setMessage({ type: "error", text: "Network error." });
+      showToast("error", "Network error — check your connection.");
     }
     setSaving(false);
-  };
+  }, [settings, showToast, onSaved]);
 
-  if (loading) return <div className="loading-state"><div className="spinner" />Loading AI configuration…</div>;
+  const handleReset = useCallback(() => {
+    setSettings({ ...originals });
+  }, [originals]);
 
-  const upd = (key: string, val: string) => setSettings((p) => ({ ...p, [key]: val }));
+  // Derived state
+  const filledCount = useMemo(() =>
+    Object.values(settings).filter(v => v.trim().length > 0).length
+  , [settings]);
+  const totalCount = AI_FIELDS.length;
+  const isDirty = useMemo(() =>
+    Object.keys(AI_DEFAULTS).some(k => settings[k] !== originals[k])
+  , [settings, originals]);
+  const dirtyCount = useMemo(() =>
+    Object.keys(AI_DEFAULTS).filter(k => settings[k] !== originals[k]).length
+  , [settings, originals]);
 
-  const filledCount = Object.entries(settings).filter(([_, v]) => v.trim().length > 0).length;
-  const totalCount = Object.keys(AI_DEFAULTS).length;
+  // Loading state
+  if (loading) {
+    return (
+      <div className="pe-loading">
+        <div className="pe-loading__spinner" />
+        <p>Loading AI configuration…</p>
+      </div>
+    );
+  }
 
-  const sections = [
-    {
-      key: "identity", icon: "�", title: "Identity & Role",
-      desc: "Define who the AI is, its operating environment, and objectives.",
-      fields: [
-        { key: "aiPersonality", label: "Personality", rows: 3, placeholder: "e.g. You are a knowledgeable business advisor — data-driven, strategic, and action-oriented.", hint: "Who the AI is — role, expertise, character traits." },
-        { key: "aiEnvironment", label: "Environment", rows: 3, placeholder: "e.g. You operate inside our company ERP. Users are managers and staff who need quick data answers.", hint: "Where/how the AI operates — interface context, user types, capabilities." },
-        { key: "aiGoal", label: "Goal", rows: 2, placeholder: "e.g. Help users make data-driven decisions quickly. Surface actionable insights proactively.", hint: "The AI's primary objective." },
-        { key: "aiWelcomeMessage", label: "Welcome Message", rows: 2, placeholder: "e.g. Hello! I'm your Business Assistant. Ask me about sales, inventory, or reports.", hint: "Greeting shown when a user starts a new chat." },
-      ],
-    },
-    {
-      key: "style", icon: "🎨", title: "Communication Style",
-      desc: "Control tone, formatting, and response structure.",
-      fields: [
-        { key: "aiTone", label: "Tone", rows: 2, placeholder: "e.g. Professional but approachable. Clear, direct language.", hint: "Voice and communication style." },
-        { key: "aiResponseFormatting", label: "Response Formatting", rows: 4, placeholder: "e.g.\n- Use Markdown headers, bullet points, and tables\n- Always show currency with proper symbols\n- Bold key numbers", hint: "How to format output — markdown rules, currency display, tables." },
-      ],
-    },
-    {
-      key: "knowledge", icon: "🏢", title: "Business Knowledge",
-      desc: "Give the AI context about your business for more relevant answers.",
-      fields: [
-        { key: "aiBusinessContext", label: "Business Context", rows: 4, placeholder: "e.g. We are a B2B wholesale distributor. Peak season is Q4. We serve 200+ retail clients across 3 regions.", hint: "Domain knowledge — products, policies, specialties, seasonality." },
-      ],
-    },
-    {
-      key: "tools", icon: "🔧", title: "Tool & Query Behavior",
-      desc: "Guide how the AI reasons about questions and selects tools.",
-      fields: [
-        { key: "aiQueryReasoning", label: "Query Reasoning", rows: 3, placeholder: "e.g.\n- Consider which date range makes sense\n- For financial questions, cross-check against the payments table", hint: "How the AI should think before calling tools." },
-        { key: "aiToolGuidelines", label: "Tool Usage Guidelines", rows: 4, placeholder: "e.g.\n- For inventory questions, query inventory + inventory_transactions\n- For customer insights, check orders + payments together", hint: "When to use which tool — overrides default selection." },
-      ],
-    },
-    {
-      key: "safety", icon: "🛡️", title: "Safety & Guardrails",
-      desc: "Set boundaries and safety rules the AI must follow.",
-      fields: [
-        { key: "aiGuardrails", label: "Guardrails", rows: 4, placeholder: "e.g.\n- Never disclose raw employee salary data\n- Don't make promises about delivery dates\n- Escalate when user is frustrated", hint: "Safety rules, boundaries, topics to avoid, escalation policies." },
-      ],
-    },
-    {
-      key: "agents", icon: "📊", title: "Specialized Agent Instructions",
-      desc: "Customize the insights analyzer and report generator behavior.",
-      fields: [
-        { key: "aiInsightsInstructions", label: "Insights Analysis", rows: 4, placeholder: "e.g.\n- Focus on conversion rates and seasonal demand\n- Flag month-over-month changes >20%", hint: "Custom instructions for demand forecasting, anomaly detection, trends." },
-        { key: "aiReportInstructions", label: "Report Generation", rows: 4, placeholder: "e.g.\n1. Executive Summary with key highlights\n2. Revenue breakdown by category\n3. Forward-looking recommendations", hint: "Custom structure and focus areas for generated reports." },
-      ],
-    },
-  ];
+  // Error state with retry
+  if (loadError) {
+    return (
+      <div className="pe-error">
+        <span className="pe-error__icon">⚠️</span>
+        <h3>Failed to load settings</h3>
+        <p>{loadError}</p>
+        <button className="btn btn-primary" onClick={() => window.location.reload()}>
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  const progressPct = totalCount > 0 ? (filledCount / totalCount) * 100 : 0;
 
   return (
-    <div>
-      {message && (
-        <div className={`alert alert-${message.type}`} style={{ marginBottom: 16 }}>
-          {message.type === "success" ? "✅" : "❌"} {message.text}
+    <div className="pe-container">
+      {/* Toast notification */}
+      {toast && (
+        <div className={`pe-toast pe-toast--${toast.type}`} role="alert">
+          <span className="pe-toast__icon">{toast.type === "success" ? "✅" : "❌"}</span>
+          <span className="pe-toast__text">{toast.text}</span>
+          <button className="pe-toast__close" onClick={() => setToast(null)}>×</button>
         </div>
       )}
 
-      {/* Progress indicator */}
-      <div className="ai-config-progress">
-        <div className="ai-config-progress-bar">
-          <div className="ai-config-progress-fill" style={{ width: `${(filledCount / totalCount) * 100}%` }} />
-        </div>
-        <span className="text-muted" style={{ fontSize: 12 }}>{filledCount}/{totalCount} fields configured</span>
-      </div>
-
-      <div className="settings-grid">
-        {sections.map((section) => (
-          <div key={section.key} className="card settings-card ai-section-card">
-            <button className="ai-section-header" onClick={() => toggleSection(section.key)}>
-              <div>
-                <h3 style={{ margin: 0 }}>{section.icon} {section.title}</h3>
-                <p className="text-muted" style={{ margin: "4px 0 0", fontSize: 13 }}>{section.desc}</p>
-              </div>
-              <span className="ai-section-chevron">{expandedSections.has(section.key) ? "▼" : "▶"}</span>
-            </button>
-            {expandedSections.has(section.key) && (
-              <div className="form-grid ai-section-body" style={{ gap: 16 }}>
-                {section.fields.map((f) => (
-                  <FormTextarea key={f.key} label={f.label} hint={f.hint} rows={f.rows}
-                    placeholder={f.placeholder} value={settings[f.key] ?? ""}
-                    onChange={(val) => upd(f.key, val)} />
-                ))}
-              </div>
-            )}
+      {/* Progress header */}
+      <div className="pe-progress">
+        <div className="pe-progress__info">
+          <div className="pe-progress__stats">
+            <span className={`pe-progress__count ${filledCount === totalCount ? "pe-progress__count--complete" : ""}`}>
+              {filledCount}/{totalCount}
+            </span>
+            <span className="pe-progress__label">fields configured</span>
           </div>
-        ))}
-
-        <InfoBox>
-          <strong>💡 How it works:</strong> These settings are loaded by AI agents at request time. Changes take effect immediately — no redeployment needed.
-          Leave any field empty to use built-in defaults. The AI always knows your configured terminology ({config.labels.product}, {config.labels.order}, etc.)
-          and currency ({config.currency}) automatically.
-        </InfoBox>
+          {isDirty && (
+            <span className="pe-progress__dirty">
+              {dirtyCount} unsaved {dirtyCount === 1 ? "change" : "changes"}
+            </span>
+          )}
+        </div>
+        <div className="pe-progress__bar">
+          <div
+            className={`pe-progress__fill ${filledCount === totalCount ? "pe-progress__fill--complete" : ""}`}
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
       </div>
 
-      <div style={{ marginTop: 16, position: "sticky", bottom: 0, background: "var(--color-bg)", padding: "12px 0", zIndex: 5 }}>
-        <button className="btn btn-primary btn-lg" onClick={handleSave} disabled={saving}>
-          {saving ? "Saving…" : "💾 Save AI Configuration"}
-        </button>
+      {/* Sections */}
+      <div className="pe-sections">
+        {AI_SECTIONS.map(section => {
+          const sectionFields = AI_FIELDS.filter(f => f.section === section.key);
+          return (
+            <PromptSection
+              key={section.key}
+              section={section}
+              fields={sectionFields}
+              settings={settings}
+              originals={originals}
+              onUpdate={updateField}
+              isExpanded={expandedSections.has(section.key)}
+              onToggle={() => toggleSection(section.key)}
+            />
+          );
+        })}
+      </div>
+
+      {/* Info box */}
+      <div className="pe-info">
+        <div className="pe-info__icon">💡</div>
+        <div className="pe-info__content">
+          <strong>How it works:</strong> These settings are loaded by AI agents at request time.
+          Changes take effect immediately — no redeployment needed. Leave any field empty to use built-in defaults.
+          The AI always knows your configured terminology ({config.labels.product}, {config.labels.order}, etc.) and currency ({config.currency}) automatically.
+        </div>
+      </div>
+
+      {/* Sticky action bar */}
+      <div className={`pe-actions ${isDirty ? "pe-actions--visible" : ""}`}>
+        <div className="pe-actions__inner">
+          {isDirty && (
+            <button className="btn pe-actions__reset" onClick={handleReset} disabled={saving} type="button">
+              Discard Changes
+            </button>
+          )}
+          <button className="btn btn-primary pe-actions__save" onClick={handleSave} disabled={saving || !isDirty} type="button">
+            {saving ? (
+              <><span className="pe-actions__spinner" /> Saving…</>
+            ) : (
+              <>💾 Save AI Configuration</>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );

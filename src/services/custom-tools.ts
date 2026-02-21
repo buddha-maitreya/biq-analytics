@@ -105,6 +105,15 @@ export async function listTools(): Promise<CustomToolRow[]> {
   return rows as CustomToolRow[];
 }
 
+/** List tools filtered by toolType */
+export async function listToolsByType(type: ToolType): Promise<CustomToolRow[]> {
+  const rows = await db.query.customTools.findMany({
+    where: eq(customTools.toolType, type),
+    orderBy: [asc(customTools.sortOrder), asc(customTools.name)],
+  });
+  return rows as CustomToolRow[];
+}
+
 /** List only active tools (used by the agent at runtime) */
 export async function listActiveTools(): Promise<CustomToolRow[]> {
   const rows = await db.query.customTools.findMany({
@@ -810,3 +819,90 @@ export async function seedDefaultTools(): Promise<number> {
 
 /** Get the list of default tool names (for display in UI) */
 export const DEFAULT_TOOL_NAMES = DEFAULT_TOOLS.map((t) => t.name);
+
+// ── MCP Integration Tools ──────────────────────────────────
+//
+// Pre-configured Model Context Protocol integrations.
+// These call external APIs directly and are tagged as "mcp" type
+// so the UI can display them in a separate section.
+// ──────────────────────────────────────────────────────────
+
+const DEFAULT_MCP_TOOLS: CreateToolInput[] = [
+  {
+    toolType: "mcp",
+    name: "mcp_weather",
+    label: "Weather Data",
+    description:
+      "Get current weather conditions and forecast for any location. Uses Open-Meteo (free, no API key required). " +
+      "Use when the user asks about weather, temperature, rain forecasts, or when weather context is relevant to business operations (e.g. safari conditions, outdoor events).",
+    parameterSchema: {
+      location: {
+        type: "string",
+        description: "City or location name (e.g. 'Nairobi', 'Masai Mara', 'Diani Beach')",
+        required: true,
+      },
+    },
+    webhookUrl: "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto",
+    webhookMethod: "GET",
+    webhookHeaders: {},
+    webhookTimeoutSecs: 10,
+    authType: "none",
+    authConfig: {},
+    executionMode: "immediate",
+    isActive: true,
+    sortOrder: 100,
+    metadata: {
+      mcpType: "weather",
+      location: "Nairobi",
+      description: "Open-Meteo weather API — free, no API key needed",
+    },
+  },
+  {
+    toolType: "mcp",
+    name: "mcp_nse_stocks",
+    label: "NSE Stock Market",
+    description:
+      "Look up current stock prices and market data from the Nairobi Securities Exchange (NSE) and global markets. " +
+      "Uses Marketstack API. Use when the user asks about stock prices, market data, or financial market conditions.",
+    parameterSchema: {
+      symbol: {
+        type: "string",
+        description: "Stock ticker symbol (e.g. 'SCOM' for Safaricom, 'EQTY' for Equity Bank, 'KCB' for KCB Group)",
+        required: true,
+      },
+    },
+    webhookUrl: "http://api.marketstack.com/v1/eod/latest?access_key={apiKey}&symbols={symbol}.XNAI",
+    webhookMethod: "GET",
+    webhookHeaders: {},
+    webhookTimeoutSecs: 15,
+    authType: "api_key",
+    authConfig: { headerName: "X-API-Key", apiKey: "" },
+    executionMode: "immediate",
+    isActive: false, // Inactive until user provides API key
+    sortOrder: 101,
+    metadata: {
+      mcpType: "stocks",
+      defaultSymbol: "SCOM",
+      exchange: "XNAI",
+      description: "Marketstack API — requires free API key from marketstack.com",
+    },
+  },
+];
+
+/**
+ * Seed MCP integration tools (idempotent — skips tools whose name already exists).
+ * Returns the count of newly created tools.
+ */
+export async function seedMcpTools(): Promise<number> {
+  let created = 0;
+  for (const def of DEFAULT_MCP_TOOLS) {
+    const existing = await db.query.customTools.findFirst({
+      where: eq(customTools.name, def.name),
+    });
+    if (!existing) {
+      await createTool(def);
+      created++;
+    }
+  }
+  return created;
+}

@@ -453,7 +453,7 @@ async function exportXlsx(input: ExportInput, branding: Branding): Promise<Buffe
   }
 
   // Auto-width columns
-  summary.columns.forEach((col) => {
+  summary.columns.forEach((col: Partial<ExcelJS.Column>) => {
     col.width = 25;
   });
 
@@ -486,7 +486,7 @@ async function exportXlsx(input: ExportInput, branding: Branding): Promise<Buffe
     });
 
     // Auto-width
-    dataSheet.columns.forEach((col) => {
+    dataSheet.columns.forEach((col: Partial<ExcelJS.Column>) => {
       col.width = 20;
     });
   }

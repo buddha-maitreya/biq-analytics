@@ -103,6 +103,15 @@ const agent = createAgent("data-science", {
     // Phase 1.10: Telemetry collector
     const collector = new SpanCollector("data-science", input.sessionId);
 
+    // Defensive: ctx.config can be undefined if setup() threw (DB issue, cold start race)
+    if (!ctx.config) {
+      ctx.logger.error("Data science agent config is undefined — setup() likely failed");
+      return {
+        text: "I'm temporarily unable to process your request — the system configuration could not be loaded. Please try again in a moment.",
+        toolCalls: [],
+      };
+    }
+
     const {
       agentConfig,
       maxSteps,
@@ -120,7 +129,8 @@ const agent = createAgent("data-science", {
       DEFAULT_TOKEN_BUDGETS["data-science"];
 
     // Access app-level AI settings from ctx.app (loaded once in app.ts setup)
-    const ai = (ctx.app as unknown as { aiSettings: AISettings }).aiSettings;
+    const appState = ctx.app as unknown as { aiSettings?: AISettings } | undefined;
+    const ai = appState?.aiSettings;
 
     // Build per-request tool set -- sandbox API injected via closure
     const sandboxCfg = (agentConfig.config ?? {}) as Record<string, unknown>;

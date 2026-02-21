@@ -145,7 +145,6 @@ export default function Sidebar({ config, currentPage, onNavigate, user, onLogou
               ⏻
             </button>
           </div>
-          <div className="sidebar-powered-footer">Powered by Business IQ Enterprise</div>
         </div>
       </aside>
     </>

@@ -14,8 +14,14 @@ router.use(sessionMiddleware());
 
 /** GET /api/settings — all business settings */
 router.get("/settings", async (c) => {
-  const settings = await settingsSvc.getAllSettings();
-  return c.json({ data: settings });
+  try {
+    const settings = await settingsSvc.getAllSettings();
+    return c.json({ data: settings });
+  } catch (err) {
+    // DB may not be ready on first load — return defaults gracefully
+    console.error("Failed to load settings:", err instanceof Error ? err.message : err);
+    return c.json({ data: {} }, 500);
+  }
 });
 
 /** PUT /api/settings — update business settings */

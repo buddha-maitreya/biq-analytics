@@ -29,7 +29,7 @@ reports.use(sessionMiddleware());
  *   { type: ReportType, periodDays?: number }
  * The handler maps this to the report-generator agent’s input schema.
  */
-reports.post("/generate",
+reports.post("/reports/generate",
   dynamicRateLimit("rateLimitReport", { windowMs: 60_000, prefix: "report-gen", message: "Report generation rate limit reached. Please wait." }),
   validator({ input: generateReportSchema }),
   async (c) => {
@@ -74,7 +74,7 @@ reports.post("/generate",
 // ════════════════════════════════════════════════════════════
 
 /** GET /reports/history — List saved reports (newest first) */
-reports.get("/history", async (c) => {
+reports.get("/reports/history", async (c) => {
   const type = c.req.query("type") || undefined;
   const limitStr = c.req.query("limit");
   const limit = limitStr ? parseInt(limitStr, 10) : 50;
@@ -83,7 +83,7 @@ reports.get("/history", async (c) => {
 });
 
 /** GET /reports/:id — Get a single saved report by ID */
-reports.get("/:id", async (c) => {
+reports.get("/reports/:id", async (c) => {
   const id = c.req.param("id");
   const report = await getReportById(id);
   if (!report) return c.json({ error: "Report not found" }, 404);
@@ -91,7 +91,7 @@ reports.get("/:id", async (c) => {
 });
 
 /** DELETE /reports/:id — Delete a saved report */
-reports.delete("/:id", async (c) => {
+reports.delete("/reports/:id", async (c) => {
   const id = c.req.param("id");
   const deleted = await deleteReport(id);
   if (!deleted) return c.json({ error: "Report not found" }, 404);
@@ -99,7 +99,7 @@ reports.delete("/:id", async (c) => {
 });
 
 /** GET /reports/:id/download — Get a presigned S3 download URL */
-reports.get("/:id/download", async (c) => {
+reports.get("/reports/:id/download", async (c) => {
   const id = c.req.param("id");
   const report = await getReportById(id);
   if (!report) return c.json({ error: "Report not found" }, 404);
@@ -124,7 +124,7 @@ export const exportSchema = s.object({
 });
 
 /** GET /reports/export/formats — List available export formats */
-reports.get("/export/formats", (c) => {
+reports.get("/reports/export/formats", (c) => {
   return c.json({ data: EXPORT_FORMATS });
 });
 
@@ -136,7 +136,7 @@ reports.get("/export/formats", (c) => {
  *
  * Branding (company name, logo, colors) is applied automatically from business_settings.
  */
-reports.post("/export",
+reports.post("/reports/export",
   dynamicRateLimit("rateLimitReport", { windowMs: 60_000, prefix: "report-export", message: "Export rate limit reached. Please wait." }),
   validator({ input: exportSchema }),
   async (c) => {
@@ -159,7 +159,7 @@ reports.post("/export",
  *
  * Query param: ?format=pdf|xlsx|docx|pptx
  */
-reports.post("/:id/export", async (c) => {
+reports.post("/reports/:id/export", async (c) => {
   const id = c.req.param("id");
   const format = (c.req.query("format") || "pdf") as ExportFormat;
 

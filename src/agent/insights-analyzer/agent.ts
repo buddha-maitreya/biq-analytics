@@ -117,10 +117,21 @@ const agent = createAgent("insights-analyzer", {
       sandboxRuntime,
       sandboxDeps,
       sandboxMemory,
-    } = ctx.config;
+    } = ctx.config ?? {} as any;
+
+    if (!ctx.config) {
+      ctx.logger.error("Insights analyzer config is undefined — setup() likely failed");
+      return {
+        analysisType: input.analysis,
+        generatedAt: new Date().toISOString(),
+        insights: [],
+        summary: "Analysis is temporarily unavailable — the system configuration could not be loaded. Please try again.",
+      };
+    }
 
     // Access app-level AI settings from ctx.app (loaded once in app.ts setup)
-    const ai = (ctx.app as unknown as { aiSettings: AISettings }).aiSettings;
+    const appState = ctx.app as unknown as { aiSettings?: AISettings } | undefined;
+    const ai = appState?.aiSettings;
 
     // ── Build the sandbox tool (closes over ctx.sandbox) ────
     const effectiveRuntime = (sandboxRuntime as SandboxRuntime) ?? "python:3.14";

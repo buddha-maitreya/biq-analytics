@@ -116,6 +116,21 @@ const agent = createAgent("report-generator", {
     // Phase 1.10: Telemetry collector
     const collector = new SpanCollector("report-generator");
 
+    // Defensive: ctx.config can be undefined if setup() threw (DB issue, cold start race, etc.)
+    if (!ctx.config) {
+      ctx.logger.error("Report generator config is undefined — setup() likely failed");
+      return {
+        title: "Report Unavailable",
+        reportType: input.reportType,
+        period: {
+          start: input.startDate ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+          end: input.endDate ?? new Date().toISOString(),
+        },
+        content: "The report generator is temporarily unavailable. The system configuration could not be loaded. Please try again in a moment.",
+        generatedAt: new Date().toISOString(),
+      };
+    }
+
     const { agentConfig, maxSqlSteps, defaultFormat, temperature } = ctx.config;
 
     // Phase 7.5: Token budget tracker
@@ -125,7 +140,8 @@ const agent = createAgent("report-generator", {
       DEFAULT_TOKEN_BUDGETS["report-generator"];
 
     // Access app-level AI settings from ctx.app (loaded once in app.ts setup)
-    const ai = (ctx.app as unknown as { aiSettings: AISettings }).aiSettings;
+    const appState = ctx.app as unknown as { aiSettings?: AISettings } | undefined;
+    const ai = appState?.aiSettings;
 
     // ── Compute date range ──────────────────────────────────
     const end = input.endDate ? new Date(input.endDate) : new Date();

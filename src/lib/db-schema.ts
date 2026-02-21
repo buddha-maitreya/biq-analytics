@@ -28,7 +28,7 @@ Tables:
 - customers(id uuid, name varchar, email varchar, phone varchar, address text, credit_limit numeric, balance numeric, is_active boolean, metadata jsonb, created_at timestamptz, updated_at timestamptz)
 - order_statuses(id uuid, name varchar, label varchar, color varchar, sort_order int, is_default boolean, is_final boolean, created_at timestamptz, updated_at timestamptz)
 - orders(id uuid, order_number varchar, customer_id uuid FK->customers, status_id uuid FK->order_statuses, subtotal numeric, tax_amount numeric, discount_amount numeric, total_amount numeric, payment_method varchar, payment_reference varchar, payment_status varchar, notes text, metadata jsonb, created_at timestamptz, updated_at timestamptz)
-- order_items(id uuid, order_id uuid FK->orders, item_type varchar, product_id uuid FK->products, service_id uuid FK->services, description text, quantity numeric, unit_price numeric, discount numeric, total_amount numeric, start_date timestamptz, end_date timestamptz, metadata jsonb, created_at timestamptz, updated_at timestamptz)
+- order_items(id uuid, order_id uuid FK->orders, item_type varchar, product_id uuid FK->products, service_id uuid FK->services, description text, quantity numeric, unit_price numeric, discount numeric, total_amount numeric, start_date timestamptz [SERVICE BOOKING date only — NOT the order date], end_date timestamptz [SERVICE BOOKING end — NOT the order date], metadata jsonb, created_at timestamptz, updated_at timestamptz)
 - invoices(id uuid, invoice_number varchar, order_id uuid FK->orders, customer_id uuid FK->customers, total_amount numeric, tax_amount numeric, paid_amount numeric, status varchar, due_date timestamptz, notes text, metadata jsonb, created_at timestamptz, updated_at timestamptz)
 - payments(id uuid, invoice_id uuid FK->invoices, amount numeric, payment_method varchar, reference varchar, notes text, metadata jsonb, created_at timestamptz, updated_at timestamptz)
 - users(id uuid, email varchar, name varchar, role varchar, password_hash text, permissions jsonb, assigned_warehouses jsonb, is_active boolean, last_login_at timestamptz, created_at timestamptz, updated_at timestamptz)
@@ -84,5 +84,10 @@ Key relationships:
 - schedules.created_by -> users.id (who created schedule)
 - schedule_executions.schedule_id -> schedules.id (execution history)
 - prompt_templates.created_by -> users.id (who edited prompt)
+
+IMPORTANT QUERY PATTERNS:
+- To filter orders by date, ALWAYS use orders.created_at (e.g. WHERE o.created_at >= NOW() - INTERVAL '30 days'). NEVER use order_items.start_date for this — that column is only for service bookings.
+- To find fast/slow-moving products, JOIN order_items with orders and filter on orders.created_at.
+- order_items.start_date and end_date are ONLY for service bookings (item_type = 'service'), not for stock sales.
 
 SQL DIALECT: PostgreSQL. Use INTERVAL, ILIKE, STRING_AGG, EXTRACT, date_trunc, etc. NEVER MySQL syntax.` as const;

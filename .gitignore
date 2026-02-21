@@ -28,5 +28,8 @@ src/db/migrations/meta/
 .DS_Store
 Thumbs.db
 
+# Demo CSV data
+demo/data/
+
 # Logs
 *.log

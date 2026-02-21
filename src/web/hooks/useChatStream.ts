@@ -376,43 +376,67 @@ export function useChatStream() {
   const retryCountRef = useRef(0);
   const shouldReconnectRef = useRef(true);
   const lastUserMessageRef = useRef<string | null>(null);
+  /** Tracks whether we've had at least one successful SSE open */
+  const hasConnectedRef = useRef(false);
+  /** Consecutive auth failures — stop reconnecting if auth is truly expired */
+  const authFailCountRef = useRef(0);
 
   // ── SSE connection lifecycle ───────────────────────────
   // 1. Pre-flight auth check (prevents reconnect loop on 401)
   // 2. Hydrate messages from REST
   // 3. Connect EventSource
-  // 4. Capped exponential backoff reconnect (max 5 retries)
-  // 5. Cleanup on unmount / session change
+  // 4. Silent auto-reconnect for infrastructure drops (HTTP/2 proxy resets)
+  // 5. Auth failures stop reconnection permanently
+  // 6. Cleanup on unmount / session change
 
   useEffect(() => {
     if (!state.activeSessionId) return;
     const sessionId = state.activeSessionId;
 
     retryCountRef.current = 0;
+    authFailCountRef.current = 0;
+    hasConnectedRef.current = false;
     shouldReconnectRef.current = true;
 
     // ── EventSource with reconnect ───────────────────────
 
-    function scheduleReconnect(reason?: string) {
+    /**
+     * Schedule a reconnect. Infrastructure-level drops (HTTP/2 resets,
+     * proxy timeouts) are normal for long-lived SSE — we reconnect
+     * silently without counting them as failures. Only actual errors
+     * (auth expired, server errors on pre-flight) count against
+     * MAX_RETRIES.
+     *
+     * @param isFatal - true if this is a real error (auth/server), not
+     *                  just an infrastructure connection cycle
+     */
+    function scheduleReconnect(reason?: string, isFatal = false) {
       if (!shouldReconnectRef.current) return;
       if (reconnectTimerRef.current) return;
-      retryCountRef.current += 1;
-      if (retryCountRef.current <= MAX_RETRIES) {
+
+      if (isFatal) {
+        retryCountRef.current += 1;
+        if (retryCountRef.current > MAX_RETRIES) {
+          dispatch({
+            type: "DISCONNECTED",
+            error: reason ?? "Max reconnection attempts reached",
+          });
+          shouldReconnectRef.current = false;
+          return;
+        }
         dispatch({ type: "DISCONNECTED", error: reason });
-        const delay = Math.min(
-          RECONNECT_DELAY_MS * Math.pow(1.5, retryCountRef.current - 1),
-          10_000
-        );
-        reconnectTimerRef.current = setTimeout(() => {
-          reconnectTimerRef.current = null;
-          connect();
-        }, delay);
-      } else {
-        dispatch({
-          type: "DISCONNECTED",
-          error: reason ?? "Max reconnection attempts reached",
-        });
       }
+      // For non-fatal (infrastructure) drops: don't increment retry count,
+      // don't dispatch DISCONNECTED (avoids UI flash), just reconnect silently.
+
+      const delay = isFatal
+        ? Math.min(RECONNECT_DELAY_MS * Math.pow(1.5, retryCountRef.current - 1), 10_000)
+        : RECONNECT_DELAY_MS; // quick reconnect for infrastructure drops
+
+      reconnectTimerRef.current = setTimeout(() => {
+        reconnectTimerRef.current = null;
+        connect();
+      }, delay);
     }
 
     /**
@@ -431,13 +455,21 @@ export function useChatStream() {
           headers: getAuthHeaders(),
         });
         if (res.status === 401 || res.status === 403) {
-          dispatch({
-            type: "DISCONNECTED",
-            error: "Session expired — please sign in again.",
-          });
-          shouldReconnectRef.current = false;
+          authFailCountRef.current += 1;
+          if (authFailCountRef.current >= 2) {
+            // Two consecutive auth failures — definitely expired
+            dispatch({
+              type: "DISCONNECTED",
+              error: "Session expired — please sign in again.",
+            });
+            shouldReconnectRef.current = false;
+            return false;
+          }
+          // First auth failure — might be transient, let reconnect try once more
           return false;
         }
+        // Auth succeeded — reset failure count
+        authFailCountRef.current = 0;
         if (res.ok) {
           const body: { data: ChatMessage[] } = await res.json();
           if (body.data?.length) {
@@ -454,7 +486,14 @@ export function useChatStream() {
     async function connect() {
       // Pre-flight: verify auth + hydrate messages before opening EventSource
       const authOk = await verifyAuthAndHydrate();
-      if (!authOk || !shouldReconnectRef.current) return;
+      if (!authOk) {
+        if (shouldReconnectRef.current) {
+          // Auth failed but we haven't given up yet — schedule a fatal retry
+          scheduleReconnect("Authentication check failed", true);
+        }
+        return;
+      }
+      if (!shouldReconnectRef.current) return;
 
       // EventSource sends cookies automatically for same-origin requests
       const url = `/api/chat/sessions/${sessionId}/events`;
@@ -463,6 +502,7 @@ export function useChatStream() {
 
       es.onopen = () => {
         retryCountRef.current = 0;
+        hasConnectedRef.current = true;
         if (reconnectTimerRef.current) {
           clearTimeout(reconnectTimerRef.current);
           reconnectTimerRef.current = null;
@@ -482,7 +522,15 @@ export function useChatStream() {
       es.onerror = () => {
         if (eventSourceRef.current !== es) return;
         es.close();
-        scheduleReconnect("Connection lost");
+        // If we've successfully connected before, this is likely an
+        // infrastructure drop (HTTP/2 proxy reset, Agentuity connection
+        // cycling). Reconnect silently without flashing "Connection lost".
+        if (hasConnectedRef.current) {
+          scheduleReconnect(); // silent, non-fatal
+        } else {
+          // Never connected — this is a real error
+          scheduleReconnect("Connection lost", true);
+        }
       };
     }
 

@@ -355,13 +355,9 @@ const RECONNECT_DELAY_MS = 2_000;
 /** Max retries (from Coder) */
 const MAX_RETRIES = 15;
 
-function getAuthToken(): string | null {
-  return localStorage.getItem("biq_token");
-}
-
+/** Auth headers — cookies are sent automatically by the browser for same-origin requests */
 function getAuthHeaders(): Record<string, string> {
-  const token = getAuthToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return {};
 }
 
 // ────────────────────────────────────────────────────────────
@@ -386,8 +382,6 @@ export function useChatStream() {
   useEffect(() => {
     if (!state.activeSessionId) return;
     const sessionId = state.activeSessionId;
-    const token = getAuthToken();
-    if (!token) return;
 
     retryCountRef.current = 0;
     shouldReconnectRef.current = true;
@@ -434,8 +428,8 @@ export function useChatStream() {
     }
 
     function connect() {
-      // EventSource with auth via query param (can't use headers)
-      const url = `/api/chat/sessions/${sessionId}/events?token=${encodeURIComponent(token!)}`;
+      // EventSource sends cookies automatically for same-origin requests
+      const url = `/api/chat/sessions/${sessionId}/events`;
       const es = new EventSource(url);
       eventSourceRef.current = es;
 
@@ -617,6 +611,26 @@ export function useChatStream() {
     []
   );
 
+  // ── Cancel generation ──────────────────────────────────
+
+  const cancelStream = useCallback(async () => {
+    const sessionId = state.activeSessionId;
+    if (!sessionId) return;
+
+    // Reset client state immediately for responsive UX
+    dispatch({ type: "SESSION_STATUS", status: "idle" });
+
+    // Tell the backend to abort the in-flight AI generation 
+    try {
+      await fetch(`/api/chat/sessions/${sessionId}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      });
+    } catch {
+      // Best-effort — client state is already reset
+    }
+  }, [state.activeSessionId]);
+
   // ── Derived helpers (memoized, like Coder) ─────────────
 
   /** Messages sorted by creation time (ascending) — mirrors Coder's sortedMessages */
@@ -656,6 +670,7 @@ export function useChatStream() {
       deleteSession,
       sendMessage,
       retryLastMessage,
+      cancelStream,
       submitFeedback,
     }),
     [
@@ -673,6 +688,7 @@ export function useChatStream() {
       deleteSession,
       sendMessage,
       retryLastMessage,
+      cancelStream,
       submitFeedback,
     ]
   );

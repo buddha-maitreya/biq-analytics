@@ -124,3 +124,19 @@ export interface SearchKnowledgeSuccess {
 export interface SearchKnowledgeError extends ToolErrorResult {}
 
 export type SearchKnowledgeResult = SearchKnowledgeSuccess | SearchKnowledgeError;
+
+// ────────────────────────────────────────────────────────────
+// export_report (binary export — PDF/Excel/Word/PowerPoint)
+// ────────────────────────────────────────────────────────────
+
+export interface ExportReportSuccess {
+  downloadUrl: string;
+  filename: string;
+  format: string;
+  sizeBytes: number;
+  contentType: string;
+}
+
+export interface ExportReportError extends ToolErrorResult {}
+
+export type ExportReportResult = ExportReportSuccess | ExportReportError;

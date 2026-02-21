@@ -159,9 +159,7 @@ export default function ApprovalsPage({ config, user }: ApprovalsPageProps) {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
-  const token = typeof window !== "undefined" ? localStorage.getItem("biq_token") : null;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const showToast = (type: "success" | "error", message: string) => {
     setToast({ type, message });

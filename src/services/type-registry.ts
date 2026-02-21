@@ -52,17 +52,18 @@ const BUILTIN_ANALYSIS_TYPES: TypeDefinition[] = [
     description: "Predict future demand based on sales velocity and trends",
     promptTemplate: `Perform DEMAND FORECASTING analysis:
 - Fetch daily sales data and current stock levels for the last {timeframeDays} days for all {{PRODUCT_LABEL_PLURAL}}
-- Write JavaScript to compute: moving averages (7-day, 14-day), sales velocity, velocity acceleration/deceleration, days until stockout, demand variability (coefficient of variation)
+- Write Python to compute: moving averages (DF.rolling(7).mean(), DF.rolling(14).mean()), sales velocity, velocity acceleration/deceleration, days until stockout, demand variability (coefficient of variation via np.std/np.mean)
+- Use ExponentialSmoothing from statsmodels for trend extrapolation if enough data points
 - Identify {{PRODUCT_LABEL_PLURAL}} at risk of stockout and {{PRODUCT_LABEL_PLURAL}} with accelerating/decelerating demand
 - Return structured data with per-{{PRODUCT_LABEL}} forecasts sorted by risk level`,
     fewShotExamples: [
       {
         userInput: "Which products will run out first?",
-        expectedBehavior: "Fetch sales velocity and current stock, compute days-until-stockout for each product, sort by urgency and flag critical items.",
+        expectedBehavior: "Fetch sales velocity and current stock. Use pandas groupby + rolling mean to compute velocity per product. Calculate days-until-stockout, sort by urgency and flag critical items.",
       },
       {
         userInput: "Predict demand for next 2 weeks",
-        expectedBehavior: "Calculate 7-day and 14-day moving averages, extrapolate forward, identify acceleration/deceleration trends per product.",
+        expectedBehavior: "Use ExponentialSmoothing or scipy.stats.linregress to extrapolate 7-day and 14-day forecasts. Identify acceleration/deceleration trends per product using pandas pct_change().",
       },
     ],
   },
@@ -72,13 +73,14 @@ const BUILTIN_ANALYSIS_TYPES: TypeDefinition[] = [
     description: "Identify unusual patterns in orders, revenue, and pricing",
     promptTemplate: `Perform ANOMALY DETECTION analysis:
 - Fetch daily {{ORDER_LABEL}} volumes, revenue, and per-{{PRODUCT_LABEL}} sales data for the last {timeframeDays} days
-- Write JavaScript to compute: z-scores for daily volumes/revenue, IQR analysis for pricing outliers, volume spike detection
+- Write Python to compute: z-scores via scipy.stats.zscore() for daily volumes/revenue, IQR analysis for pricing outliers (np.percentile or DF.quantile), volume spike detection
+- Use IsolationForest from sklearn for multivariate anomaly detection if sufficient data
 - Flag any data point with |z-score| > 2 as anomalous
 - Return structured anomaly data with severity ratings, directions (spike/drop), and affected entities`,
     fewShotExamples: [
       {
         userInput: "Anything unusual in last month's sales?",
-        expectedBehavior: "Compute z-scores on daily revenue and order counts. Flag days with |z| > 2 as anomalies. Check for pricing outliers via IQR.",
+        expectedBehavior: "Use scipy.stats.zscore() on daily revenue and order counts. Flag days with |z| > 2. Use DF.quantile() for IQR-based pricing outlier detection.",
       },
     ],
   },
@@ -88,13 +90,14 @@ const BUILTIN_ANALYSIS_TYPES: TypeDefinition[] = [
     description: "Calculate optimal reorder quantities and urgency",
     promptTemplate: `Perform RESTOCK RECOMMENDATIONS analysis:
 - Fetch sales velocity data and current stock levels for the last {timeframeDays} days
-- Write JavaScript to compute: daily velocity per {{PRODUCT_LABEL}}, safety stock (1.5x lead time buffer assuming 7-day lead time), optimal reorder quantities, days of stock remaining, urgency classification
+- Write Python to compute: daily velocity per {{PRODUCT_LABEL}} (DF.groupby + rolling mean), safety stock (1.5x lead time buffer assuming 7-day lead time), optimal reorder quantities, days of stock remaining, urgency classification
+- Use numpy for statistical computations (np.std for demand variability, np.ceil for rounding)
 - Prioritize by urgency: out-of-stock > critical (<=3 days) > high (<=7 days) > medium (<=14 days) > low
 - Return structured recommendations sorted by urgency`,
     fewShotExamples: [
       {
         userInput: "What do I need to reorder?",
-        expectedBehavior: "Calculate safety stock levels using 1.5x lead time buffer, compare with current stock, classify urgency, and produce a sorted reorder list.",
+        expectedBehavior: "Use pandas groupby for per-product velocity. Compute safety stock with np.ceil(velocity * lead_time * 1.5). Classify urgency based on days_remaining, sort and return reorder list.",
       },
     ],
   },
@@ -104,17 +107,18 @@ const BUILTIN_ANALYSIS_TYPES: TypeDefinition[] = [
     description: "Analyze revenue trends, product momentum, and day-of-week patterns",
     promptTemplate: `Perform SALES TRENDS analysis:
 - Fetch weekly revenue, daily revenue, and per-{{PRODUCT_LABEL}} weekly breakdown for the last {timeframeDays} days
-- Write JavaScript to compute: overall growth rate (first half vs second half), {{PRODUCT_LABEL}} momentum scoring (recent vs earlier periods), day-of-week revenue patterns, peak identification
+- Write Python to compute: overall growth rate (first half vs second half using DF slicing), {{PRODUCT_LABEL}} momentum scoring (DF.pct_change() on recent vs earlier periods), day-of-week revenue patterns (DF.groupby(DF['date'].dt.dayofweek)), peak identification
+- Use scipy.stats.linregress for trend line fitting and p-value significance
 - Classify {{PRODUCT_LABEL_PLURAL}} as accelerating (>15% momentum), decelerating (<-15%), or steady
 - Return structured trend data with overall metrics, top growers, top decliners, and day patterns`,
     fewShotExamples: [
       {
         userInput: "How are sales trending?",
-        expectedBehavior: "Compute week-over-week growth, identify top accelerating and decelerating products, find peak revenue days.",
+        expectedBehavior: "Use scipy.stats.linregress for trend line. Compute week-over-week growth with pandas pct_change(). Identify top accelerating/decelerating products using momentum scoring.",
       },
       {
         userInput: "Which day of the week sells the most?",
-        expectedBehavior: "Aggregate revenue by day-of-week, identify peak and trough days, compute variance.",
+        expectedBehavior: "Use DF.groupby(DF['date'].dt.dayofweek).agg({'revenue': ['sum', 'mean']}) to aggregate by day-of-week. Identify peak and trough days.",
       },
     ],
   },

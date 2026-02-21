@@ -22,6 +22,13 @@
       "when": 1771444449400,
       "tag": "0006_add_approval_workflows",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1771654050963,
+      "tag": "0003_useful_mathemanic",
+      "breakpoints": true
     }
   ]
 }

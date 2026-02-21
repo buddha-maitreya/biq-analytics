@@ -1,23 +1,32 @@
 /**
  * Auth API Routes
  *
- * POST /auth/login    — Authenticate with email + password, returns JWT
- * GET  /auth/me       — Get current user from token
- * POST /auth/logout   — Clear auth cookie (client-side token removal)
- * POST /auth/password — Change password (authenticated)
+ * Legacy endpoints (will be removed after full migration):
+ *   POST /auth/login    — Authenticate with email + password, returns JWT
+ *   GET  /auth/me       — Get current user from token
+ *   POST /auth/logout   — Clear auth cookie (client-side token removal)
+ *   POST /auth/password — Change password (authenticated)
+ *
+ * BetterAuth endpoints (new — @agentuity/auth):
+ *   ALL /auth/*         — BetterAuth handles sign-in, sign-up, sign-out,
+ *                         session, OAuth, email verification, org management,
+ *                         API key management, etc.
  */
 
-import { createRouter, validator } from "@agentuity/runtime";
+import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
-import { loginSchema, changePasswordSchema } from "@lib/validation";
 import * as authSvc from "@services/auth";
+import { authRouteHandler } from "@lib/auth";
 
 const router = createRouter();
 router.use(errorMiddleware());
 
 // ── Login ────────────────────────────────────────────────────
-router.post("/auth/login", validator({ input: loginSchema }), async (c) => {
-  const { email, password } = c.req.valid("json");
+router.post("/auth/login", async (c) => {
+  const { email, password } = await c.req.json<{
+    email: string;
+    password: string;
+  }>();
 
   const result = await authSvc.login(email, password);
 
@@ -79,7 +88,7 @@ router.post("/auth/logout", (c) => {
 });
 
 // ── Change Password (authenticated) ──────────────────────────
-router.post("/auth/password", validator({ input: changePasswordSchema }), async (c) => {
+router.post("/auth/password", async (c) => {
   // Verify current auth
   let token: string | undefined;
   const authHeader = c.req.header("Authorization");
@@ -103,7 +112,14 @@ router.post("/auth/password", validator({ input: changePasswordSchema }), async 
     return c.json({ error: "Invalid token" }, 401);
   }
 
-  const { currentPassword, newPassword } = c.req.valid("json");
+  const { currentPassword, newPassword } = await c.req.json<{
+    currentPassword: string;
+    newPassword: string;
+  }>();
+
+  if (!newPassword || newPassword.length < 6) {
+    return c.json({ error: "New password must be at least 6 characters" }, 400);
+  }
 
   // Re-validate current password via login
   const check = await authSvc.login(user.email, currentPassword);
@@ -117,5 +133,11 @@ router.post("/auth/password", validator({ input: changePasswordSchema }), async 
 
   return c.json({ ok: true, message: "Password updated successfully" });
 });
+
+// ── BetterAuth Routes (new) ──────────────────────────────────
+// Mount all BetterAuth endpoints: sign-in/email, sign-up/email,
+// sign-out, get-session, organization/*, api-key/*, etc.
+// These coexist with legacy endpoints above during migration.
+router.on(["GET", "POST"], "/auth/*", authRouteHandler);
 
 export default router;

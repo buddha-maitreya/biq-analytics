@@ -105,6 +105,10 @@ const agent = createAgent("report-generator", {
     };
   },
 
+  shutdown: async (_app, _config) => {
+    // Graceful shutdown — reserved for report generation cleanup.
+  },
+
   handler: async (ctx, input) => {
     // Phase 1.9: Use request-scoped state for timing metadata
     ctx.state.set("startedAt", Date.now());
@@ -217,12 +221,12 @@ Period: ${periodStr}
 Pre-computed data:
 ${input.computedData}
 
-Report structure:
-1. Executive Summary (2-3 sentences, key highlights)
-2. Key Metrics (exact numbers from the data)
-3. Detailed Analysis (interpret what the numbers mean)
-4. Rankings & Breakdowns (top products, customers, etc.)
-5. Recommendations (specific, actionable next steps)`,
+Report structure (FOLLOW THIS EXACTLY):
+1. Executive Summary (## Executive Summary) — 2-3 sentences summarizing the key findings and why this report matters to the business.
+2. Key Metrics (## Key Metrics) — Present exact numbers from the data in a markdown table format.
+3. Detailed Analysis (## Detailed Analysis) — Interpret what the numbers mean for the business. Use markdown tables where data comparisons are relevant.
+4. Rankings & Breakdowns (## Rankings & Breakdowns) — Top products, customers, categories etc. Use ranked markdown tables.
+5. Conclusion (## Conclusion) — Key observations from the data and a specific, actionable recommended action plan with concrete next steps the business should take.`,
       }),
         { model: agentConfig.modelOverride ?? "default", path: "fast", reportType: input.reportType }
       );
@@ -372,12 +376,12 @@ ${formatInstruction}`,
 
 After fetching all the data you need, write a complete, professional "${title}" report.
 
-Report structure:
-1. Executive Summary (2-3 sentences highlighting the most important findings)
-2. Key Metrics (exact numbers from your queries -- do NOT approximate)
-3. Detailed Analysis (interpret what the numbers mean for the business)
-4. Rankings & Breakdowns (top products, customers, categories, etc.)
-5. Recommendations (specific, actionable next steps based on the data)
+Report structure (FOLLOW THIS EXACTLY):
+1. Executive Summary (## Executive Summary) — 2-3 sentences summarizing the key findings and why this report matters to the business.
+2. Key Metrics (## Key Metrics) — Present exact numbers from your queries in a markdown table. Do NOT approximate.
+3. Detailed Analysis (## Detailed Analysis) — Interpret what the numbers mean for the business. Use markdown tables where data comparisons are relevant.
+4. Rankings & Breakdowns (## Rankings & Breakdowns) — Top products, customers, categories, etc. Use ranked markdown tables.
+5. Conclusion (## Conclusion) — Key observations from the data and a specific, actionable recommended action plan with concrete next steps the business should take.
 
 Use exact numbers -- never round or approximate. Reference specific product names, SKUs, and customer names.`,
       tools: { fetch_data: fetchDataTool },
@@ -437,6 +441,40 @@ Use exact numbers -- never round or approximate. Reference specific product name
         ctx.logger.warn("Failed to persist report", { error: String(err) });
       }
       await cache.set(CACHE_NS.REPORT, cacheKeyStr, sqlResult, { ttl: CACHE_TTL.LONG });
+
+      // Create durable stream for downloadable report artifact
+      try {
+        const contentType = (input.format || defaultFormat) === "markdown"
+          ? "text/markdown" : "text/plain";
+        const reportStream = await ctx.stream.create("reports", {
+          contentType,
+          metadata: {
+            reportType: input.reportType,
+            title,
+            format: input.format || defaultFormat,
+          },
+          ttl: 86400 * 90, // 90 days retention
+        });
+        await reportStream.write(maskedSqlContent);
+        await reportStream.close();
+        (sqlResult as any).downloadUrl = reportStream.url;
+      } catch {
+        // Stream service unavailable — non-critical
+      }
+
+      // Publish report generated event for downstream consumers
+      try {
+        await ctx.queue.publish("report-events", {
+          event: "report.generated",
+          reportType: input.reportType,
+          title,
+          format: input.format || defaultFormat,
+          period: { start: start.toISOString(), end: end.toISOString() },
+          generatedAt: new Date().toISOString(),
+        });
+      } catch {
+        // Queue not provisioned — non-critical
+      }
     });
 
     // Phase 1.10: Flush telemetry (background)
@@ -446,6 +484,22 @@ Use exact numbers -- never round or approximate. Reference specific product name
 
     return sqlResult;
   },
+});
+
+// ── Agent-level event listeners (per-agent telemetry) ──────
+agent.addEventListener("started", (_event, _agentInfo, ctx) => {
+  ctx.logger.info("[report-generator] agent invocation started");
+});
+
+agent.addEventListener("completed", (_event, _agentInfo, ctx) => {
+  ctx.logger.info("[report-generator] agent invocation completed");
+});
+
+agent.addEventListener("errored", (_event, _agentInfo, ctx, error) => {
+  ctx.logger.error("[report-generator] agent invocation errored", {
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  });
 });
 
 export default agent;

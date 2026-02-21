@@ -62,6 +62,10 @@ const agent = createAgent("knowledge-base", {
     };
   },
 
+  shutdown: async (_app, _config) => {
+    // Graceful shutdown — reserved for vector index cleanup if needed.
+  },
+
   handler: async (ctx, input) => {
     // Phase 1.9: Use request-scoped state for timing metadata
     ctx.state.set("startedAt", Date.now());
@@ -448,6 +452,22 @@ GUARDRAILS:
       }
     }
   },
+});
+
+// ── Agent-level event listeners (per-agent telemetry) ──────
+agent.addEventListener("started", (_event, _agentInfo, ctx) => {
+  ctx.logger.info("[knowledge-base] agent invocation started");
+});
+
+agent.addEventListener("completed", (_event, _agentInfo, ctx) => {
+  ctx.logger.info("[knowledge-base] agent invocation completed");
+});
+
+agent.addEventListener("errored", (_event, _agentInfo, ctx, error) => {
+  ctx.logger.error("[knowledge-base] agent invocation errored", {
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  });
 });
 
 export default agent;

@@ -14,7 +14,7 @@
 
 import { createRouter, cron } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
+import { sessionMiddleware } from "@lib/auth";
 import { recordEvalResults, type RecordEvalInput } from "@services/eval-results";
 
 const router = createRouter();
@@ -241,7 +241,7 @@ router.post(
 
 // ── Manual trigger (admin-only) ─────────────────────────────
 
-router.post("/admin/evals/run", authMiddleware, async (c) => {
+router.post("/admin/evals/run", sessionMiddleware(), async (c) => {
   const logger = c.var.logger ?? console;
   logger.info("Starting manual eval run");
 

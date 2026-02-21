@@ -5,12 +5,17 @@
  * Architecture:
  *   1. LLM generates code + optional SQL query
  *   2. If SQL is provided, we execute it against the DB first
- *   3. Data is serialized as JSON and injected into the sandbox
+ *   3. Data is serialized as JSON and written as a file in the sandbox
  *   4. The sandbox runs the code in the chosen runtime (default: bun:1)
  *   5. The sandbox must write its JSON result to stdout
  *   6. We parse stdout and return structured results
  *
- * Phase 4 Enhancements:
+ * Uses the Agentuity sandbox SDK (`ctx.sandbox`):
+ *   - `sandbox.run()` for one-shot execution (auto-creates and destroys sandbox)
+ *   - `sandbox.create()` for interactive sessions (persistent sandbox)
+ *   - `sandbox.snapshot.create()` for pre-configured environment snapshots
+ *
+ * Enhancements:
  *   4.1 — Error classification (syntax/runtime/timeout/resource/import)
  *          Output size limits (configurable, default 512KB)
  *          Retry with LLM correction (up to N retries, structured error feedback)
@@ -40,8 +45,43 @@ const DEFAULT_MAX_OUTPUT_BYTES = 512 * 1024; // 512KB
 /** Maximum data rows to pass to sandbox */
 const MAX_DATA_ROWS = 500;
 
-/** Supported sandbox runtimes */
-export type SandboxRuntime = "bun:1" | "python" | "node";
+/** Supported sandbox runtimes (shorthand aliases + versioned names) */
+export type SandboxRuntime =
+  | "bun:1"
+  | "python:3.13"
+  | "python:3.14"
+  | "node:latest"
+  | "node:lts"
+  | "python"   // alias → python:3.14
+  | "node";    // alias → node:latest
+
+// ────────────────────────────────────────────────────────────
+// SDK format helpers
+// ────────────────────────────────────────────────────────────
+
+/** Resolve runtime aliases to fully-qualified runtime names per SDK convention. */
+function normalizeRuntime(runtime: SandboxRuntime): string {
+  switch (runtime) {
+    case "python": return "python:3.14";
+    case "node": return "node:latest";
+    default: return runtime;
+  }
+}
+
+/** Convert human-readable memory strings to Kubernetes-style (256MB → 256Mi). */
+function normalizeMemory(mem: string): string {
+  const m = mem.match(/^(\d+)\s*(MB|GB)$/i);
+  if (!m) return mem; // already Kubernetes-style (Mi/Gi) or unknown format
+  return m[2].toUpperCase() === "GB" ? `${m[1]}Gi` : `${m[1]}Mi`;
+}
+
+/** Convert milliseconds to a duration string for the sandbox API (30000 → "30s"). */
+function msToDuration(ms: number): string {
+  const s = Math.ceil(ms / 1000);
+  if (s >= 3600 && s % 3600 === 0) return `${s / 3600}h`;
+  if (s >= 60 && s % 60 === 0) return `${s / 60}m`;
+  return `${s}s`;
+}
 
 // ────────────────────────────────────────────────────────────
 // Error Classification
@@ -87,11 +127,14 @@ export function classifyError(
     combined.includes("unexpected end of input") ||
     combined.includes("unterminated string") ||
     combined.includes("missing )") ||
-    combined.includes("parse error")
+    combined.includes("parse error") ||
+    combined.includes("indentationerror") ||
+    combined.includes("unexpected indent") ||
+    combined.includes("expected an indented block")
   ) {
     return {
       type: "syntax",
-      hint: "The code has a syntax error. Check for missing brackets, semicolons, or typos.",
+      hint: "The code has a syntax error. For Python: check indentation (use 4 spaces), colons after if/for/def, and matching brackets.",
     };
   }
 
@@ -100,12 +143,14 @@ export function classifyError(
     combined.includes("cannot find module") ||
     combined.includes("module not found") ||
     combined.includes("cannot find package") ||
+    combined.includes("no module named") ||
+    combined.includes("modulenotfounderror") ||
     (combined.includes("is not defined") &&
       (combined.includes("require") || combined.includes("import")))
   ) {
     return {
       type: "import",
-      hint: "The code tries to import/require a module that is not available. Use only built-in APIs.",
+      hint: "The code tries to import a module that is not available. Use only pre-installed packages: numpy, pandas, scipy, scikit-learn, statsmodels, and Python built-ins.",
     };
   }
 
@@ -155,11 +200,17 @@ export function classifyError(
     combined.includes("cannot read properties") ||
     combined.includes("is not a function") ||
     combined.includes("is not defined") ||
-    combined.includes("undefined is not")
+    combined.includes("undefined is not") ||
+    combined.includes("nameerror") ||
+    combined.includes("attributeerror") ||
+    combined.includes("keyerror") ||
+    combined.includes("indexerror") ||
+    combined.includes("valueerror") ||
+    combined.includes("zerodivisionerror")
   ) {
     return {
       type: "runtime",
-      hint: "Runtime error in the code. Check for null/undefined access, wrong types, or undefined variables.",
+      hint: "Runtime error in the code. For Python: check for None/NaN values, wrong column names, empty DataFrames, zero division, or incorrect types. Use .fillna(), try/except, and len() checks.",
     };
   }
 
@@ -185,7 +236,7 @@ export function classifyError(
 // ────────────────────────────────────────────────────────────
 
 export interface SandboxInput {
-  /** Code to execute in the sandbox (JavaScript for bun:1/node, Python for python) */
+  /** Code to execute in the sandbox (Python for python runtimes, JavaScript for bun:1/node) */
   code: string;
   /** Optional SQL SELECT query to run first — results are passed as DATA to the sandbox */
   sqlQuery?: string;
@@ -197,13 +248,13 @@ export interface SandboxInput {
   timeoutMs?: number;
   /** Maximum output size in bytes (default: 512KB) */
   maxOutputBytes?: number;
-  /** Runtime to use (default: "bun:1") */
+  /** Runtime to use (default: "bun:1"). Accepts aliases: "python" → "python:3.14", "node" → "node:latest" */
   runtime?: SandboxRuntime;
-  /** Snapshot ID to restore from (faster cold start with pre-installed deps) */
+  /** Snapshot tag or ID to restore from (faster cold start with pre-installed deps) */
   snapshotId?: string;
-  /** Dependencies to pre-install (e.g. ["simple-statistics", "date-fns"]) */
+  /** @deprecated npm packages are no longer installed per-run. Use snapshots via createAnalysisSnapshot(). Ignored by executeSandbox(). */
   dependencies?: string[];
-  /** Memory limit (e.g. "256MB", "512MB") */
+  /** Memory limit in Kubernetes format (e.g. "256Mi", "512Mi", "1Gi"). Legacy "256MB" format is auto-converted. */
   memory?: string;
 }
 
@@ -291,21 +342,14 @@ function isSafeSelect(query: string): boolean {
 // ────────────────────────────────────────────────────────────
 
 /**
- * Builds the wrapper script for Bun/Node runtime.
- * Reads DATA from stdin, runs analysis code, outputs JSON to stdout.
+ * Builds the wrapper script for Bun runtime (.ts file).
+ * Reads DATA from data.json file, runs analysis code, outputs JSON to stdout.
  */
 function buildBunScript(analysisCode: string): string {
   return `
 // ── Sandbox wrapper ──────────────────────────────
-const chunks = [];
-const reader = Bun.stdin.stream().getReader();
-while (true) {
-  const { done, value } = await reader.read();
-  if (done) break;
-  chunks.push(value);
-}
-const rawInput = Buffer.concat(chunks).toString("utf-8");
-const DATA = rawInput ? JSON.parse(rawInput) : [];
+import { readFileSync } from 'fs';
+const DATA = JSON.parse(readFileSync('data.json', 'utf-8'));
 
 // ── Analysis code (LLM-generated) ────────────────
 try {
@@ -323,68 +367,186 @@ try {
 }
 
 /**
- * Builds the wrapper script for Python runtime.
- * Reads DATA from stdin as JSON, runs analysis code, outputs JSON to stdout.
+ * Builds the wrapper script for Node.js runtime (.js file).
+ * Uses async IIFE for top-level await compatibility.
+ */
+function buildNodeScript(analysisCode: string): string {
+  return `
+// ── Sandbox wrapper ──────────────────────────────
+const fs = require('fs');
+const DATA = JSON.parse(fs.readFileSync('data.json', 'utf-8'));
+
+(async () => {
+  try {
+    const __analysisResult = await (async () => {
+      ${analysisCode}
+    })();
+    if (__analysisResult !== undefined) {
+      console.log(JSON.stringify(__analysisResult));
+    }
+  } catch (err) {
+    console.error("Analysis error: " + (err?.message || String(err)));
+    process.exit(1);
+  }
+})();
+`;
+}
+
+/**
+ * Builds the wrapper script for Python runtime (.py file).
+ * Reads DATA from data.json file, imports data science libraries,
+ * runs analysis code, and outputs JSON to stdout.
+ *
+ * Key features:
+ * - Automatically imports numpy, pandas, scipy, sklearn, statsmodels, datetime
+ * - Provides DATA as both a raw list and a pandas DataFrame (DF)
+ * - Custom JSON encoder handles numpy/pandas types (ndarray, int64, Timestamp, etc.)
+ * - LLM code runs inside a function with access to all imports and data
  */
 function buildPythonScript(analysisCode: string): string {
   return `
 import sys
 import json
+import math
+from datetime import datetime, timedelta, date
+from collections import Counter, defaultdict
 
-# Read DATA from stdin
-raw_input = sys.stdin.read()
-DATA = json.loads(raw_input) if raw_input.strip() else []
+# ── Data science imports (pre-installed in snapshot) ────────
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
-# Analysis code (LLM-generated)
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
+
+try:
+    from scipy import stats as scipy_stats
+    from scipy.optimize import curve_fit
+except ImportError:
+    scipy_stats = None
+    curve_fit = None
+
+try:
+    from sklearn.linear_model import LinearRegression
+    from sklearn.ensemble import RandomForestRegressor, IsolationForest
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.cluster import KMeans
+    from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+except ImportError:
+    LinearRegression = None
+    RandomForestRegressor = None
+    IsolationForest = None
+    StandardScaler = None
+    KMeans = None
+    mean_squared_error = None
+    r2_score = None
+    mean_absolute_error = None
+
+try:
+    from statsmodels.tsa.holtwinters import ExponentialSmoothing
+    from statsmodels.tsa.seasonal import seasonal_decompose
+    from statsmodels.tsa.stattools import adfuller
+except ImportError:
+    ExponentialSmoothing = None
+    seasonal_decompose = None
+    adfuller = None
+
+# ── Custom JSON encoder for numpy/pandas types ─────────────
+class AnalysisEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if np is not None:
+            if isinstance(obj, (np.integer,)):
+                return int(obj)
+            if isinstance(obj, (np.floating,)):
+                if np.isnan(obj) or np.isinf(obj):
+                    return None
+                return float(obj)
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            if isinstance(obj, np.bool_):
+                return bool(obj)
+        if pd is not None:
+            if isinstance(obj, pd.Timestamp):
+                return obj.isoformat()
+            if isinstance(obj, pd.Series):
+                return obj.tolist()
+            if isinstance(obj, pd.DataFrame):
+                return obj.to_dict(orient='records')
+            if pd.isna(obj):
+                return None
+        if isinstance(obj, (date, datetime)):
+            return obj.isoformat()
+        if isinstance(obj, set):
+            return list(obj)
+        return super().default(obj)
+
+# ── Read DATA from data.json file ──────────────────────────
+with open('data.json', 'r') as __f:
+    DATA = json.load(__f)
+
+# Create a pandas DataFrame from DATA for convenient analysis
+if pd is not None and isinstance(DATA, list) and len(DATA) > 0:
+    DF = pd.DataFrame(DATA)
+    # Auto-convert date-like columns
+    for col in DF.columns:
+        if any(kw in col.lower() for kw in ['date', 'time', 'created', 'updated', 'at']):
+            try:
+                DF[col] = pd.to_datetime(DF[col], errors='coerce')
+            except Exception:
+                pass
+else:
+    DF = None
+
+# ── Analysis code (LLM-generated) ──────────────────────────
 try:
     def __run_analysis():
 ${analysisCode.split("\n").map((line) => `        ${line}`).join("\n")}
 
     __result = __run_analysis()
     if __result is not None:
-        print(json.dumps(__result))
+        print(json.dumps(__result, cls=AnalysisEncoder))
 except Exception as e:
+    import traceback
     print(f"Analysis error: {e}", file=sys.stderr)
+    traceback.print_exc(file=sys.stderr)
     sys.exit(1)
 `;
 }
 
 /** Build the appropriate wrapper script for the given runtime. */
 function buildScript(runtime: SandboxRuntime, code: string): string {
-  switch (runtime) {
-    case "python":
-      return buildPythonScript(code);
-    case "bun:1":
-    case "node":
-    default:
-      return buildBunScript(code);
+  if (runtime === "python" || runtime === "python:3.13" || runtime === "python:3.14") {
+    return buildPythonScript(code);
   }
+  if (runtime === "node" || runtime === "node:latest" || runtime === "node:lts") {
+    return buildNodeScript(code);
+  }
+  return buildBunScript(code);
 }
 
-/** Get the execution command for the given runtime. */
-function getExecCommand(runtime: SandboxRuntime, scriptFile: string): string {
-  switch (runtime) {
-    case "python":
-      return `cat data.json | python3 ${scriptFile}`;
-    case "node":
-      return `cat data.json | node ${scriptFile}`;
-    case "bun:1":
-    default:
-      return `cat data.json | bun run ${scriptFile}`;
+/** Get the execution command array for the sandbox SDK exec format. */
+function getExecArray(runtime: SandboxRuntime, scriptFile: string): string[] {
+  if (runtime === "python" || runtime === "python:3.13" || runtime === "python:3.14") {
+    return ["python3", scriptFile];
   }
+  if (runtime === "node" || runtime === "node:latest" || runtime === "node:lts") {
+    return ["node", scriptFile];
+  }
+  return ["bun", "run", scriptFile];
 }
 
 /** Get the script file extension for the given runtime. */
 function getScriptExt(runtime: SandboxRuntime): string {
-  switch (runtime) {
-    case "python":
-      return "py";
-    case "node":
-      return "js";
-    case "bun:1":
-    default:
-      return "ts";
+  if (runtime === "python" || runtime === "python:3.13" || runtime === "python:3.14") {
+    return "py";
   }
+  if (runtime === "node" || runtime === "node:latest" || runtime === "node:lts") {
+    return "js";
+  }
+  return "ts";
 }
 
 // ────────────────────────────────────────────────────────────
@@ -474,9 +636,10 @@ async function fetchData(
 /**
  * Execute LLM-generated code in an isolated sandbox.
  *
- * Supports bun:1 (default), python, and node runtimes.
- * Includes error classification, output size limits, and optional
- * snapshot restore for faster cold starts.
+ * Uses sandboxApi.run() (one-shot execution) which automatically
+ * creates and destroys the sandbox. Supports bun:1, python, and node
+ * runtimes. Includes error classification, output size limits, and
+ * optional snapshot restore for faster cold starts.
  *
  * @param sandboxApi - The sandbox API from the agent context (`ctx.sandbox`)
  * @param input - The code, optional SQL, and configuration
@@ -495,8 +658,7 @@ export async function executeSandbox(
     maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES,
     runtime = "bun:1",
     snapshotId,
-    dependencies,
-    memory = "256MB",
+    memory = "256Mi",
   } = input;
 
   // ── Step 1: Get data (from SQL or direct) ───────────────
@@ -504,41 +666,40 @@ export async function executeSandbox(
   if (fetched.error) return fetched.error;
   const { data, dataRowCount } = fetched;
 
-  // ── Step 2: Build and execute in sandbox ────────────────
+  // ── Step 2: Build script and run in sandbox ─────────────
   const scriptExt = getScriptExt(runtime);
   const scriptFile = `analysis.${scriptExt}`;
   const script = buildScript(runtime, code);
   const dataJson = JSON.stringify(data);
 
-  let sandbox: any = null;
   try {
-    // Create sandbox with optional snapshot restore and dependencies
-    const createOpts: Record<string, any> = {
-      runtime,
-      resources: { memory, cpu: 1, disk: "256MB" },
-      network: { enabled: false },
-      timeout: {
-        idle: timeoutMs + 5_000,
-        execution: timeoutMs + 5_000,
+    // Build run options for one-shot sandbox execution (SDK pattern)
+    const runOpts: Record<string, any> = {
+      command: {
+        exec: getExecArray(runtime, scriptFile),
+        files: [
+          { path: scriptFile, content: Buffer.from(script) },
+          { path: "data.json", content: Buffer.from(dataJson) },
+        ],
       },
+      resources: {
+        memory: normalizeMemory(memory),
+        cpu: "500m",
+      },
+      timeout: { execution: msToDuration(timeoutMs) },
+      network: { enabled: false },
     };
 
+    // Set runtime (resolve aliases like "python" → "python:3.14")
+    runOpts.runtime = normalizeRuntime(runtime);
+
+    // Use snapshot for pre-installed dependencies (faster cold start)
     if (snapshotId) {
-      createOpts.snapshot = snapshotId;
-    }
-    if (dependencies?.length) {
-      createOpts.dependencies = dependencies;
+      runOpts.snapshot = snapshotId;
     }
 
-    sandbox = await sandboxApi.create(createOpts);
-
-    // Write files to sandbox
-    await sandbox.writeFile(scriptFile, script);
-    await sandbox.writeFile("data.json", dataJson);
-
-    // Execute
-    const execCommand = getExecCommand(runtime, scriptFile);
-    const result = await sandbox.exec(execCommand);
+    // One-shot execution: creates sandbox, runs command, destroys sandbox
+    const result = await sandboxApi.run(runOpts);
 
     let stdout = (result.stdout || "").trim();
     const stderr = (result.stderr || "").trim();
@@ -611,16 +772,8 @@ export async function executeSandbox(
       explanation,
       runtime,
     };
-  } finally {
-    // Always clean up the sandbox
-    if (sandbox) {
-      try {
-        await sandbox.destroy?.();
-      } catch {
-        // Sandbox may already be destroyed by timeout — ignore
-      }
-    }
   }
+  // No finally/destroy needed — sandbox.run() auto-cleans up
 }
 
 // ────────────────────────────────────────────────────────────
@@ -696,7 +849,6 @@ export async function createSandboxSession(
   options: {
     runtime?: SandboxRuntime;
     snapshotId?: string;
-    dependencies?: string[];
     memory?: string;
     idleTimeoutMs?: number;
     executionTimeoutMs?: number;
@@ -705,21 +857,19 @@ export async function createSandboxSession(
   const {
     runtime = "bun:1",
     snapshotId,
-    dependencies,
-    memory = "256MB",
+    memory = "256Mi",
     idleTimeoutMs = 300_000,
     executionTimeoutMs = 60_000,
   } = options;
 
   const createOpts: Record<string, any> = {
-    runtime,
-    resources: { memory, cpu: 1, disk: "256MB" },
+    runtime: normalizeRuntime(runtime),
+    resources: { memory: normalizeMemory(memory), cpu: "500m", disk: "1Gi" },
     network: { enabled: false },
-    timeout: { idle: idleTimeoutMs, execution: executionTimeoutMs },
+    timeout: { idle: msToDuration(idleTimeoutMs), execution: msToDuration(executionTimeoutMs) },
   };
 
   if (snapshotId) createOpts.snapshot = snapshotId;
-  if (dependencies?.length) createOpts.dependencies = dependencies;
 
   const sandbox = await sandboxApi.create(createOpts);
   let isDestroyed = false;
@@ -730,28 +880,50 @@ export async function createSandboxSession(
 
     async exec(command: string) {
       if (isDestroyed) throw new Error("Sandbox session has been destroyed");
-      const result = await sandbox.exec(command);
+      const execution = await sandbox.execute({ command: ["bash", "-c", command] });
+
+      // execute() returns stream URLs — fetch content as text
+      let stdout = "";
+      let stderr = "";
+      if (execution.stdoutStreamUrl) {
+        try {
+          const res = await fetch(execution.stdoutStreamUrl);
+          stdout = await res.text();
+        } catch { /* ignore stream fetch errors */ }
+      }
+      if (execution.stderrStreamUrl) {
+        try {
+          const res = await fetch(execution.stderrStreamUrl);
+          stderr = await res.text();
+        } catch { /* ignore stream fetch errors */ }
+      }
+
       return {
-        stdout: (result.stdout || "").trim(),
-        stderr: (result.stderr || "").trim(),
-        exitCode: result.exitCode ?? 0,
+        stdout: stdout.trim(),
+        stderr: stderr.trim(),
+        exitCode: execution.exitCode ?? 0,
       };
     },
 
     async writeFile(path: string, content: string) {
       if (isDestroyed) throw new Error("Sandbox session has been destroyed");
-      await sandbox.writeFile(path, content);
+      await sandbox.writeFiles([{ path, content: Buffer.from(content) }]);
     },
 
     async snapshot() {
       if (isDestroyed) throw new Error("Sandbox session has been destroyed");
-      return sandbox.snapshot();
+      const sandboxId = sandbox.sandboxId ?? sandbox.id;
+      const snap = await sandboxApi.snapshot.create(sandboxId, {
+        name: `session-${Date.now()}`,
+        tag: "latest",
+      });
+      return { id: snap.snapshotId };
     },
 
     async destroy() {
       if (isDestroyed) return;
       isDestroyed = true;
-      try { await sandbox.destroy?.(); } catch { /* ignore */ }
+      try { await sandbox.destroy(); } catch { /* ignore */ }
     },
   };
 }
@@ -760,43 +932,68 @@ export async function createSandboxSession(
 // Snapshot helpers
 // ────────────────────────────────────────────────────────────
 
-/** Default dependencies for the analysis snapshot. */
-export const ANALYSIS_DEPENDENCIES = [
+/** Default dependencies for the JavaScript analysis snapshot. */
+export const JS_ANALYSIS_DEPENDENCIES = [
   "simple-statistics",
   "date-fns",
   "lodash",
 ];
 
+/** Default dependencies for the Python analysis snapshot. */
+export const PYTHON_ANALYSIS_DEPENDENCIES = [
+  "numpy",
+  "pandas",
+  "scipy",
+  "scikit-learn",
+  "statsmodels",
+];
+
 /**
- * Create a base analysis snapshot with common statistical dependencies.
+ * Create a base analysis snapshot with pre-installed dependencies.
  * Run once (e.g., during setup or via admin action) and store the
  * returned snapshot ID in agent_configs for reuse.
+ *
+ * For Python (default): installs numpy, pandas, scipy, scikit-learn, statsmodels.
+ * For Bun/Node: installs simple-statistics, date-fns, lodash.
  */
 export async function createAnalysisSnapshot(
   sandboxApi: any,
-  runtime: SandboxRuntime = "bun:1",
+  runtime: SandboxRuntime = "python:3.14",
   extraDeps: string[] = []
 ): Promise<{ snapshotId: string }> {
-  const deps = [...ANALYSIS_DEPENDENCIES, ...extraDeps];
+  const isPython = runtime === "python" || runtime === "python:3.13" || runtime === "python:3.14";
+  const baseDeps = isPython ? PYTHON_ANALYSIS_DEPENDENCIES : JS_ANALYSIS_DEPENDENCIES;
+  const deps = [...baseDeps, ...extraDeps];
+  const resolved = normalizeRuntime(runtime);
+
   const sandbox = await sandboxApi.create({
-    runtime,
-    resources: { memory: "512MB", cpu: 1, disk: "512MB" },
+    runtime: resolved,
+    resources: { memory: "512Mi", cpu: "1000m", disk: "1Gi" },
     network: { enabled: true }, // Need network to install packages
-    timeout: { idle: 120_000, execution: 120_000 },
+    timeout: { idle: "5m", execution: "5m" },
   });
 
   try {
-    if (runtime === "bun:1") {
-      await sandbox.exec(`bun add ${deps.join(" ")}`);
-    } else if (runtime === "python") {
-      await sandbox.exec(`pip install ${deps.join(" ")}`);
-    } else if (runtime === "node") {
-      await sandbox.exec(`npm install ${deps.join(" ")}`);
-    }
+    // Install packages using the appropriate package manager
+    // Python runtime uses uv (fast package manager) — command: uv pip install
+    const installCmd = resolved.startsWith("python")
+      ? ["uv", "pip", "install", ...deps]
+      : resolved.startsWith("node")
+        ? ["npm", "install", ...deps]
+        : ["bun", "add", ...deps];
 
-    const snapshot = await sandbox.snapshot();
-    return { snapshotId: snapshot.id };
+    await sandbox.execute({ command: installCmd });
+
+    // Save snapshot via the sandbox snapshot management API
+    const sandboxId = sandbox.sandboxId ?? sandbox.id;
+    const snapshot = await sandboxApi.snapshot.create(sandboxId, {
+      name: `analysis-${resolved.replace(":", "-")}`,
+      description: `Pre-installed analysis dependencies: ${deps.join(", ")}`,
+      tag: "latest",
+    });
+
+    return { snapshotId: snapshot.snapshotId };
   } finally {
-    try { await sandbox.destroy?.(); } catch { /* ignore */ }
+    try { await sandbox.destroy(); } catch { /* ignore */ }
   }
 }

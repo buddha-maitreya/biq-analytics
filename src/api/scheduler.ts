@@ -16,9 +16,10 @@
  *   GET    /admin/schedules/summary      — Execution summary stats
  */
 
-import { createRouter } from "@agentuity/runtime";
+import { createRouter, validator } from "@agentuity/runtime";
+import { s } from "@agentuity/schema";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
+import { sessionMiddleware } from "@lib/auth";
 import {
   listSchedules,
   getScheduleById,
@@ -31,9 +32,21 @@ import {
 } from "@services/scheduler";
 import scheduler from "@agent/scheduler";
 
+// ── Request schemas ───────────────────────────────────────
+const createScheduleSchema = s.object({
+  name: s.string(),
+  taskType: s.string(),
+  cronExpression: s.optional(s.string()),
+  taskConfig: s.optional(s.record(s.string(), s.unknown())),
+  timezone: s.optional(s.string()),
+  maxFailures: s.optional(s.number()),
+  isActive: s.optional(s.boolean()),
+  metadata: s.optional(s.record(s.string(), s.unknown())),
+});
+
 const router = createRouter();
 router.use(errorMiddleware());
-router.use(authMiddleware());
+router.use(sessionMiddleware());
 
 // ── List schedules ──────────────────────────────────────────
 
@@ -60,12 +73,8 @@ router.get("/admin/schedules/:id", async (c) => {
 
 // ── Create schedule ─────────────────────────────────────────
 
-router.post("/admin/schedules", async (c) => {
-  const body = await c.req.json();
-
-  if (!body.name || !body.taskType) {
-    return c.json({ error: "name and taskType are required" }, 400);
-  }
+router.post("/admin/schedules", validator({ input: createScheduleSchema }), async (c) => {
+  const body = c.req.valid("json");
 
   const schedule = await createSchedule({
     name: body.name,

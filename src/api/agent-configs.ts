@@ -1,12 +1,12 @@
 import { createRouter, validator } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
+import { sessionMiddleware } from "@lib/auth";
 import { updateAgentConfigSchema } from "@lib/validation";
 import * as agentSvc from "@services/agent-configs";
 
 const router = createRouter();
 router.use(errorMiddleware());
-router.use(authMiddleware());
+router.use(sessionMiddleware());
 
 /** GET /api/agent-configs — list all agent configs (with defaults for missing agents) */
 router.get("/agent-configs", async (c) => {

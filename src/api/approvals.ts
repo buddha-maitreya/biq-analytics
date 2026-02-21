@@ -1,11 +1,11 @@
 import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware, type AuthUser } from "@services/auth";
+import { sessionMiddleware, type AppUser as AuthUser } from "@lib/auth";
 import * as approvalSvc from "@services/approvals";
 
 const router = createRouter();
 router.use(errorMiddleware());
-router.use(authMiddleware());
+router.use(sessionMiddleware());
 
 // ─── Workflow CRUD (admin only) ──────────────────────────────
 
@@ -51,7 +51,7 @@ router.post("/approvals/workflows/seed", async (c) => {
 
 /** Submit an action for approval */
 router.post("/approvals/submit", async (c) => {
-  const auth = c.get("authUser" as any) as AuthUser;
+  const auth = c.get("appUser" as any) as AuthUser;
   const body = await c.req.json();
   const result = await approvalSvc.submitForApproval(auth.id, body);
 
@@ -63,14 +63,14 @@ router.post("/approvals/submit", async (c) => {
 
 /** Get pending approvals for the current user */
 router.get("/approvals/pending", async (c) => {
-  const auth = c.get("authUser" as any) as AuthUser;
+  const auth = c.get("appUser" as any) as AuthUser;
   const pending = await approvalSvc.getPendingApprovalsForUser(auth.id);
   return c.json({ data: pending });
 });
 
 /** Get pending approval count (for badge) */
 router.get("/approvals/pending/count", async (c) => {
-  const auth = c.get("authUser" as any) as AuthUser;
+  const auth = c.get("appUser" as any) as AuthUser;
   const count = await approvalSvc.getPendingApprovalCount(auth.id);
   return c.json({ data: { count } });
 });
@@ -93,7 +93,7 @@ router.get("/approvals/requests/:id", async (c) => {
 
 /** Make a decision (approve/reject) */
 router.post("/approvals/requests/:id/decide", async (c) => {
-  const auth = c.get("authUser" as any) as AuthUser;
+  const auth = c.get("appUser" as any) as AuthUser;
   const body = await c.req.json();
   const result = await approvalSvc.makeDecision(c.req.param("id"), auth.id, body);
   return c.json({ data: result });
@@ -101,7 +101,7 @@ router.post("/approvals/requests/:id/decide", async (c) => {
 
 /** Cancel an approval request (by requester) */
 router.post("/approvals/requests/:id/cancel", async (c) => {
-  const auth = c.get("authUser" as any) as AuthUser;
+  const auth = c.get("appUser" as any) as AuthUser;
   const result = await approvalSvc.cancelRequest(c.req.param("id"), auth.id);
   return c.json({ data: result });
 });

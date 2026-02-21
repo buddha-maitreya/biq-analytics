@@ -1,50 +1,20 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useAPI } from "@agentuity/react";
 import type { AppConfig } from "../types";
 
-/** Convert markdown report content to HTML for rich rendering */
-function renderReportMarkdown(md: string): string {
-  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-  // Process tables first (multi-line)
-  let html = md.replace(
-    /(\|.+\|[\r\n]+\|[-|\s:]+\|[\r\n]+((?:\|.+\|[\r\n]*)+))/g,
-    (match) => {
-      const rows = match.trim().split("\n").filter(r => !r.match(/^\|[\s-|:]+$/));
-      let table = "<table><thead>";
-      rows.forEach((row, idx) => {
-        const cells = row.split("|").filter(Boolean).map(c => c.trim());
-        const tag = idx === 0 ? "th" : "td";
-        const rowHtml = cells.map(c => `<${tag}>${esc(c)}</${tag}>`).join("");
-        if (idx === 0) {
-          table += `<tr>${rowHtml}</tr></thead><tbody>`;
-        } else {
-          table += `<tr>${rowHtml}</tr>`;
-        }
-      });
-      return table + "</tbody></table>";
-    }
-  );
-
-  // Process line by line for headers, lists, paragraphs
-  html = html
-    .replace(/^### (.*$)/gm, "<h3>$1</h3>")
-    .replace(/^## (.*$)/gm, "<h2>$1</h2>")
-    .replace(/^# (.*$)/gm, "<h1>$1</h1>")
-    .replace(/^---$/gm, "<hr>")
-    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.*?)\*/g, "<em>$1</em>")
-    .replace(/^- (.+)$/gm, "<li>$1</li>")
-    .replace(/^(\d+)\. (.+)$/gm, "<li>$2</li>")
-    .replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`)
-    .replace(/\n\n/g, "</p><p>")
-    .replace(/\n/g, "<br>");
-
-  return `<p>${html}</p>`;
-}
-
 interface ReportsPageProps {
   config: AppConfig;
+}
+
+interface SavedReport {
+  id: string;
+  title: string;
+  reportType: string;
+  periodStart: string;
+  periodEnd: string;
+  format: string;
+  createdAt: string;
+  isScheduled: boolean;
 }
 
 type ReportType = "sales-summary" | "inventory-health" | "customer-activity" | "financial-overview";
@@ -113,40 +83,51 @@ export default function ReportsPage({ config }: ReportsPageProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
+  const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
-  // Report history (persisted in localStorage)
-  const [reportHistory, setReportHistory] = useState<Array<{
-    id: string; title: string; type: ReportType; content: string;
-    generatedAt: string; startDate: string; endDate: string;
-  }>>(() => {
+  // Load report history
+  const loadHistory = async () => {
+    setHistoryLoading(true);
     try {
-      const saved = localStorage.getItem("biq_report_history");
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
-
-  const saveToHistory = (title: string, type: ReportType, content: string, startDate: string, endDate: string) => {
-    const entry = {
-      id: crypto.randomUUID(),
-      title, type, content,
-      generatedAt: new Date().toISOString(),
-      startDate, endDate,
-    };
-    const updated = [entry, ...reportHistory].slice(0, 20); // Keep last 20
-    setReportHistory(updated);
-    localStorage.setItem("biq_report_history", JSON.stringify(updated));
+      const res = await fetch("/api/reports/history?limit=25");
+      if (res.ok) {
+        const { data } = await res.json();
+        setSavedReports(data ?? []);
+      }
+    } catch {
+      // silent
+    } finally {
+      setHistoryLoading(false);
+    }
   };
 
-  const loadFromHistory = (entry: typeof reportHistory[0]) => {
-    setReportContent(entry.content);
-    setReportTitle(entry.title);
-    setGeneratedAt(new Date(entry.generatedAt).toLocaleString());
-    setReportType(entry.type);
+  useEffect(() => { loadHistory(); }, []);
+
+  // Load a saved report from history
+  const loadSavedReport = async (id: string) => {
+    try {
+      const res = await fetch(`/api/reports/${id}`);
+      if (!res.ok) return;
+      const { data } = await res.json();
+      setReportContent(data.content);
+      setReportTitle(data.title);
+      setGeneratedAt(new Date(data.createdAt).toLocaleString());
+      setHistoryOpen(false);
+    } catch {
+      // silent
+    }
   };
 
-  const clearHistory = () => {
-    setReportHistory([]);
-    localStorage.removeItem("biq_report_history");
+  // Delete a saved report
+  const deleteSavedReport = async (id: string) => {
+    try {
+      await fetch(`/api/reports/${id}`, { method: "DELETE" });
+      setSavedReports((prev) => prev.filter((r) => r.id !== id));
+    } catch {
+      // silent
+    }
   };
 
   const effectiveRange = datePreset === "custom"
@@ -188,7 +169,8 @@ export default function ReportsPage({ config }: ReportsPageProps) {
       setReportContent(content);
       setReportTitle(title);
       setGeneratedAt(new Date().toLocaleString());
-      saveToHistory(title, reportType, content, effectiveRange.start, effectiveRange.end);
+      // Refresh history since the agent persists reports
+      loadHistory();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -363,7 +345,55 @@ ${html}
             Generate and download business reports
           </span>
         </div>
+        <button
+          className="btn btn-secondary"
+          onClick={() => setHistoryOpen(!historyOpen)}
+        >
+          📋 History ({savedReports.length})
+        </button>
       </div>
+
+      {/* Report History Panel */}
+      {historyOpen && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <h3 style={{ margin: 0 }}>📋 Report History</h3>
+            <button className="btn btn-sm" onClick={() => setHistoryOpen(false)}>✕ Close</button>
+          </div>
+          {historyLoading ? (
+            <p className="text-muted">Loading...</p>
+          ) : savedReports.length === 0 ? (
+            <p className="text-muted">No saved reports yet. Generate your first report below.</p>
+          ) : (
+            <div className="report-history-list">
+              {savedReports.map((r) => {
+                const typeInfo = REPORT_TYPES.find((rt) => rt.value === r.reportType);
+                return (
+                  <div key={r.id} className="report-history-item" onClick={() => loadSavedReport(r.id)}>
+                    <div className="report-history-item-info">
+                      <span className="report-history-item-title">
+                        {typeInfo?.icon ?? "📄"} {r.title}
+                      </span>
+                      <span className="report-history-item-meta">
+                        {new Date(r.createdAt).toLocaleDateString()} ·{" "}
+                        {r.periodStart?.slice(0, 10)} → {r.periodEnd?.slice(0, 10)}
+                        {r.isScheduled && " · ⏰ Scheduled"}
+                      </span>
+                    </div>
+                    <button
+                      className="btn btn-sm btn-danger"
+                      onClick={(e) => { e.stopPropagation(); deleteSavedReport(r.id); }}
+                      title="Delete"
+                    >
+                      🗑
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Report Type Selection */}
       <div className="report-type-grid">
@@ -472,33 +502,9 @@ ${html}
               </button>
             </div>
           </div>
-          <div className="report-content-area report-markdown" dangerouslySetInnerHTML={{ __html: renderReportMarkdown(reportContent) }} />
-        </div>
-      )}
-
-      {/* Report History */}
-      {reportHistory.length > 0 && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <h3 style={{ margin: 0 }}>📋 Report History ({reportHistory.length})</h3>
-            <button className="btn btn-sm btn-secondary" onClick={clearHistory} title="Clear all history">
-              🗑️ Clear
-            </button>
+          <div className="report-content-area">
+            <pre className="report-text">{reportContent}</pre>
           </div>
-          <ul className="report-history-list">
-            {reportHistory.map((entry) => (
-              <li key={entry.id} className={`report-history-item ${reportContent === entry.content ? "active" : ""}`} onClick={() => loadFromHistory(entry)}>
-                <div className="report-history-item-info">
-                  <span className="report-history-item-title">
-                    {REPORT_TYPES.find(r => r.value === entry.type)?.icon} {entry.title}
-                  </span>
-                  <span className="report-history-item-meta">
-                    {new Date(entry.generatedAt).toLocaleDateString()} · {entry.startDate} — {entry.endDate}
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
         </div>
       )}
     </div>

@@ -2,10 +2,12 @@
  * Insights Analyzer Agent -- Evaluation Suite
  *
  * Phase 7.6: Quality evaluations for the statistical analysis agent.
+ * Phase 7.7: Preset evals from @agentuity/evals for production monitoring.
  * Evals run automatically via `waitUntil()` after each response.
  */
 
 import agent from "./agent";
+import { safety, conciseness } from "@agentuity/evals";
 
 /**
  * Insight Completeness: Ensures the analysis returned at least one insight
@@ -145,4 +147,33 @@ export const severityDistributionEval = agent.createEval(
       };
     },
   }
+);
+
+// ── Preset Evals from @agentuity/evals ──────────────────────
+// LLM-as-judge production monitoring for insight quality.
+
+export const safetyCheck = agent.createEval(
+  safety({
+    middleware: {
+      transformInput: (input: any) => ({
+        request: `${input.analysis} analysis for ${input.timeframeDays} days`,
+      }),
+      transformOutput: (output: any) => ({
+        response: output.summary ?? "",
+      }),
+    },
+  })
+);
+
+export const concisenessCheck = agent.createEval(
+  conciseness({
+    middleware: {
+      transformInput: (input: any) => ({
+        request: `${input.analysis} analysis`,
+      }),
+      transformOutput: (output: any) => ({
+        response: output.summary ?? "",
+      }),
+    },
+  })
 );

@@ -20,6 +20,18 @@ const DEFAULTS: Record<string, string> = {
   /** IANA timezone (e.g. Africa/Nairobi, America/New_York). Falls back to env TIMEZONE. */
   timezone: "",
 
+  // ── Rate Limits ───────────────────────────────────────────
+  /** Max chat messages per user per minute */
+  rateLimitChat: "30",
+  /** Max scan requests per user per minute */
+  rateLimitScan: "20",
+  /** Max report generations per user per minute */
+  rateLimitReport: "10",
+  /** Max webhook events per source per minute */
+  rateLimitWebhook: "100",
+  /** Max custom tool invocations per user per 24h */
+  rateLimitToolDaily: "100",
+
   // ── AI Configuration ──────────────────────────────────────
   // These control how the AI assistant behaves for this deployment.
   // All are optional — sensible defaults are used when empty.
@@ -157,4 +169,55 @@ export async function getAISettings(): Promise<AISettings> {
     ai[key] = all[key] ?? "";
   }
   return ai as AISettings;
+}
+
+// ── Rate Limit Settings ─────────────────────────────────────
+
+const RATE_LIMIT_KEYS = [
+  "rateLimitChat",
+  "rateLimitScan",
+  "rateLimitReport",
+  "rateLimitWebhook",
+  "rateLimitToolDaily",
+] as const;
+
+export interface RateLimitSettings {
+  /** Max chat messages per user per minute */
+  rateLimitChat: number;
+  /** Max scan requests per user per minute */
+  rateLimitScan: number;
+  /** Max report generations per user per minute */
+  rateLimitReport: number;
+  /** Max webhook events per source per minute */
+  rateLimitWebhook: number;
+  /** Max custom tool invocations per user per 24h */
+  rateLimitToolDaily: number;
+}
+
+/** In-memory cache so we don't hit the DB on every request */
+let _rlCache: RateLimitSettings | null = null;
+let _rlCacheAt = 0;
+const RL_CACHE_TTL = 60_000; // 1 minute
+
+/** Invalidate the rate limit cache (called when settings are saved) */
+export function invalidateRateLimitCache() {
+  _rlCache = null;
+  _rlCacheAt = 0;
+}
+
+/** Get rate limit settings as parsed numbers (cached for 1 min) */
+export async function getRateLimits(): Promise<RateLimitSettings> {
+  const now = Date.now();
+  if (_rlCache && now - _rlCacheAt < RL_CACHE_TTL) return _rlCache;
+
+  const all = await getAllSettings();
+  _rlCache = {
+    rateLimitChat: parseInt(all.rateLimitChat, 10) || 30,
+    rateLimitScan: parseInt(all.rateLimitScan, 10) || 20,
+    rateLimitReport: parseInt(all.rateLimitReport, 10) || 10,
+    rateLimitWebhook: parseInt(all.rateLimitWebhook, 10) || 100,
+    rateLimitToolDaily: parseInt(all.rateLimitToolDaily, 10) || 100,
+  };
+  _rlCacheAt = now;
+  return _rlCache;
 }

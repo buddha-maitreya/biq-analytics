@@ -2,6 +2,7 @@
  * Data Science Agent -- Evaluation Suite
  *
  * Phase 7.6: Quality evaluations for the orchestrator agent.
+ * Phase 7.7: Preset evals from @agentuity/evals for production monitoring.
  * Evals run automatically via `waitUntil()` after each response --
  * they do NOT block the response to the user.
  *
@@ -10,6 +11,7 @@
  */
 
 import agent from "./agent";
+import { safety, pii, politeness } from "@agentuity/evals";
 
 /**
  * Response Quality: Ensures the agent produces a non-trivial response.
@@ -243,3 +245,49 @@ export const hallucinationDetectionEval = agent.createEval("hallucination-detect
     };
   },
 });
+
+// ── Preset Evals from @agentuity/evals ──────────────────────
+// These use LLM-as-judge via the AI gateway for production-grade
+// safety, PII, and politeness monitoring. Middleware transforms
+// our agent schema to the preset's expected { request, response } shape.
+
+export const safetyCheck = agent.createEval(
+  safety({
+    middleware: {
+      transformInput: (input: any) => ({
+        request: input.message ?? "",
+        context: input.history?.slice(-3).map((h: any) => `${h.role}: ${h.content}`).join("\n"),
+      }),
+      transformOutput: (output: any) => ({
+        response: output.text ?? "",
+      }),
+    },
+  })
+);
+
+export const piiCheck = agent.createEval(
+  pii({
+    middleware: {
+      transformInput: (input: any) => ({
+        request: input.message ?? "",
+      }),
+      transformOutput: (output: any) => ({
+        response: output.text ?? "",
+      }),
+    },
+  })
+);
+
+export const politenessCheck = agent.createEval(
+  politeness({
+    threshold: 0.8,
+    middleware: {
+      transformInput: (input: any) => ({
+        request: input.message ?? "",
+      }),
+      transformOutput: (output: any) => ({
+        response: output.text ?? "",
+      }),
+    },
+  })
+);

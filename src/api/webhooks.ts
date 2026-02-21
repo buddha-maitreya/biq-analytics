@@ -24,7 +24,8 @@
 
 import { createRouter, validator } from "@agentuity/runtime";
 import { errorMiddleware, NotFoundError, ValidationError } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
+import { sessionMiddleware } from "@lib/auth";
+import { dynamicRateLimit } from "@lib/rate-limit";
 import { db, webhookSources as webhookSourcesTable, webhookEvents as webhookEventsTable } from "@db/index";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
@@ -187,7 +188,9 @@ webhooks.use(errorMiddleware());
  * POST /webhooks/:source — Receive a webhook event.
  * No auth middleware — webhooks are authenticated via signature.
  */
-webhooks.post("/webhooks/:source", async (c) => {
+webhooks.post("/webhooks/:source",
+  dynamicRateLimit("rateLimitWebhook", { windowMs: 60_000, prefix: "webhook", message: "Webhook rate limit exceeded" }),
+  async (c) => {
   const sourceName = c.req.param("source");
   const startTime = Date.now();
   const eventId = crypto.randomUUID();
@@ -305,7 +308,7 @@ webhooks.post("/webhooks/:source", async (c) => {
 /**
  * GET /webhooks — List configured webhook sources and recent events (admin).
  */
-webhooks.get("/webhooks", authMiddleware(), async (c) => {
+webhooks.get("/webhooks", sessionMiddleware(), async (c) => {
   await ensureSourcesLoaded();
 
   // Sources from cache (env + DB merged)
@@ -345,7 +348,7 @@ export const registerSchema = z.object({
   async: z.boolean().default(true),
 });
 
-webhooks.post("/webhooks/register", authMiddleware(), validator({ input: registerSchema }), async (c) => {
+webhooks.post("/webhooks/register", sessionMiddleware(), validator({ input: registerSchema }), async (c) => {
   const body = c.req.valid("json");
 
   // Upsert into DB
@@ -385,7 +388,7 @@ webhooks.post("/webhooks/register", authMiddleware(), validator({ input: registe
  * DELETE /webhooks/:source — Deactivate a webhook source (admin).
  * Updates DB and in-memory cache.
  */
-webhooks.delete("/webhooks/:source", authMiddleware(), async (c) => {
+webhooks.delete("/webhooks/:source", sessionMiddleware(), async (c) => {
   const sourceName = c.req.param("source");
   const source = webhookSourceCache.get(sourceName);
   if (!source) throw new NotFoundError("Webhook source", sourceName);

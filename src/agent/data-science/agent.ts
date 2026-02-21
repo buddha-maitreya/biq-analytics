@@ -75,6 +75,13 @@ const agent = createAgent("data-science", {
     };
   },
 
+  shutdown: async (_app, _config) => {
+    // Graceful shutdown — clean up any held resources.
+    // Currently config is stateless; hook is here for lifecycle completeness
+    // and to make it trivial to add real cleanup (e.g. abort controllers,
+    // connection pools) in the future.
+  },
+
   handler: async (ctx, input) => {
     // Phase 1.9: Use request-scoped state for timing metadata
     ctx.state.set("startedAt", Date.now());
@@ -299,6 +306,22 @@ const agent = createAgent("data-science", {
       toolCalls: collectedToolCalls.length ? collectedToolCalls : undefined,
     };
   },
+});
+
+// ── Agent-level event listeners (per-agent telemetry) ──────
+agent.addEventListener("started", (_event, _agentInfo, ctx) => {
+  ctx.logger.info("[data-science] agent invocation started");
+});
+
+agent.addEventListener("completed", (_event, _agentInfo, ctx) => {
+  ctx.logger.info("[data-science] agent invocation completed");
+});
+
+agent.addEventListener("errored", (_event, _agentInfo, ctx, error) => {
+  ctx.logger.error("[data-science] agent invocation errored", {
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  });
 });
 
 export default agent;

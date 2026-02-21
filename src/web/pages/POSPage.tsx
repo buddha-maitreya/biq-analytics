@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+﻿import React, { useState, useEffect, useMemo, useCallback } from "react";
 import type { AppConfig } from "../types";
 
 interface POSPageProps {
@@ -59,8 +59,6 @@ export default function POSPage({ config }: POSPageProps) {
   const [paymentReference, setPaymentReference] = useState("");
   const [processing, setProcessing] = useState(false);
   const [lastOrder, setLastOrder] = useState<{ id: string; orderNumber: string } | null>(null);
-  const [scanning, setScanning] = useState(false);
-  const scanInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const loadAll = async () => {
@@ -108,66 +106,6 @@ export default function POSPage({ config }: POSPageProps) {
   const taxRate = parseFloat(process.env.TAX_RATE || "0.16") || 0;
   const cartTax = cartSubtotal * taxRate;
   const cartTotal = cartSubtotal + cartTax;
-
-  /** Handle barcode/QR scan from camera capture */
-  const handleBarcodeScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = "";
-    setScanning(true);
-    try {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64 = (reader.result as string).split(",")[1];
-        try {
-          // Step 1: Send image to document-scanner agent for barcode extraction
-          const scanRes = await fetch("/api/scan/barcode", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ imageData: base64 }),
-          });
-          const scanData = await scanRes.json();
-
-          if (!scanData.success || !scanData.data?.found) {
-            alert("No barcode or QR code detected in the image. Try a clearer photo or enter the code manually.");
-            setScanning(false);
-            return;
-          }
-
-          const barcodeValue = scanData.data.value ?? scanData.data.codes?.[0]?.value;
-          if (!barcodeValue) {
-            alert("Could not read barcode value. Try again with a clearer image.");
-            setScanning(false);
-            return;
-          }
-
-          // Step 2: Look up product by barcode
-          const lookupRes = await fetch("/api/products/lookup-barcode", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ barcode: barcodeValue }),
-          });
-          const lookupData = await lookupRes.json();
-
-          if (lookupData.found && lookupData.data) {
-            addToCart(lookupData.data);
-            setScanning(false);
-          } else {
-            // Barcode found but product not matched — search by the value
-            setProductSearch(barcodeValue);
-            alert(`Barcode "${barcodeValue}" scanned but no matching product found. Showing search results.`);
-            setScanning(false);
-          }
-        } catch {
-          alert("Failed to process barcode scan. Please try again.");
-          setScanning(false);
-        }
-      };
-      reader.readAsDataURL(file);
-    } catch {
-      setScanning(false);
-    }
-  };
 
   const addToCart = (product: Product) => {
     setCart((prev) => {
@@ -302,21 +240,11 @@ export default function POSPage({ config }: POSPageProps) {
           <div className="search-bar" style={{ marginBottom: 12 }}>
             <span className="search-icon"></span>
             <input
-              placeholder={"Search " + config.labels.productPlural.toLowerCase() + "…"}
+              placeholder={"Search " + config.labels.productPlural.toLowerCase() + ""}
               value={productSearch}
               onChange={(e) => setProductSearch(e.target.value)}
             />
             {productSearch && <button className="search-clear" onClick={() => setProductSearch("")}></button>}
-            {/* Barcode scanner */}
-            <input ref={scanInputRef} type="file" accept="image/*" capture="environment" onChange={handleBarcodeScan} style={{ display: "none" }} />
-            <button
-              className="btn btn-icon scan-btn"
-              onClick={() => scanInputRef.current?.click()}
-              disabled={scanning}
-              title="Scan barcode / QR code with camera"
-            >
-              {scanning ? "⏳" : "📷"}
-            </button>
           </div>
 
           {/* Product grid */}

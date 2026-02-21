@@ -18,13 +18,13 @@
 
 import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
+import { sessionMiddleware } from "@lib/auth";
 import * as telemetrySvc from "@services/telemetry";
 import * as toolAnalyticsSvc from "@services/tool-analytics";
 
 const router = createRouter();
 router.use(errorMiddleware());
-router.use(authMiddleware());
+router.use(sessionMiddleware());
 
 // ── Agent Performance ──────────────────────────────────────
 

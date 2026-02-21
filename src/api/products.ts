@@ -1,13 +1,12 @@
-import { createRouter, validator } from "@agentuity/runtime";
+import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
+import { sessionMiddleware } from "@lib/auth";
 import { paginationSchema } from "@lib/pagination";
-import { createProductSchema, updateProductSchema } from "@lib/validation";
 import * as svc from "@services/products";
 
 const router = createRouter();
 router.use(errorMiddleware());
-router.use(authMiddleware());
+router.use(sessionMiddleware());
 
 router.get("/products", async (c) => {
   const params = paginationSchema.parse({
@@ -31,15 +30,15 @@ router.get("/products/:id", async (c) => {
   return c.json({ data: product });
 });
 
-router.post("/products", validator({ input: createProductSchema }), async (c) => {
-  const body = c.req.valid("json");
+router.post("/products", async (c) => {
+  const body = await c.req.json();
   const product = await svc.createProduct(body);
   return c.json({ data: product }, 201);
 });
 
-router.put("/products/:id", validator({ input: updateProductSchema }), async (c) => {
+router.put("/products/:id", async (c) => {
   const id = c.req.param("id");
-  const body = c.req.valid("json");
+  const body = await c.req.json();
   const product = await svc.updateProduct(id, body);
   return c.json({ data: product });
 });
@@ -47,23 +46,6 @@ router.put("/products/:id", validator({ input: updateProductSchema }), async (c)
 router.delete("/products/:id", async (c) => {
   await svc.deleteProduct(c.req.param("id"));
   return c.json({ deleted: true });
-});
-
-/** POST /products/lookup-barcode — find product by barcode value */
-router.post("/products/lookup-barcode", async (c) => {
-  const { barcode } = await c.req.json();
-  if (!barcode) return c.json({ error: "barcode is required" }, 400);
-  const product = await svc.lookupByBarcode(barcode);
-  if (!product) return c.json({ data: null, found: false });
-  return c.json({ data: product, found: true });
-});
-
-/** POST /products/fuzzy-match — match OCR-extracted names to existing products */
-router.post("/products/fuzzy-match", async (c) => {
-  const { names } = await c.req.json();
-  if (!Array.isArray(names)) return c.json({ error: "names array required" }, 400);
-  const results = await svc.fuzzyMatchProducts(names);
-  return c.json({ data: results });
 });
 
 export default router;

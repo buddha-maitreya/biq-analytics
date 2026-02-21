@@ -2,7 +2,7 @@
  * Insights Analyzer Agent -- "The Analyst"
  *
  * Computational intelligence specialist. Uses the Agentuity sandbox
- * to execute dynamically-generated JavaScript code for statistical
+ * to execute dynamically-generated Python code for statistical
  * analysis that goes BEYOND what SQL can express: z-scores, moving
  * averages, trend projections, anomaly scoring, demand forecasting,
  * pareto analysis, cohort comparisons, etc.
@@ -10,8 +10,8 @@
  * Architecture (single-pass, LLM-generated code):
  *   1. LLM receives the analysis request, database schema, and output format
  *   2. LLM WRITES its own SQL query to fetch relevant data
- *   3. LLM WRITES JavaScript code to perform statistical analysis
- *      (code MUST include confidence metrics: sampleSize, stdDev, etc.)
+ *   3. LLM WRITES Python code using numpy/pandas/scipy/sklearn/statsmodels
+ *      to perform statistical analysis (code MUST include confidence metrics)
  *   4. Sandbox executes the LLM-generated code in isolated runtime
  *   5. LLM returns structured JSON insights directly (no separate formatting step)
  *
@@ -54,7 +54,7 @@ import { getAgentConfigWithDefaults } from "@services/agent-configs";
 
 const agent = createAgent("insights-analyzer", {
   description:
-    "Statistical analysis specialist -- runs LLM-generated JavaScript in a sandbox for demand forecasting, anomaly detection, restock recommendations, and sales trend analysis.",
+    "Statistical analysis specialist -- runs LLM-generated Python (numpy/pandas/scipy/sklearn/statsmodels) in a sandbox for demand forecasting, anomaly detection, restock recommendations, and sales trend analysis.",
 
   schema: { input: inputSchema, output: outputSchema },
 
@@ -77,6 +77,11 @@ const agent = createAgent("insights-analyzer", {
         ? `${cfg.sandboxMemoryMb}MB`
         : undefined,
     };
+  },
+
+  shutdown: async (_app, _config) => {
+    // Graceful shutdown — clean up sandbox snapshots or cached analysis.
+    // Currently stateless; hook reserved for future resource cleanup.
   },
 
   handler: async (ctx, input) => {
@@ -118,12 +123,14 @@ const agent = createAgent("insights-analyzer", {
     const ai = (ctx.app as unknown as { aiSettings: AISettings }).aiSettings;
 
     // ── Build the sandbox tool (closes over ctx.sandbox) ────
-    const runtimeLabel = sandboxRuntime === "python" ? "Python 3"
-      : sandboxRuntime === "node" ? "Node.js" : "Bun 1.x";
-    const hasDeps = sandboxSnapshotId || sandboxDeps?.length;
-    const depsNote = hasDeps
-      ? `Available packages: ${sandboxDeps?.join(", ") ?? "pre-installed in snapshot (simple-statistics, date-fns, lodash)"}.`
-      : "You have NO npm packages -- use built-in JS/Bun APIs only (Math, Date, Array methods, etc).";
+    const effectiveRuntime = (sandboxRuntime as SandboxRuntime) ?? "python:3.14";
+    const runtimeLabel = effectiveRuntime.startsWith("python") ? "Python 3 (numpy/pandas/scipy/sklearn/statsmodels)"
+      : effectiveRuntime.startsWith("node") ? "Node.js" : "Bun 1.x";
+    const depsNote = sandboxSnapshotId
+      ? `Packages pre-installed in snapshot${sandboxDeps?.length ? ` (${sandboxDeps.join(", ")})` : " (numpy, pandas, scipy, scikit-learn, statsmodels)"}.`
+      : effectiveRuntime.startsWith("python")
+        ? "You have the Python standard library. For advanced analytics, prefer a snapshot with numpy/pandas/scipy/sklearn/statsmodels pre-installed."
+        : "You have NO npm packages -- use built-in JS/Bun APIs only (Math, Date, Array methods, etc).";
 
     const runAnalysisTool = tool({
       description: `Execute a data analysis pipeline: run a SQL query to fetch data, then execute ${runtimeLabel} code in a sandboxed runtime to compute statistical results.
@@ -141,7 +148,7 @@ If execution fails, you'll receive an errorType and errorHint -- use them to fix
         code: z
           .string()
           .describe(
-            "JavaScript code to analyze the data. DATA is the array of SQL result rows. Must RETURN a result object."
+            `${effectiveRuntime.startsWith("python") ? "Python" : "JavaScript"} code to analyze the data. DATA is a list of dicts (SQL rows)${effectiveRuntime.startsWith("python") ? ". DF is a pandas DataFrame of the same data" : ""}. Must RETURN a result.`
           ),
         explanation: z
           .string()
@@ -153,7 +160,7 @@ If execution fails, you'll receive an errorType and errorHint -- use them to fix
           sqlQuery,
           explanation,
           timeoutMs: sandboxTimeoutMs,
-          runtime: (sandboxRuntime as SandboxRuntime) ?? "bun:1",
+          runtime: effectiveRuntime,
           snapshotId: sandboxSnapshotId,
           dependencies: sandboxDeps,
           memory: sandboxMemory,
@@ -219,32 +226,72 @@ WORKFLOW:
 
 ERROR HANDLING:
 - If the tool returns an error, check the errorType and errorHint fields
-- For "syntax" errors: fix brackets, semicolons, or typos in your code
-- For "runtime" errors: check for null/undefined access, wrong types, or undefined variables
-- For "import" errors: remove the unavailable import and use built-in APIs instead
-- For "timeout" errors: simplify the algorithm or reduce data scope via SQL aggregation
+- For "syntax" errors: check indentation (4 spaces), colons, brackets
+- For "runtime" errors: check for None/NaN, empty DataFrames, zero division, wrong column names
+- For "import" errors: use only pre-installed packages (numpy, pandas, scipy, sklearn, statsmodels)
+- For "timeout" errors: simplify the algorithm, use vectorized pandas/numpy ops instead of loops
 - You may retry the tool with corrected code (up to ${maxSteps} total tool calls)
 
-IMPORTANT for your code:
-- DATA is the array of SQL result row objects
-- You MUST return a result object (use \`return { ... }\`)
-- Handle edge cases: empty arrays, zero denominators, null values
-- Convert numeric strings with Number()
+PYTHON SANDBOX ENVIRONMENT:
+- DATA: list of dicts (SQL result rows), e.g. [{"name": "Widget", "total_sold": 150}, ...]
+- DF: pandas DataFrame created from DATA (columns auto-detected, date columns auto-parsed)
+- Pre-imported: numpy (np), pandas (pd), scipy.stats, sklearn, statsmodels, datetime, math, json
+- Your code runs inside a function — use \`return {...}\` to return results
+- All numpy/pandas types (int64, float64, Timestamp, ndarray, Series) are auto-serialized to JSON
+
+PYTHON BEST PRACTICES:
+- Use pandas vectorized operations over loops: \`df['col'].mean()\` not manual iteration
+- Use \`DF.groupby()\` for aggregations, \`.rolling()\` for moving averages
+- Handle missing data: \`DF['col'].fillna(0)\`, \`DF.dropna(subset=[...])\`
+- Convert types safely: \`pd.to_numeric(DF['col'], errors='coerce')\`
+- For time series: \`DF.set_index('date').resample('W').sum()\`
+- Check for empty data: \`if DF is None or len(DF) == 0: return {"error": "No data"}\`
+
+AVAILABLE LIBRARIES & PATTERNS:
+\`\`\`python
+# Statistical analysis
+from scipy import stats
+slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
+z_scores = stats.zscore(values)
+stat, p_val = stats.shapiro(data)  # normality test
+
+# Machine learning
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor, IsolationForest
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+
+# Time series forecasting
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.tsa.stattools import adfuller  # stationarity test
+
+# Pandas analytics
+df.rolling(window=7).mean()           # 7-day moving average
+df.groupby('category').agg({'revenue': ['sum', 'mean', 'std']})
+df.pct_change()                        # period-over-period change
+df.describe()                          # summary statistics
+df.corr()                             # correlation matrix
+pd.qcut(df['revenue'], q=4, labels=['Q1','Q2','Q3','Q4'])  # quartile binning
+\`\`\`
 
 CONFIDENCE SCORING (computation-based):
-Your sandbox code MUST include confidence metrics in its return object:
-\`\`\`
+Your sandbox code MUST include confidence metrics in its return dict:
+\`\`\`python
 return {
-  // ... your analysis results ...
-  _confidence: {
-    sampleSize: DATA.length,                    // rows analyzed
-    completeness: nonNullCount / totalFields,    // data completeness ratio (0-1)
-    stdDev: calculatedStdDev,                    // standard deviation (if applicable)
-    coefficientOfVariation: stdDev / mean,       // CV for dispersion (if applicable)
-    pValue: calculatedPValue,                    // significance (if applicable)
-    timeSpanDays: actualDaysWithData,            // actual days with data points
-    requestedDays: ${"{timeframeDays}"},         // requested timeframe
-  }
+    # ... your analysis results ...
+    "_confidence": {
+        "sampleSize": len(DATA),                          # rows analyzed
+        "completeness": non_null_count / total_fields,     # data completeness (0-1)
+        "stdDev": float(np.std(values)),                   # standard deviation
+        "coefficientOfVariation": float(np.std(v) / np.mean(v)),  # CV
+        "pValue": float(p_value),                          # significance test
+        "r2Score": float(r2),                              # R² if regression used
+        "rmse": float(rmse),                               # RMSE if forecasting
+        "timeSpanDays": actual_days_with_data,             # actual data coverage
+        "requestedDays": ${"{timeframeDays}"},             # requested timeframe
+    }
 }
 \`\`\`
 Include whichever metrics apply to your analysis. These will be used to compute
@@ -480,6 +527,22 @@ After running your analysis with the tool, output your structured JSON insights 
 
     return result;
   },
+});
+
+// ── Agent-level event listeners (per-agent telemetry) ──────
+agent.addEventListener("started", (_event, _agentInfo, ctx) => {
+  ctx.logger.info("[insights-analyzer] agent invocation started");
+});
+
+agent.addEventListener("completed", (_event, _agentInfo, ctx) => {
+  ctx.logger.info("[insights-analyzer] agent invocation completed");
+});
+
+agent.addEventListener("errored", (_event, _agentInfo, ctx, error) => {
+  ctx.logger.error("[insights-analyzer] agent invocation errored", {
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  });
 });
 
 export default agent;

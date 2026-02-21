@@ -19,7 +19,7 @@
  */
 
 import { createAgent } from "@agentuity/runtime";
-import { z } from "zod";
+import { s } from "@agentuity/schema";
 import { config } from "@lib/config";
 import reportGenerator from "@agent/report-generator";
 import insightsAnalyzer from "@agent/insights-analyzer";
@@ -29,38 +29,46 @@ import {
   failExecution,
   markScheduleRun,
 } from "@services/scheduler";
+import { getAgentConfigWithDefaults } from "@services/agent-configs";
 import { db, notifications, users } from "@db/index";
 import { eq, sql } from "drizzle-orm";
 
+// ── Config (returned from setup(), available as ctx.config) ─
+
+interface SchedulerConfig {
+  maxRetries: number;
+  defaultTimeoutMs: number;
+}
+
+
 // ── Schema ──────────────────────────────────────────────────
 
-const inputSchema = z.object({
+const inputSchema = s.object({
   /** The schedule record to execute */
-  scheduleId: z.string().uuid().describe("ID of the schedule to execute"),
+  scheduleId: s.string().describe("ID of the schedule to execute (UUID)"),
   /** Task type determines the execution strategy */
-  taskType: z
+  taskType: s
     .enum(["report", "insight", "alert", "cleanup", "custom"])
     .describe("Type of scheduled task"),
   /** Task-specific configuration */
-  taskConfig: z
-    .record(z.unknown())
+  taskConfig: s
+    .record(s.string(), s.unknown())
     .describe("Configuration parameters for the task"),
   /** What triggered this execution */
-  triggerSource: z
+  triggerSource: s
     .enum(["cron", "manual", "api"])
-    .default("cron")
-    .describe("How this execution was triggered"),
+    .describe("How this execution was triggered (default: cron)"),
 });
 
-const outputSchema = z.object({
-  success: z.boolean().describe("Whether the task completed successfully"),
-  scheduleId: z.string().describe("The schedule that was executed"),
-  executionId: z.string().describe("Execution record ID for tracking"),
-  taskType: z.string().describe("Type of task that was executed"),
+const outputSchema = s.object({
+  success: s.boolean().describe("Whether the task completed successfully"),
+  scheduleId: s.string().describe("The schedule that was executed"),
+  executionId: s.string().describe("Execution record ID for tracking"),
+  taskType: s.string().describe("Type of task that was executed"),
   /** Result details — structure depends on taskType */
-  result: z.record(z.unknown()).optional().describe("Task output details"),
-  error: z.string().optional().describe("Error message if task failed"),
-  durationMs: z.number().optional().describe("Execution duration in ms"),
+  result: s.optional(s.record(s.string(), s.unknown()).describe("Task output details")),
+  error: s.optional(s.string().describe("Error message if task failed")),
+  durationMs: s.optional(s.number().describe("Execution duration in ms")),
 });
 
 // ── Task Handlers ───────────────────────────────────────────
@@ -71,7 +79,7 @@ async function executeReportTask(
 ): Promise<Record<string, unknown>> {
   const reportType = (taskConfig.reportType as string) ?? "sales-summary";
   const periodDays = (taskConfig.periodDays as number) ?? 7;
-  const format = ((taskConfig.format as string) ?? "markdown") as "json" | "markdown" | "csv" | "html" | "plain";
+  const format = ((taskConfig.format as string) ?? "markdown") as "markdown" | "plain";
 
   ctx.logger.info("Executing scheduled report", { reportType, periodDays, format });
 
@@ -80,7 +88,7 @@ async function executeReportTask(
   const startDate = new Date(Date.now() - periodDays * 86400000).toISOString();
 
   const result = await reportGenerator.run({
-    reportType,
+    reportType: reportType as "sales-summary" | "inventory-health" | "customer-activity" | "financial-overview",
     startDate,
     endDate,
     format,
@@ -231,10 +239,24 @@ async function executeCleanupTask(
 
 // ── Agent Definition ────────────────────────────────────────
 
-export default createAgent("scheduler", {
+const scheduler = createAgent("scheduler", {
   description:
     "The Clockmaker — executes scheduled tasks: reports, insights, alerts, cleanup, and custom jobs on configurable cron schedules.",
   schema: { input: inputSchema, output: outputSchema },
+
+  setup: async (): Promise<SchedulerConfig> => {
+    const agentConfig = await getAgentConfigWithDefaults("scheduler");
+    const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
+
+    return {
+      maxRetries: (cfg.maxRetries as number) ?? 3,
+      defaultTimeoutMs: (cfg.defaultTimeoutMs as number) ?? 60_000,
+    };
+  },
+
+  shutdown: async (_app, _config) => {
+    // Graceful shutdown — reserved for aborting in-flight task executions.
+  },
 
   handler: async (ctx, input) => {
     const startedAt = Date.now();
@@ -286,6 +308,24 @@ export default createAgent("scheduler", {
         result,
       });
 
+      // Publish execution event for downstream consumers
+      ctx.waitUntil(async () => {
+        try {
+          await ctx.queue.publish("schedule-events", {
+            event: "schedule.completed",
+            scheduleId: input.scheduleId,
+            executionId: execution.id,
+            taskType: input.taskType,
+            triggerSource: input.triggerSource,
+            success: true,
+            durationMs,
+            completedAt: new Date().toISOString(),
+          });
+        } catch {
+          // Queue not provisioned — non-critical
+        }
+      });
+
       return {
         success: true,
         scheduleId: input.scheduleId,
@@ -320,3 +360,21 @@ export default createAgent("scheduler", {
     }
   },
 });
+
+// ── Agent-level event listeners (per-agent telemetry) ──────
+scheduler.addEventListener("started", (_event, _agentInfo, ctx) => {
+  ctx.logger.info("[scheduler] agent invocation started");
+});
+
+scheduler.addEventListener("completed", (_event, _agentInfo, ctx) => {
+  ctx.logger.info("[scheduler] agent invocation completed");
+});
+
+scheduler.addEventListener("errored", (_event, _agentInfo, ctx, error) => {
+  ctx.logger.error("[scheduler] agent invocation errored", {
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  });
+});
+
+export default scheduler;

@@ -15,7 +15,7 @@ src/generated/*.ts
 .env.*.local
 
 # Database
-# (meta/ must be tracked for drizzle-kit migrate to work)
+src/db/migrations/meta/
 
 # Editor
 .vscode/

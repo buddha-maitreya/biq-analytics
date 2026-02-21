@@ -32,22 +32,88 @@ declare module "@agentuity/react" {
     data: T | undefined;
     error: Error | null;
     isLoading: boolean;
-    invoke: (body?: unknown) => Promise<T>;
+    isFetching: boolean;
+    isSuccess: boolean;
+    isError: boolean;
+    invoke: (body?: unknown, options?: { params?: Record<string, string> }) => Promise<T>;
     reset: () => void;
   }
 
   /**
    * Universal data-fetching hook.
    *
-   * For GET requests, pass a route string and get reactive data back.
-   * For mutations, use the object form with `method`.
+   * GET routes auto-fetch and return reactive data.
+   * POST/PUT/DELETE routes return an invoke() function.
    */
+  export function useAPI<T = unknown>(route: `GET ${string}`): UseAPIGetResult<T>;
+  export function useAPI<T = unknown>(route: `POST ${string}`): UseAPIMutationResult<T>;
+  export function useAPI<T = unknown>(route: `PUT ${string}`): UseAPIMutationResult<T>;
+  export function useAPI<T = unknown>(route: `PATCH ${string}`): UseAPIMutationResult<T>;
+  export function useAPI<T = unknown>(route: `DELETE ${string}`): UseAPIMutationResult<T>;
   export function useAPI<T = unknown>(route: string): UseAPIGetResult<T>;
   export function useAPI<T = unknown>(options: {
-    method?: string;
-    path: string;
-    body?: unknown;
-  }): UseAPIMutationResult<T>;
+    route: string;
+    staleTime?: number;
+    refetchInterval?: number;
+    enabled?: boolean;
+    onSuccess?: (data: T) => void;
+    onError?: (error: Error) => void;
+    delimiter?: string;
+    onChunk?: (chunk: unknown) => unknown;
+    input?: unknown;
+  }): UseAPIGetResult<T> | UseAPIMutationResult<T>;
+
+  // ── useWebsocket ────────────────────────────────────────
+
+  interface WebsocketOptions {
+    query?: URLSearchParams;
+    subpath?: string;
+    signal?: AbortSignal;
+    maxMessages?: number;
+  }
+
+  interface UseWebsocketResult<TOutput, TInput> {
+    isConnected: boolean;
+    send: (data: TInput) => void;
+    data: TOutput | undefined;
+    messages: TOutput[];
+    clearMessages: () => void;
+    error: Error | null;
+    isError: boolean;
+    readyState: number;
+    close: () => void;
+    reset: () => void;
+  }
+
+  /** Bidirectional real-time communication hook (WebSocket). */
+  export function useWebsocket<TOutput = unknown, TInput = unknown>(
+    route: string,
+    options?: WebsocketOptions,
+  ): UseWebsocketResult<TOutput, TInput>;
+
+  // ── useEventStream ──────────────────────────────────────
+
+  interface EventStreamOptions {
+    query?: URLSearchParams;
+    subpath?: string;
+    signal?: AbortSignal;
+  }
+
+  interface UseEventStreamResult<T> {
+    isConnected: boolean;
+    data: T | undefined;
+    error: Error | null;
+    isError: boolean;
+    readyState: number;
+    close: () => void;
+    reset: () => void;
+  }
+
+  /** Server-push hook (Server-Sent Events). */
+  export function useEventStream<T = unknown>(
+    route: string,
+    options?: EventStreamOptions,
+  ): UseEventStreamResult<T>;
 
   /** Agentuity context value exposed by useAgentuity(). */
   export function useAgentuity(): Record<string, unknown>;

@@ -63,16 +63,11 @@ export default function App() {
   const { theme, toggle: toggleTheme } = useTheme();
   const { data: appConfig, refetch } = useAPI<AppConfig>("GET /api/config");
 
-  // Check existing session on mount
+  // Check existing session on mount (cookie-based — no localStorage needed)
   useEffect(() => {
     (async () => {
       try {
-        // Try cookie-based auth first, fall back to localStorage token
-        const token = localStorage.getItem("biq_token");
-        const headers: Record<string, string> = {};
-        if (token) headers["Authorization"] = `Bearer ${token}`;
-
-        const res = await fetch("/api/auth/me", { headers });
+        const res = await fetch("/api/auth/me");
         if (res.ok) {
           const data = await res.json();
           if (data.user) {
@@ -102,7 +97,6 @@ export default function App() {
     } catch {
       // ignore
     }
-    localStorage.removeItem("biq_token");
     setUser(null);
     setPage("dashboard");
   }, []);

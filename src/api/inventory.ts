@@ -1,23 +1,22 @@
-import { createRouter, validator } from "@agentuity/runtime";
+import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
-import { adjustInventorySchema, transferInventorySchema } from "@lib/validation";
+import { sessionMiddleware } from "@lib/auth";
 import * as svc from "@services/inventory";
 
 const router = createRouter();
 router.use(errorMiddleware());
-router.use(authMiddleware());
+router.use(sessionMiddleware());
 
 /** Adjust stock level */
-router.post("/inventory/adjust", validator({ input: adjustInventorySchema }), async (c) => {
-  const body = c.req.valid("json");
+router.post("/inventory/adjust", async (c) => {
+  const body = await c.req.json();
   const tx = await svc.adjustStock(body);
   return c.json({ data: tx }, 201);
 });
 
 /** Transfer stock between warehouses */
-router.post("/inventory/transfer", validator({ input: transferInventorySchema }), async (c) => {
-  const body = c.req.valid("json");
+router.post("/inventory/transfer", async (c) => {
+  const body = await c.req.json();
   const result = await svc.transferStock(body);
   return c.json({ data: result });
 });
@@ -56,16 +55,6 @@ router.get("/inventory/transactions/:productId", async (c) => {
     c.req.param("productId"),
     limit
   );
-  return c.json({ data: result });
-});
-
-/** POST /inventory/bulk-adjust — Apply OCR-scanned stock sheet data */
-router.post("/inventory/bulk-adjust", async (c) => {
-  const { items } = await c.req.json();
-  if (!Array.isArray(items) || items.length === 0) {
-    return c.json({ error: "items array is required" }, 400);
-  }
-  const result = await svc.bulkAdjustStock(items);
   return c.json({ data: result });
 });
 

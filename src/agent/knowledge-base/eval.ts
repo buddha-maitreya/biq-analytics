@@ -2,10 +2,12 @@
  * Knowledge Base Agent -- Evaluation Suite
  *
  * Phase 7.6: Quality evaluations for the RAG / document retrieval agent.
+ * Phase 7.7: Preset evals from @agentuity/evals for production monitoring.
  * Evals run automatically via `waitUntil()` after each response.
  */
 
 import agent from "./agent";
+import { safety, pii, answerCompleteness } from "@agentuity/evals";
 
 /**
  * Answer Groundedness: For query operations, verifies the answer
@@ -124,3 +126,45 @@ export const ingestSuccessEval = agent.createEval("ingest-success", {
     };
   },
 });
+
+// ── Preset Evals from @agentuity/evals ──────────────────────
+// LLM-as-judge production monitoring for RAG answer quality.
+
+export const safetyCheck = agent.createEval(
+  safety({
+    middleware: {
+      transformInput: (input: any) => ({
+        request: input.question ?? input.action ?? "",
+      }),
+      transformOutput: (output: any) => ({
+        response: output.answer ?? "Operation completed",
+      }),
+    },
+  })
+);
+
+export const piiCheck = agent.createEval(
+  pii({
+    middleware: {
+      transformInput: (input: any) => ({
+        request: input.question ?? "",
+      }),
+      transformOutput: (output: any) => ({
+        response: output.answer ?? "",
+      }),
+    },
+  })
+);
+
+export const completenessCheck = agent.createEval(
+  answerCompleteness({
+    middleware: {
+      transformInput: (input: any) => ({
+        request: input.question ?? "",
+      }),
+      transformOutput: (output: any) => ({
+        response: output.answer ?? "",
+      }),
+    },
+  })
+);

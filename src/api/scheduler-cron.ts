@@ -5,7 +5,7 @@
 
 import { createRouter, cron } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
+import { sessionMiddleware } from "@lib/auth";
 import { getDueSchedules } from "@services/scheduler";
 import schedulerAgent from "@agent/scheduler";
 
@@ -78,7 +78,7 @@ router.post(
 
 // ── Manual trigger — run all due schedules now ──────────────
 
-router.post("/admin/scheduler/run-all", authMiddleware(), async (c) => {
+router.post("/admin/scheduler/run-all", sessionMiddleware(), async (c) => {
   const logger = c.var.logger;
   const dueSchedules = await getDueSchedules();
 

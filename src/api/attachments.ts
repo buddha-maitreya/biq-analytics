@@ -18,13 +18,13 @@
 import { createRouter } from "@agentuity/runtime";
 import { s3 } from "bun";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
+import { sessionMiddleware } from "@lib/auth";
 import { db, attachments as attachmentsTable } from "@db/index";
 import { eq, and } from "drizzle-orm";
 
 const attachments = createRouter();
 attachments.use(errorMiddleware());
-attachments.use(authMiddleware());
+attachments.use(sessionMiddleware());
 
 // ── Types ──────────────────────────────────────────────────
 

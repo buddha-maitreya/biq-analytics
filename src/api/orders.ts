@@ -1,13 +1,12 @@
-import { createRouter, validator } from "@agentuity/runtime";
+import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
+import { sessionMiddleware } from "@lib/auth";
 import { paginationSchema } from "@lib/pagination";
-import { createOrderSchema, updateOrderStatusSchema as orderStatusSchema, updateOrderPaymentSchema } from "@lib/validation";
 import * as svc from "@services/orders";
 
 const router = createRouter();
 router.use(errorMiddleware());
-router.use(authMiddleware());
+router.use(sessionMiddleware());
 
 router.get("/orders", async (c) => {
   const params = paginationSchema.parse({
@@ -29,14 +28,14 @@ router.get("/orders/:id", async (c) => {
   return c.json({ data: order });
 });
 
-router.post("/orders", validator({ input: createOrderSchema }), async (c) => {
-  const body = c.req.valid("json");
+router.post("/orders", async (c) => {
+  const body = await c.req.json();
   const order = await svc.createOrder(body);
   return c.json({ data: order }, 201);
 });
 
-router.put("/orders/:id/status", validator({ input: orderStatusSchema }), async (c) => {
-  const body = c.req.valid("json");
+router.put("/orders/:id/status", async (c) => {
+  const body = await c.req.json();
   const order = await svc.updateOrderStatus(c.req.param("id"), body);
   return c.json({ data: order });
 });
@@ -46,8 +45,8 @@ router.post("/orders/:id/cancel", async (c) => {
   return c.json({ data: result });
 });
 
-router.put("/orders/:id/payment", validator({ input: updateOrderPaymentSchema }), async (c) => {
-  const body = c.req.valid("json");
+router.put("/orders/:id/payment", async (c) => {
+  const body = await c.req.json();
   const order = await svc.updateOrderPayment(c.req.param("id"), body);
   return c.json({ data: order });
 });

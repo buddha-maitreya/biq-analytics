@@ -22,7 +22,7 @@
 
 import { createAgent } from "@agentuity/runtime";
 import { generateText } from "ai";
-import { z } from "zod";
+import { s } from "@agentuity/schema";
 import { config } from "@lib/config";
 import { getModel } from "@lib/ai";
 import { maskPII } from "@lib/pii";
@@ -32,29 +32,29 @@ import { getAgentConfigWithDefaults } from "@services/agent-configs";
 
 // ── Schema ──────────────────────────────────────────────────
 
-const inputSchema = z.object({
-  mode: z.enum(["barcode", "stock-sheet", "invoice"]),
+const inputSchema = s.object({
+  mode: s.enum(["barcode", "stock-sheet", "invoice"]),
   /** Base64-encoded image data (JPEG, PNG, or WebP) */
-  imageData: z.string().optional(),
+  imageData: s.optional(s.string()),
   /** URL to the image/document (alternative to imageData) */
-  imageUrl: z.string().url().optional(),
+  imageUrl: s.optional(s.string()),
   /** MIME type of the image (default: image/jpeg) */
-  mimeType: z.string().optional(),
+  mimeType: s.optional(s.string()),
   /** Additional context or instructions for processing */
-  context: z.string().optional(),
+  context: s.optional(s.string()),
 });
 
-const outputSchema = z.object({
-  success: z.boolean(),
-  mode: z.enum(["barcode", "stock-sheet", "invoice"]),
+const outputSchema = s.object({
+  success: s.boolean(),
+  mode: s.enum(["barcode", "stock-sheet", "invoice"]),
   /** Extracted data (structure depends on mode) */
-  data: z.any().optional(),
+  data: s.optional(s.any()),
   /** Raw text extracted from the image */
-  rawText: z.string().optional(),
+  rawText: s.optional(s.string()),
   /** Error message if processing failed */
-  error: z.string().optional(),
+  error: s.optional(s.string()),
   /** Confidence score (0-1) */
-  confidence: z.number().min(0).max(1).optional(),
+  confidence: s.optional(s.number()),
 });
 
 // ── Config ──────────────────────────────────────────────────
@@ -165,6 +165,10 @@ const agent = createAgent("document-scanner", {
         ? parseFloat(agentConfig.temperature)
         : 0, // Low temperature for accurate extraction
     };
+  },
+
+  shutdown: async (_app, _config) => {
+    // Graceful shutdown — reserved for OCR service cleanup if needed.
   },
 
   handler: async (ctx, input) => {
@@ -312,6 +316,22 @@ const agent = createAgent("document-scanner", {
       };
     }
   },
+});
+
+// ── Agent-level event listeners (per-agent telemetry) ──────
+agent.addEventListener("started", (_event, _agentInfo, ctx) => {
+  ctx.logger.info("[document-scanner] agent invocation started");
+});
+
+agent.addEventListener("completed", (_event, _agentInfo, ctx) => {
+  ctx.logger.info("[document-scanner] agent invocation completed");
+});
+
+agent.addEventListener("errored", (_event, _agentInfo, ctx, error) => {
+  ctx.logger.error("[document-scanner] agent invocation errored", {
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  });
 });
 
 export default agent;

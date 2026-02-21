@@ -32,11 +32,7 @@ export default function LoginPage({ config, onLogin }: LoginPageProps) {
           return;
         }
 
-        // Store token in localStorage as backup (cookie is set by server)
-        if (data.token) {
-          localStorage.setItem("biq_token", data.token);
-        }
-
+        // Cookie is set by the server (HttpOnly) — no localStorage needed
         onLogin(data.user);
       } catch {
         setError("Network error. Please try again.");

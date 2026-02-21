@@ -2,10 +2,12 @@
  * Report Generator Agent -- Evaluation Suite
  *
  * Phase 7.6: Quality evaluations for the report writing agent.
+ * Phase 7.7: Preset evals from @agentuity/evals for production monitoring.
  * Evals run automatically via `waitUntil()` after each response.
  */
 
 import agent from "./agent";
+import { conciseness, format } from "@agentuity/evals";
 
 /**
  * Report Structure: Checks that the report contains expected sections
@@ -116,3 +118,32 @@ export const factualConsistencyEval = agent.createEval("factual-consistency", {
     };
   },
 });
+
+// ── Preset Evals from @agentuity/evals ──────────────────────
+// LLM-as-judge production monitoring for report quality.
+
+export const concisenessCheck = agent.createEval(
+  conciseness({
+    middleware: {
+      transformInput: (input: any) => ({
+        request: `Generate a ${input.reportType} report`,
+      }),
+      transformOutput: (output: any) => ({
+        response: output.content ?? "",
+      }),
+    },
+  })
+);
+
+export const formatCheck = agent.createEval(
+  format({
+    middleware: {
+      transformInput: (input: any) => ({
+        request: `Generate a ${input.reportType} report in ${input.format ?? "markdown"} format`,
+      }),
+      transformOutput: (output: any) => ({
+        response: output.content ?? "",
+      }),
+    },
+  })
+);

@@ -12,12 +12,12 @@
 
 import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
+import { sessionMiddleware } from "@lib/auth";
 import * as evalSvc from "@services/eval-results";
 
 const router = createRouter();
 router.use(errorMiddleware());
-router.use(authMiddleware());
+router.use(sessionMiddleware());
 
 /** GET /api/admin/evals — paginated eval results */
 router.get("/admin/evals", async (c) => {

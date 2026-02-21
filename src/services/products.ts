@@ -96,30 +96,3 @@ export async function searchProducts(term: string, limit = 20) {
     limit,
   });
 }
-
-/** Look up a product by barcode value */
-export async function lookupByBarcode(barcode: string) {
-  if (!barcode?.trim()) return null;
-  return db.query.products.findFirst({
-    where: and(eq(products.isActive, true), eq(products.barcode, barcode.trim())),
-    with: { category: true },
-  });
-}
-
-/** Fuzzy match product by name — returns best matches for OCR-extracted names */
-export async function fuzzyMatchProducts(names: string[], limit = 5) {
-  const results: Record<string, any[]> = {};
-  for (const name of names) {
-    if (!name?.trim()) continue;
-    // Use trigram-style matching: search for each word
-    const words = name.trim().split(/\s+/).filter(w => w.length > 2);
-    const term = words.length > 0 ? words[0] : name.trim();
-    const matches = await db.query.products.findMany({
-      where: and(eq(products.isActive, true), ilike(products.name, `%${term}%`)),
-      with: { category: true },
-      limit,
-    });
-    results[name] = matches;
-  }
-  return results;
-}

@@ -1,15 +1,16 @@
 import { createRouter, validator } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
+import { sessionMiddleware } from "@lib/auth";
 import { updateSettingsSchema, testModelSchema } from "@lib/validation";
 import * as settingsSvc from "@services/settings";
 import { invalidateConfigCache } from "./config";
 import { invalidateModelCache } from "@lib/ai";
+import { invalidateRateLimitCache } from "@lib/rate-limit";
 import { generateText } from "ai";
 
 const router = createRouter();
 router.use(errorMiddleware());
-router.use(authMiddleware());
+router.use(sessionMiddleware());
 
 /** GET /api/settings — all business settings */
 router.get("/settings", async (c) => {
@@ -23,6 +24,7 @@ router.put("/settings", validator({ input: updateSettingsSchema }), async (c) =>
   const updated = await settingsSvc.updateSettings(body);
   invalidateConfigCache();
   invalidateModelCache();
+  invalidateRateLimitCache();
   return c.json({ data: updated });
 });
 

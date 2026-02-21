@@ -18,3 +18,34 @@ export { default } from "./agent";
 
 // Phase 7.6 — Evals (SDK discovers named exports)
 export { responseQualityEval, toolUsageEval, groundednessEval, hallucinationDetectionEval } from "./eval";
+
+// Phase 7.7 — Preset evals from @agentuity/evals
+export { safetyCheck, piiCheck, politenessCheck } from "./eval";
+
+// Phase 7 — Workbench test prompts
+export const welcome = () => ({
+  welcome: "Welcome to the **Data Science Assistant** (The Brain).\nI can analyze your business data, run statistical computations, generate reports, and answer questions about your inventory, sales, and customers.",
+  prompts: [
+    {
+      data: JSON.stringify({
+        message: "What were my top 5 selling products last month?",
+        sessionId: "test-session-001",
+      }),
+      contentType: "application/json",
+    },
+    {
+      data: JSON.stringify({
+        message: "Show me a sales trend analysis for the last 30 days",
+        sessionId: "test-session-002",
+      }),
+      contentType: "application/json",
+    },
+    {
+      data: JSON.stringify({
+        message: "Which products need to be restocked?",
+        sessionId: "test-session-003",
+      }),
+      contentType: "application/json",
+    },
+  ],
+});

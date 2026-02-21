@@ -1,18 +1,11 @@
-import { createRouter, validator } from "@agentuity/runtime";
+import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware, ValidationError } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
-import {
-  paystackInitSchema,
-  paystackVerifySchema,
-  mpesaStkPushSchema,
-  mpesaStkQuerySchema,
-  mpesaC2bRegisterSchema,
-} from "@lib/validation";
+import { sessionMiddleware } from "@lib/auth";
 import * as paymentsSvc from "@services/payments-integration";
 
 const router = createRouter();
 router.use(errorMiddleware());
-router.use(authMiddleware());
+router.use(sessionMiddleware());
 
 // ─── Payment Provider Status ─────────────────────────────────
 
@@ -25,11 +18,15 @@ router.get("/payments/providers", async (c) => {
 // ─── Paystack ────────────────────────────────────────────────
 
 /** POST /api/payments/paystack/initialize — start a card payment */
-router.post("/payments/paystack/initialize", validator({ input: paystackInitSchema }), async (c) => {
-  const body = c.req.valid("json");
+router.post("/payments/paystack/initialize", async (c) => {
+  const body = await c.req.json();
+  const email = body.email;
+  const amount = Number(body.amount);
+  if (!email || !amount) throw new ValidationError("email and amount are required");
+
   const result = await paymentsSvc.initializePaystackTransaction(
-    body.email,
-    body.amount,
+    email,
+    amount,
     body.currency,
     body.metadata,
   );
@@ -37,19 +34,24 @@ router.post("/payments/paystack/initialize", validator({ input: paystackInitSche
 });
 
 /** POST /api/payments/paystack/verify — confirm payment completed */
-router.post("/payments/paystack/verify", validator({ input: paystackVerifySchema }), async (c) => {
-  const { reference } = c.req.valid("json");
-  const result = await paymentsSvc.verifyPaystackTransaction(reference);
+router.post("/payments/paystack/verify", async (c) => {
+  const body = await c.req.json();
+  if (!body.reference) throw new ValidationError("reference is required");
+
+  const result = await paymentsSvc.verifyPaystackTransaction(body.reference);
   return c.json({ data: result });
 });
 
 // ─── M-Pesa Daraja ───────────────────────────────────────────
 
 /** POST /api/payments/mpesa/stkpush — initiate STK Push to customer phone */
-router.post("/payments/mpesa/stkpush", validator({ input: mpesaStkPushSchema }), async (c) => {
-  const body = c.req.valid("json");
-  const phoneNumber = body.phoneNumber.replace(/\s|-/g, "");
-  const amount = body.amount;
+router.post("/payments/mpesa/stkpush", async (c) => {
+  const body = await c.req.json();
+  const phoneNumber = body.phoneNumber?.replace(/\s|-/g, "");
+  const amount = Number(body.amount);
+
+  if (!phoneNumber) throw new ValidationError("phoneNumber is required (format: 254XXXXXXXXX)");
+  if (!amount || amount <= 0) throw new ValidationError("amount must be a positive number");
 
   // Normalize Kenyan phone numbers: 07XX → 2547XX, +254 → 254
   let normalizedPhone = phoneNumber;
@@ -67,16 +69,21 @@ router.post("/payments/mpesa/stkpush", validator({ input: mpesaStkPushSchema }),
 });
 
 /** POST /api/payments/mpesa/stkpush/query — check STK Push status */
-router.post("/payments/mpesa/stkpush/query", validator({ input: mpesaStkQuerySchema }), async (c) => {
-  const { checkoutRequestId } = c.req.valid("json");
-  const result = await paymentsSvc.querySTKPushStatus(checkoutRequestId);
+router.post("/payments/mpesa/stkpush/query", async (c) => {
+  const body = await c.req.json();
+  if (!body.checkoutRequestId) throw new ValidationError("checkoutRequestId is required");
+
+  const result = await paymentsSvc.querySTKPushStatus(body.checkoutRequestId);
   return c.json({ data: result });
 });
 
 /** POST /api/payments/mpesa/c2b/register — register C2B callback URLs */
-router.post("/payments/mpesa/c2b/register", validator({ input: mpesaC2bRegisterSchema }), async (c) => {
-  const { validationUrl, confirmationUrl } = c.req.valid("json");
-  const result = await paymentsSvc.registerC2BUrls(validationUrl, confirmationUrl);
+router.post("/payments/mpesa/c2b/register", async (c) => {
+  const body = await c.req.json();
+  if (!body.validationUrl || !body.confirmationUrl) {
+    throw new ValidationError("validationUrl and confirmationUrl are required");
+  }
+  const result = await paymentsSvc.registerC2BUrls(body.validationUrl, body.confirmationUrl);
   return c.json({ data: result });
 });
 
@@ -94,7 +101,7 @@ router.post("/payments/mpesa/callback", async (c) => {
     const resultDesc = callback.ResultDesc;
     // TODO: Update order payment status in database
     // if (resultCode === 0) { /* Payment successful */ }
-    c.var.logger.info("M-Pesa STK Callback received", { resultCode, resultDesc });
+    console.log(`M-Pesa STK Callback: ResultCode=${resultCode}, Desc=${resultDesc}`);
   }
   // Always respond with success to Safaricom
   return c.json({ ResultCode: 0, ResultDesc: "Accepted" });
@@ -105,11 +112,7 @@ router.post("/payments/mpesa/c2b/confirmation", async (c) => {
   const body = await c.req.json();
   // In production: record the payment, update order status
   // Body contains: TransactionType, TransID, TransTime, TransAmount, BusinessShortCode, BillRefNumber, etc.
-  c.var.logger.info("M-Pesa C2B Confirmation received", {
-    transactionType: body?.TransactionType,
-    transId: body?.TransID,
-    amount: body?.TransAmount,
-  });
+  console.log("M-Pesa C2B Confirmation:", JSON.stringify(body));
   return c.json({ ResultCode: 0, ResultDesc: "Accepted" });
 });
 

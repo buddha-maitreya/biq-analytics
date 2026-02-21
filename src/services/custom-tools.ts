@@ -21,6 +21,7 @@
 
 import { db, customTools } from "@db/index";
 import { eq, asc } from "drizzle-orm";
+import { checkToolRateLimit } from "@lib/rate-limit";
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -90,7 +91,6 @@ export interface CreateToolInput {
   // Common
   isActive?: boolean;
   sortOrder?: number;
-  metadata?: Record<string, unknown>;
 }
 
 export interface UpdateToolInput extends Partial<CreateToolInput> {}
@@ -155,7 +155,6 @@ export async function createTool(input: CreateToolInput): Promise<CustomToolRow>
       // Common
       isActive: input.isActive ?? true,
       sortOrder: input.sortOrder ?? 0,
-      metadata: input.metadata ?? {},
     })
     .returning();
   return row as CustomToolRow;
@@ -191,7 +190,6 @@ export async function updateTool(
   if (input.dynamicVariableAssignments !== undefined) updates.dynamicVariableAssignments = input.dynamicVariableAssignments;
   if (input.isActive !== undefined) updates.isActive = input.isActive;
   if (input.sortOrder !== undefined) updates.sortOrder = input.sortOrder;
-  if (input.metadata !== undefined) updates.metadata = input.metadata;
 
   if (Object.keys(updates).length === 0) {
     return getToolById(id);
@@ -213,103 +211,15 @@ export async function deleteTool(id: string): Promise<boolean> {
 
 // ── Server Tool Execution ──────────────────────────────────
 
-// Phase 6.2: OAuth2 token cache (in-memory per deployment instance)
-const oauthTokenCache = new Map<string, { token: string; expiresAt: number }>();
-
-/**
- * Exchange OAuth2 credentials for an access token.
- * Supports client_credentials grant (most common for server-to-server).
- * Tokens are cached in-memory until 60s before expiry.
- */
-async function getOAuth2Token(
-  authCfg: Record<string, string>
-): Promise<string | null> {
-  const cacheKey = `${authCfg.tokenUrl}:${authCfg.clientId}`;
-  const cached = oauthTokenCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.token;
-  }
-
-  // If we have a stored access token but no tokenUrl, use it directly
-  if (authCfg.accessToken && !authCfg.tokenUrl) {
-    return authCfg.accessToken;
-  }
-
-  if (!authCfg.tokenUrl || !authCfg.clientId || !authCfg.clientSecret) {
-    return authCfg.accessToken ?? null;
-  }
-
-  try {
-    const body = new URLSearchParams({
-      grant_type: authCfg.grantType ?? "client_credentials",
-      client_id: authCfg.clientId,
-      client_secret: authCfg.clientSecret,
-    });
-    if (authCfg.scope) body.set("scope", authCfg.scope);
-
-    const res = await fetch(authCfg.tokenUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString(),
-    });
-
-    if (!res.ok) {
-      return authCfg.accessToken ?? null;
-    }
-
-    const data = (await res.json()) as {
-      access_token: string;
-      expires_in?: number;
-    };
-    const expiresIn = data.expires_in ?? 3600;
-    // Cache until 60s before expiry
-    oauthTokenCache.set(cacheKey, {
-      token: data.access_token,
-      expiresAt: Date.now() + (expiresIn - 60) * 1000,
-    });
-    return data.access_token;
-  } catch {
-    return authCfg.accessToken ?? null;
-  }
-}
-
-// Phase 6.2: Rate limiting via in-memory counters (per-tool)
-const rateLimitCounters = new Map<string, { count: number; windowStart: number }>();
-
-/** Default rate limit: 60 requests per minute per tool */
-const DEFAULT_RATE_LIMIT = 60;
-const RATE_LIMIT_WINDOW_MS = 60_000;
-
-/**
- * Check and increment rate limit counter for a tool.
- * Returns true if the request is allowed, false if rate-limited.
- */
-function checkRateLimit(toolId: string, maxRequests?: number): boolean {
-  const limit = maxRequests ?? DEFAULT_RATE_LIMIT;
-  const now = Date.now();
-  const counter = rateLimitCounters.get(toolId);
-
-  if (!counter || now - counter.windowStart > RATE_LIMIT_WINDOW_MS) {
-    rateLimitCounters.set(toolId, { count: 1, windowStart: now });
-    return true;
-  }
-
-  if (counter.count >= limit) return false;
-  counter.count++;
-  return true;
-}
-
 /**
  * Execute a server tool by making an HTTP request to the configured endpoint.
  *
  * Supports:
- * - Authentication (api_key, bearer, basic, oauth2 with token exchange)
+ * - Authentication (api_key, bearer, basic, oauth2)
  * - Path parameter interpolation (e.g. /users/{user_id})
  * - Query parameters (merged from schema defaults + LLM params)
  * - Request body schema for POST/PUT/PATCH
  * - Dynamic variable substitution in URL, headers, and body
- * - Rate limiting (per-tool, configurable via metadata.rateLimit)
- * - Retry with exponential backoff for transient failures (5xx, network errors)
  *
  * @param tool - The tool definition (must have webhookUrl set)
  * @param params - Parameters passed by the LLM — sent as JSON body for POST/PUT/PATCH,
@@ -322,15 +232,6 @@ export async function executeServerTool(
 ): Promise<Record<string, unknown>> {
   if (!tool.webhookUrl) {
     return { error: `Server tool "${tool.label}" has no URL configured` };
-  }
-
-  // Phase 6.2: Rate limiting
-  const rateLimit = (tool.metadata as Record<string, unknown>)?.rateLimit as number | undefined;
-  if (!checkRateLimit(tool.id, rateLimit)) {
-    return {
-      error: `Server tool "${tool.label}" is rate-limited. Try again later.`,
-      rateLimited: true,
-    };
   }
 
   const method = (tool.webhookMethod || "GET").toUpperCase();
@@ -350,11 +251,55 @@ export async function executeServerTool(
   } else if (authType === "basic" && authCfg.username) {
     const encoded = btoa(`${authCfg.username}:${authCfg.password ?? ""}`);
     headers["Authorization"] = `Basic ${encoded}`;
-  } else if (authType === "oauth2") {
-    // Phase 6.2: Full OAuth2 token exchange with caching
-    const token = await getOAuth2Token(authCfg);
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
+  }
+  // OAuth2 with automatic token refresh
+  if (authType === "oauth2") {
+    let accessToken = authCfg.accessToken;
+    const expiresAt = authCfg.tokenExpiresAt ? Number(authCfg.tokenExpiresAt) : 0;
+    const needsRefresh = !accessToken || (expiresAt > 0 && Date.now() >= expiresAt - 30_000);
+
+    if (needsRefresh && authCfg.refreshToken && authCfg.tokenUrl) {
+      try {
+        const refreshHeaders: Record<string, string> = {
+          "Content-Type": "application/x-www-form-urlencoded",
+        };
+        // Client credentials for token endpoint (Basic auth)
+        if (authCfg.clientId && authCfg.clientSecret) {
+          refreshHeaders["Authorization"] = `Basic ${btoa(`${authCfg.clientId}:${authCfg.clientSecret}`)}`;
+        }
+        const body = new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: authCfg.refreshToken,
+          ...(authCfg.clientId && !authCfg.clientSecret ? { client_id: authCfg.clientId } : {}),
+        });
+        const tokenRes = await fetch(authCfg.tokenUrl, {
+          method: "POST",
+          headers: refreshHeaders,
+          body: body.toString(),
+        });
+        if (tokenRes.ok) {
+          const tokenData = await tokenRes.json();
+          accessToken = tokenData.access_token;
+          // Persist refreshed tokens back to the tool's authConfig
+          const updatedConfig = { ...authCfg };
+          updatedConfig.accessToken = tokenData.access_token;
+          if (tokenData.refresh_token) updatedConfig.refreshToken = tokenData.refresh_token;
+          if (tokenData.expires_in) {
+            updatedConfig.tokenExpiresAt = String(Date.now() + tokenData.expires_in * 1000);
+          }
+          // Fire-and-forget DB update for persisted token
+          db.update(customTools)
+            .set({ authConfig: updatedConfig })
+            .where(eq(customTools.id, tool.id))
+            .catch(() => {});
+        }
+      } catch {
+        // Token refresh failed — try with existing token
+      }
+    }
+
+    if (accessToken) {
+      headers["Authorization"] = `Bearer ${accessToken}`;
     }
   }
 
@@ -406,69 +351,38 @@ export async function executeServerTool(
   }
 
   try {
-    // Phase 6.2: Retry with exponential backoff for transient failures
-    const maxRetries = ((tool.metadata as Record<string, unknown>)?.retries as number) ?? 2;
-    let lastError: Error | null = null;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      if (attempt > 0) {
-        // Exponential backoff: 500ms, 1000ms, 2000ms, ...
-        await new Promise((r) => setTimeout(r, 500 * Math.pow(2, attempt - 1)));
-      }
+    const res = await fetch(url, {
+      method,
+      headers,
+      body,
+      signal: controller.signal,
+    });
 
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
+    clearTimeout(timer);
 
-        const res = await fetch(url, {
-          method,
-          headers,
-          body,
-          signal: controller.signal,
-        });
+    const text = await res.text();
 
-        clearTimeout(timer);
-
-        const text = await res.text();
-
-        // Don't retry client errors (4xx) — only server errors (5xx)
-        if (!res.ok) {
-          if (res.status >= 500 && attempt < maxRetries) {
-            lastError = new Error(`HTTP ${res.status}`);
-            continue; // retry
-          }
-          return {
-            error: `Server tool "${tool.label}" returned HTTP ${res.status}`,
-            status: res.status,
-            body: text.slice(0, 500),
-          };
-        }
-
-        // Try to parse as JSON
-        try {
-          return JSON.parse(text);
-        } catch {
-          return { output: text.slice(0, 2000) };
-        }
-      } catch (err: any) {
-        if (err.name === "AbortError") {
-          if (attempt < maxRetries) {
-            lastError = err;
-            continue; // retry timeouts
-          }
-          return { error: `Server tool "${tool.label}" timed out after ${timeoutMs}ms` };
-        }
-        // Network errors are retryable
-        if (attempt < maxRetries) {
-          lastError = err;
-          continue;
-        }
-        return { error: `Server tool execution failed: ${err.message || String(err)}` };
-      }
+    if (!res.ok) {
+      return {
+        error: `Server tool "${tool.label}" returned HTTP ${res.status}`,
+        status: res.status,
+        body: text.slice(0, 500),
+      };
     }
 
-    return { error: `Server tool "${tool.label}" failed after ${maxRetries + 1} attempts: ${lastError?.message ?? "unknown"}` };
+    // Try to parse as JSON
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { output: text.slice(0, 2000) };
+    }
   } catch (err: any) {
+    if (err.name === "AbortError") {
+      return { error: `Server tool "${tool.label}" timed out after ${timeoutMs}ms` };
+    }
     return { error: `Server tool execution failed: ${err.message || String(err)}` };
   }
 }
@@ -515,17 +429,28 @@ export function buildClientToolAction(
  */
 export async function executeTool(
   tool: CustomToolRow,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  userId?: string
 ): Promise<Record<string, unknown>> {
+  // Rate limit check for server tools (configurable per-tool)
+  if (tool.toolType === "server" && userId) {
+    const maxPerDay = (tool as any).rateLimitMax ?? 100;
+    const { allowed, remaining } = checkToolRateLimit(tool.id, userId, maxPerDay);
+    if (!allowed) {
+      return {
+        error: `Rate limit exceeded for tool "${tool.label}". Try again later.`,
+        rateLimited: true,
+        remaining,
+      };
+    }
+  }
+
   switch (tool.toolType) {
     case "server":
       return executeServerTool(tool, params);
 
     case "client":
       return buildClientToolAction(tool, params);
-
-    case "mcp":
-      return executeMcpTool(tool, params);
 
     default:
       return { error: `Unsupported tool type "${tool.toolType}" for tool "${tool.label}"` };
@@ -538,302 +463,6 @@ export async function executeTool(
 // URLs are placeholders — each deployment configures their own
 // endpoints via the Admin Console.
 // ──────────────────────────────────────────────────────────
-
-// ── MCP Tool Execution ─────────────────────────────────────
-//
-// MCP (Model Context Protocol) tools are pre-configured external
-// integrations with specialized request building and response
-// formatting. Each mcpType has a dedicated handler. Unknown types
-// fall back to standard HTTP execution (executeServerTool).
-// ──────────────────────────────────────────────────────────
-
-/** WMO standard weather codes used by Open-Meteo */
-const WMO_WEATHER_CODES: Record<number, string> = {
-  0: "Clear sky",
-  1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
-  45: "Foggy", 48: "Depositing rime fog",
-  51: "Light drizzle", 53: "Moderate drizzle", 55: "Dense drizzle",
-  56: "Freezing light drizzle", 57: "Freezing dense drizzle",
-  61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
-  66: "Freezing light rain", 67: "Freezing heavy rain",
-  71: "Slight snow fall", 73: "Moderate snow fall", 75: "Heavy snow fall",
-  77: "Snow grains",
-  80: "Slight rain showers", 81: "Moderate rain showers", 82: "Violent rain showers",
-  85: "Slight snow showers", 86: "Heavy snow showers",
-  95: "Thunderstorm", 96: "Thunderstorm with slight hail", 99: "Thunderstorm with heavy hail",
-};
-
-/** Kenyan city coordinates for quick location resolution */
-const KENYA_LOCATIONS: Record<string, { lat: number; lon: number }> = {
-  nairobi: { lat: -1.2921, lon: 36.8219 },
-  mombasa: { lat: -4.0435, lon: 39.6682 },
-  kisumu: { lat: -0.1022, lon: 34.7617 },
-  nakuru: { lat: -0.3031, lon: 36.0800 },
-  eldoret: { lat: 0.5143, lon: 35.2698 },
-  thika: { lat: -1.0396, lon: 37.0900 },
-  malindi: { lat: -3.2138, lon: 40.1169 },
-  nanyuki: { lat: 0.0067, lon: 37.0722 },
-  kitale: { lat: 1.0187, lon: 35.0020 },
-  garissa: { lat: -0.4532, lon: 39.6461 },
-  lamu: { lat: -2.2717, lon: 40.9020 },
-  nyeri: { lat: -0.4197, lon: 36.9511 },
-  machakos: { lat: -1.5177, lon: 37.2634 },
-  naivasha: { lat: -0.7172, lon: 36.4310 },
-  meru: { lat: 0.0480, lon: 37.6559 },
-};
-
-/** Common NSE (Nairobi Securities Exchange) stock symbols */
-const NSE_SYMBOLS: Record<string, string> = {
-  SCOM: "Safaricom PLC",
-  EQTY: "Equity Group Holdings",
-  KCB: "KCB Group PLC",
-  COOP: "Co-operative Bank",
-  ABSA: "ABSA Bank Kenya",
-  SBIC: "Stanbic Holdings",
-  EABL: "East African Breweries",
-  BAT: "BAT Kenya",
-  BAMB: "Bamburi Cement",
-  KQ: "Kenya Airways",
-  SCAN: "ScanGroup",
-  JUB: "Jubilee Holdings",
-  NCBA: "NCBA Group",
-  DTK: "Diamond Trust Bank Kenya",
-  NBK: "National Bank of Kenya",
-};
-
-/**
- * Execute an MCP-type tool.
- * MCP tools are pre-configured integrations with specialized request building
- * and response formatting. Unknown MCP types fall back to standard HTTP execution.
- */
-export async function executeMcpTool(
-  tool: CustomToolRow,
-  params: Record<string, unknown>
-): Promise<Record<string, unknown>> {
-  const meta = (tool.metadata ?? {}) as Record<string, unknown>;
-  const mcpType = meta.mcpType as string;
-
-  switch (mcpType) {
-    case "weather":
-      return executeMcpWeather(tool, params);
-    case "stock_market":
-      return executeMcpStockMarket(tool, params);
-    default:
-      // Unknown MCP type — fall back to standard HTTP execution
-      return executeServerTool(tool, params);
-  }
-}
-
-/**
- * Execute weather MCP tool using Open-Meteo API (free, no auth required).
- * Supports configurable location via tool metadata or runtime params.
- * @param tool - MCP tool with metadata.location, metadata.latitude, metadata.longitude
- * @param params - Optional: location (city name), latitude, longitude overrides
- */
-async function executeMcpWeather(
-  tool: CustomToolRow,
-  params: Record<string, unknown>
-): Promise<Record<string, unknown>> {
-  const meta = (tool.metadata ?? {}) as Record<string, unknown>;
-
-  // Resolve location: runtime params override > tool metadata defaults
-  let lat = Number(meta.latitude ?? -1.2921);
-  let lon = Number(meta.longitude ?? 36.8219);
-  let location = String(meta.location ?? "Nairobi");
-  const tz = String(meta.timezone ?? "Africa/Nairobi");
-  const forecastDays = Number(meta.forecastDays ?? 7);
-
-  // If a city name was provided, try to resolve coordinates from our Kenya lookup
-  if (params.location && typeof params.location === "string") {
-    const cityKey = params.location.toLowerCase().trim();
-    const cityCoords = KENYA_LOCATIONS[cityKey];
-    if (cityCoords) {
-      lat = cityCoords.lat;
-      lon = cityCoords.lon;
-      location = params.location as string;
-    } else {
-      // Use provided name but keep configured coords unless lat/lon also provided
-      location = params.location as string;
-    }
-  }
-
-  // Allow explicit lat/lon overrides
-  if (params.latitude !== undefined) lat = Number(params.latitude);
-  if (params.longitude !== undefined) lon = Number(params.longitude);
-
-  const url =
-    `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-    `&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_direction_10m` +
-    `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max` +
-    `&timezone=${encodeURIComponent(tz)}&forecast_days=${forecastDays}`;
-
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
-
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
-
-    if (!res.ok) {
-      return { error: `Weather API returned HTTP ${res.status}`, status: res.status };
-    }
-
-    const data = await res.json() as Record<string, any>;
-    const current = data.current;
-
-    // Format the forecast
-    const forecast: Array<Record<string, string>> = [];
-    if (data.daily) {
-      for (let i = 0; i < (data.daily.time?.length ?? 0); i++) {
-        forecast.push({
-          date: data.daily.time[i],
-          high: `${data.daily.temperature_2m_max[i]}°C`,
-          low: `${data.daily.temperature_2m_min[i]}°C`,
-          precipitation: `${data.daily.precipitation_sum[i]} mm`,
-          maxWind: `${data.daily.wind_speed_10m_max[i]} km/h`,
-          description: WMO_WEATHER_CODES[data.daily.weather_code[i]] ?? "Unknown",
-        });
-      }
-    }
-
-    return {
-      location,
-      coordinates: { latitude: lat, longitude: lon },
-      current: {
-        temperature: `${current.temperature_2m}°C`,
-        feelsLike: `${current.apparent_temperature}°C`,
-        humidity: `${current.relative_humidity_2m}%`,
-        windSpeed: `${current.wind_speed_10m} km/h`,
-        windDirection: `${current.wind_direction_10m}°`,
-        precipitation: `${current.precipitation} mm`,
-        description: WMO_WEATHER_CODES[current.weather_code] ?? "Unknown",
-      },
-      forecast,
-      timestamp: current.time,
-      timezone: tz,
-    };
-  } catch (err: any) {
-    if (err.name === "AbortError") {
-      return { error: "Weather API request timed out" };
-    }
-    return { error: `Weather fetch failed: ${err.message ?? String(err)}` };
-  }
-}
-
-/**
- * Execute NSE stock market MCP tool.
- * Uses the Marketstack API (free tier available) to fetch stock quotes
- * from the Nairobi Securities Exchange (XNAI).
- * @param tool - MCP tool with metadata.apiUrl, authConfig.apiKey
- * @param params - symbol or company name to look up
- */
-async function executeMcpStockMarket(
-  tool: CustomToolRow,
-  params: Record<string, unknown>
-): Promise<Record<string, unknown>> {
-  const meta = (tool.metadata ?? {}) as Record<string, unknown>;
-  const apiKey =
-    (tool.authConfig as Record<string, string>)?.apiKey ||
-    (meta.apiKey as string) ||
-    "";
-
-  if (!apiKey) {
-    return {
-      error:
-        "NSE stock tool requires an API key. Sign up for a free Marketstack API key at https://marketstack.com/signup/free and configure it in Admin → Custom Tools → MCP Tools.",
-      setup: {
-        provider: "Marketstack",
-        signupUrl: "https://marketstack.com/signup/free",
-        freeTier: "100 requests/month",
-        instructions:
-          "After signup, copy your API key and paste it in the MCP tool's Auth Config → apiKey field.",
-      },
-      availableSymbols: NSE_SYMBOLS,
-    };
-  }
-
-  // Resolve symbol(s) — accept ticker, company name, or partial match
-  const symbolInput = String(
-    params.symbol ?? params.stock ?? params.company ?? meta.defaultSymbol ?? "SCOM"
-  );
-  const symbolUpper = symbolInput.toUpperCase().trim();
-
-  let symbol = symbolUpper;
-
-  // Direct ticker match
-  if (!NSE_SYMBOLS[symbol]) {
-    // Try partial company name match
-    const match = Object.entries(NSE_SYMBOLS).find(([_, name]) =>
-      name.toLowerCase().includes(symbolInput.toLowerCase())
-    );
-    if (match) symbol = match[0];
-  }
-
-  // Marketstack uses .XNAI suffix for Nairobi Securities Exchange
-  const exchangeSymbol = `${symbol}.XNAI`;
-  const baseUrl = String(meta.apiUrl ?? "http://api.marketstack.com/v1");
-  const url = `${baseUrl}/eod?access_key=${apiKey}&symbols=${exchangeSymbol}&limit=5`;
-
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      return {
-        error: `Stock API returned HTTP ${res.status}`,
-        status: res.status,
-        details: errText.slice(0, 500),
-      };
-    }
-
-    const data = (await res.json()) as Record<string, any>;
-
-    if (data.error) {
-      return { error: data.error.message ?? "API error", code: data.error.code };
-    }
-
-    const quotes = ((data.data ?? []) as Array<Record<string, any>>).map(
-      (q: Record<string, any>) => ({
-        date: q.date?.split("T")[0],
-        open: q.open,
-        high: q.high,
-        low: q.low,
-        close: q.close,
-        volume: q.volume,
-        exchange: q.exchange,
-      })
-    );
-
-    const latest = quotes[0];
-    const previous = quotes[1];
-    const change =
-      latest && previous
-        ? {
-            amount: (latest.close - previous.close).toFixed(2),
-            percent:
-              (((latest.close - previous.close) / previous.close) * 100).toFixed(2) + "%",
-          }
-        : null;
-
-    return {
-      symbol: symbol.toUpperCase(),
-      company: NSE_SYMBOLS[symbol.toUpperCase()] ?? symbol,
-      exchange: "NSE (Nairobi Securities Exchange)",
-      latest: latest ?? null,
-      change,
-      history: quotes,
-      currency: "KES",
-    };
-  } catch (err: any) {
-    if (err.name === "AbortError") {
-      return { error: "Stock API request timed out" };
-    }
-    return { error: `Stock data fetch failed: ${err.message ?? String(err)}` };
-  }
-}
 
 const DEFAULT_TOOLS: CreateToolInput[] = [
   // ── SERVER TOOLS (external API calls) ─────────────────────
@@ -1181,133 +810,3 @@ export async function seedDefaultTools(): Promise<number> {
 
 /** Get the list of default tool names (for display in UI) */
 export const DEFAULT_TOOL_NAMES = DEFAULT_TOOLS.map((t) => t.name);
-
-// ── MCP Default Integrations ───────────────────────────────
-//
-// Pre-configured MCP tool integrations. These are "official" external
-// service integrations that ship with the platform. Unlike custom tools
-// (which are user-defined), MCP tools have specialized execution handlers
-// with built-in request building and response formatting.
-// ──────────────────────────────────────────────────────────
-
-const MCP_DEFAULT_TOOLS: CreateToolInput[] = [
-  {
-    toolType: "mcp",
-    name: "mcp_weather",
-    label: "Weather Data (Kenya)",
-    description:
-      "Get real-time weather data and forecast for any location in Kenya. " +
-      "Powered by Open-Meteo (free, no API key required). Forecast range is configurable " +
-      "(default 7 days). Use when the user asks about weather, temperature, rain, or " +
-      "climate conditions for business planning, logistics, or general information.",
-    parameterSchema: {
-      location: {
-        type: "string",
-        description:
-          "City name in Kenya (Nairobi, Mombasa, Kisumu, Nakuru, Eldoret, Thika, Malindi, " +
-          "Nanyuki, Kitale, Garissa, Lamu, Nyeri, Machakos, Naivasha, Meru). " +
-          "Defaults to configured business location.",
-      },
-      latitude: {
-        type: "number",
-        description: "Custom latitude (optional — overrides city lookup)",
-      },
-      longitude: {
-        type: "number",
-        description: "Custom longitude (optional — overrides city lookup)",
-      },
-    },
-    webhookUrl: "https://api.open-meteo.com/v1/forecast",
-    webhookMethod: "GET",
-    webhookHeaders: {},
-    webhookTimeoutSecs: 15,
-    authType: "none",
-    authConfig: {},
-    executionMode: "immediate",
-    isActive: true, // Works immediately — no API key required
-    sortOrder: 100,
-    metadata: {
-      mcpType: "weather",
-      provider: "Open-Meteo",
-      location: "Nairobi",
-      latitude: -1.2921,
-      longitude: 36.8219,
-      timezone: "Africa/Nairobi",
-      forecastDays: 7,
-      category: "weather",
-      noApiKeyRequired: true,
-      supportedCities: Object.keys(KENYA_LOCATIONS),
-    },
-  },
-  {
-    toolType: "mcp",
-    name: "mcp_nse_stocks",
-    label: "NSE Stock Market Data",
-    description:
-      "Get stock market data from the Nairobi Securities Exchange (NSE). " +
-      "Supports major Kenyan stocks: Safaricom (SCOM), Equity (EQTY), KCB, Co-op Bank (COOP), " +
-      "ABSA, Stanbic (SBIC), EABL, BAT, and more. Requires a free Marketstack API key. " +
-      "Use when the user asks about stock prices, market performance, or financial data " +
-      "for Kenyan companies.",
-    parameterSchema: {
-      symbol: {
-        type: "string",
-        description:
-          "Stock ticker symbol (e.g. SCOM for Safaricom, EQTY for Equity, KCB for KCB Group) " +
-          "or company name",
-        required: true,
-      },
-    },
-    webhookUrl: "http://api.marketstack.com/v1/eod",
-    webhookMethod: "GET",
-    webhookHeaders: {},
-    webhookTimeoutSecs: 20,
-    authType: "api_key",
-    authConfig: { headerName: "access_key", apiKey: "" },
-    executionMode: "immediate",
-    isActive: false, // Inactive until API key is configured
-    sortOrder: 101,
-    metadata: {
-      mcpType: "stock_market",
-      provider: "Marketstack",
-      exchange: "XNAI",
-      exchangeName: "Nairobi Securities Exchange",
-      category: "finance",
-      apiUrl: "http://api.marketstack.com/v1",
-      defaultSymbol: "SCOM",
-      setupUrl: "https://marketstack.com/signup/free",
-      freeTier: "100 requests/month",
-      symbols: NSE_SYMBOLS,
-    },
-  },
-];
-
-/**
- * Seed default MCP integrations (idempotent — skips tools whose name already exists).
- * Returns the count of newly created tools.
- */
-export async function seedMcpTools(): Promise<number> {
-  let created = 0;
-  for (const def of MCP_DEFAULT_TOOLS) {
-    const existing = await db.query.customTools.findFirst({
-      where: eq(customTools.name, def.name),
-    });
-    if (!existing) {
-      await createTool(def);
-      created++;
-    }
-  }
-  return created;
-}
-
-/** List only MCP-type tools */
-export async function listMcpTools(): Promise<CustomToolRow[]> {
-  const rows = await db.query.customTools.findMany({
-    where: eq(customTools.toolType, "mcp"),
-    orderBy: [asc(customTools.sortOrder), asc(customTools.name)],
-  });
-  return rows as CustomToolRow[];
-}
-
-/** Get the list of default MCP tool names */
-export const MCP_DEFAULT_TOOL_NAMES = MCP_DEFAULT_TOOLS.map((t) => t.name);

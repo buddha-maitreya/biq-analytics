@@ -14,6 +14,37 @@ import {
 import { relations } from "drizzle-orm";
 
 // ============================================================
+// BetterAuth Tables (@agentuity/auth)
+// ============================================================
+//
+// These 9 tables are managed by @agentuity/auth (BetterAuth).
+// Re-exported here so Drizzle migrations discover them alongside
+// the application tables. Do NOT modify their column definitions —
+// they must stay in sync with the BetterAuth schema.
+//
+// Tables: user, session, account, verification,
+//         organization, member, invitation, jwks, apikey
+//
+export {
+  user as authUser,
+  session as authSession,
+  account as authAccount,
+  verification as authVerification,
+  organization as authOrganization,
+  member as authMember,
+  invitation as authInvitation,
+  jwks as authJwks,
+  apikey as authApikey,
+  userRelations as authUserRelations,
+  sessionRelations as authSessionRelations,
+  accountRelations as authAccountRelations,
+  organizationRelations as authOrganizationRelations,
+  memberRelations as authMemberRelations,
+  invitationRelations as authInvitationRelations,
+  apikeyRelations as authApikeyRelations,
+} from "@agentuity/auth/schema";
+
+// ============================================================
 // Utility defaults
 // ============================================================
 const id = () => uuid("id").primaryKey().defaultRandom();

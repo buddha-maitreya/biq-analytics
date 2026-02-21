@@ -64,10 +64,7 @@ export default function Sidebar({ config, currentPage, onNavigate, user, onLogou
     let cancelled = false;
     const fetchCount = async () => {
       try {
-        const token = typeof window !== "undefined" ? localStorage.getItem("biq_token") : null;
-        const hdrs: Record<string, string> = {};
-        if (token) hdrs["Authorization"] = `Bearer ${token}`;
-        const res = await fetch("/api/approvals/pending/count", { headers: hdrs });
+        const res = await fetch("/api/approvals/pending/count");
         if (res.ok && !cancelled) {
           const json = await res.json();
           setPendingCount(json.data?.count ?? 0);

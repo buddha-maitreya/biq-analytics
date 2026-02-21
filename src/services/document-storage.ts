@@ -8,13 +8,13 @@
  *   - Backup/recovery of knowledge base content
  *   - Presigned URL generation for secure document sharing
  *
- * Uses Bun's native S3 API. Credentials (S3_ACCESS_KEY_ID,
- * S3_SECRET_ACCESS_KEY, S3_BUCKET, S3_ENDPOINT) are auto-injected
- * by the Agentuity runtime.
+ * Built on the generic ObjectStorage abstraction (object-storage.ts).
  */
 
-/** Namespace prefix for knowledge base documents in S3 */
-const KB_PREFIX = "kb-documents";
+import * as objectStorage from "./object-storage";
+
+/** Namespaced storage for knowledge base documents */
+const kbStorage = objectStorage.namespace("kb-documents");
 
 /** Metadata stored alongside each document in S3 */
 export interface StoredDocMeta {
@@ -31,16 +31,7 @@ export interface StoredDocMeta {
  * Returns false during local dev if S3 is not configured.
  */
 export function isObjectStorageAvailable(): boolean {
-  try {
-    // Bun's s3 module is always importable but returns errors if unconfigured
-    return !!(
-      process.env.S3_ACCESS_KEY_ID ||
-      process.env.S3_BUCKET ||
-      process.env.S3_ENDPOINT
-    );
-  } catch {
-    return false;
-  }
+  return objectStorage.isAvailable();
 }
 
 /**
@@ -53,28 +44,21 @@ export async function storeDocument(
   title: string,
   category: string
 ): Promise<{ key: string; sizeBytes: number } | null> {
-  if (!isObjectStorageAvailable()) return null;
+  if (!objectStorage.isAvailable()) return null;
 
   try {
-    const { s3 } = await import("bun");
-    const key = `${KB_PREFIX}/${category}/${filename}`;
-    const file = s3.file(key);
-
-    await file.write(content, { type: "text/plain" });
-
-    // Store metadata as a sidecar JSON file
-    const meta: StoredDocMeta = {
-      title,
-      filename,
-      category,
-      uploadedAt: new Date().toISOString(),
-      sizeBytes: new TextEncoder().encode(content).length,
+    const docKey = `${category}/${filename}`;
+    const result = await kbStorage.put(docKey, content, {
       contentType: "text/plain",
-    };
-    const metaFile = s3.file(`${key}.meta.json`);
-    await metaFile.write(JSON.stringify(meta), { type: "application/json" });
-
-    return { key, sizeBytes: meta.sizeBytes };
+      meta: {
+        title,
+        filename,
+        category,
+        uploadedAt: new Date().toISOString(),
+        contentType: "text/plain",
+      } satisfies Omit<StoredDocMeta, "sizeBytes">,
+    });
+    return result;
   } catch {
     return null;
   }
@@ -87,34 +71,32 @@ export async function getDocument(
   filename: string,
   category: string
 ): Promise<{ content: string; meta: StoredDocMeta } | null> {
-  if (!isObjectStorageAvailable()) return null;
+  if (!objectStorage.isAvailable()) return null;
 
   try {
-    const { s3 } = await import("bun");
-    const key = `${KB_PREFIX}/${category}/${filename}`;
+    const docKey = `${category}/${filename}`;
+    const content = await kbStorage.get(docKey);
+    if (content === null) return null;
 
-    const file = s3.file(key);
-    if (!(await file.exists())) return null;
-
-    const content = await file.text();
-
-    let meta: StoredDocMeta = {
-      title: filename,
-      filename,
-      category,
-      uploadedAt: "",
-      sizeBytes: new TextEncoder().encode(content).length,
-      contentType: "text/plain",
-    };
-
-    try {
-      const metaFile = s3.file(`${key}.meta.json`);
-      if (await metaFile.exists()) {
-        meta = (await metaFile.json()) as StoredDocMeta;
-      }
-    } catch {
-      // Metadata sidecar missing — use defaults
-    }
+    // Try to read metadata sidecar
+    const rawMeta = await kbStorage.getMeta(docKey);
+    const meta: StoredDocMeta = rawMeta
+      ? {
+          title: (rawMeta.title as string) ?? filename,
+          filename: (rawMeta.filename as string) ?? filename,
+          category: (rawMeta.category as string) ?? category,
+          uploadedAt: (rawMeta.uploadedAt as string) ?? rawMeta.createdAt ?? "",
+          sizeBytes: rawMeta.sizeBytes,
+          contentType: (rawMeta.contentType as string) ?? "text/plain",
+        }
+      : {
+          title: filename,
+          filename,
+          category,
+          uploadedAt: "",
+          sizeBytes: new TextEncoder().encode(content).length,
+          contentType: "text/plain",
+        };
 
     return { content, meta };
   } catch {
@@ -129,19 +111,10 @@ export async function deleteDocument(
   filename: string,
   category: string
 ): Promise<boolean> {
-  if (!isObjectStorageAvailable()) return false;
+  if (!objectStorage.isAvailable()) return false;
 
   try {
-    const { s3 } = await import("bun");
-    const key = `${KB_PREFIX}/${category}/${filename}`;
-
-    const file = s3.file(key);
-    if (await file.exists()) await file.delete();
-
-    const metaFile = s3.file(`${key}.meta.json`);
-    if (await metaFile.exists()) await metaFile.delete();
-
-    return true;
+    return await kbStorage.del(`${category}/${filename}`);
   } catch {
     return false;
   }
@@ -151,17 +124,17 @@ export async function deleteDocument(
  * Generate a presigned download URL for a document.
  * The URL expires after the specified duration (default: 1 hour).
  */
-export async function getDocumentDownloadUrl(
+export function getDocumentDownloadUrl(
   filename: string,
   category: string,
   expiresInSecs = 3600
-): Promise<string | null> {
-  if (!isObjectStorageAvailable()) return null;
+): string | null {
+  if (!objectStorage.isAvailable()) return null;
 
   try {
-    const { s3 } = await import("bun");
-    const key = `${KB_PREFIX}/${category}/${filename}`;
-    return s3.presign(key, { expiresIn: expiresInSecs });
+    return kbStorage.presign(`${category}/${filename}`, {
+      expiresIn: expiresInSecs,
+    });
   } catch {
     return null;
   }
@@ -173,34 +146,23 @@ export async function getDocumentDownloadUrl(
 export async function listStoredDocuments(
   category?: string
 ): Promise<StoredDocMeta[]> {
-  if (!isObjectStorageAvailable()) return [];
+  if (!objectStorage.isAvailable()) return [];
 
   try {
-    const { s3 } = await import("bun");
-    const prefix = category
-      ? `${KB_PREFIX}/${category}/`
-      : `${KB_PREFIX}/`;
+    // Use the namespace list if no category filter, or create sub-namespace
+    const storage = category
+      ? objectStorage.namespace(`kb-documents/${category}`)
+      : kbStorage;
 
-    // List meta.json sidecar files to discover documents
-    const objects = await (s3 as any).listObjects?.({ prefix }) as
-      | Array<{ key: string }>
-      | undefined;
-
-    if (!objects) return [];
-
-    const docs: StoredDocMeta[] = [];
-    for (const obj of objects) {
-      if (obj.key.endsWith(".meta.json")) {
-        try {
-          const file = s3.file(obj.key);
-          const meta = (await file.json()) as StoredDocMeta;
-          docs.push(meta);
-        } catch {
-          // Skip corrupted metadata
-        }
-      }
-    }
-    return docs;
+    const metas = await storage.list();
+    return metas.map((m) => ({
+      title: (m.title as string) ?? (m.key as string),
+      filename: (m.filename as string) ?? "",
+      category: (m.category as string) ?? category ?? "",
+      uploadedAt: (m.uploadedAt as string) ?? m.createdAt ?? "",
+      sizeBytes: m.sizeBytes,
+      contentType: (m.contentType as string) ?? "text/plain",
+    }));
   } catch {
     return [];
   }

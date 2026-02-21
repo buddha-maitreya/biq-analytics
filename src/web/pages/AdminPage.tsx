@@ -1587,12 +1587,17 @@ function SettingsTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
     businessLogoUrl: "",
     businessTagline: "",
     primaryColor: "#3b82f6",
+    rateLimitChat: "30",
+    rateLimitScan: "20",
+    rateLimitReport: "10",
+    rateLimitWebhook: "100",
+    rateLimitToolDaily: "100",
     ...PAYMENT_DEFAULTS,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [section, setSection] = useState<"business" | "payments" | "tax">("business");
+  const [section, setSection] = useState<"business" | "payments" | "tax" | "ratelimits">("business");
 
   useEffect(() => {
     (async () => {
@@ -1606,6 +1611,11 @@ function SettingsTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
             businessLogoUrl: json.data.businessLogoUrl || "",
             businessTagline: json.data.businessTagline || "",
             primaryColor: json.data.primaryColor || "#3b82f6",
+            rateLimitChat: json.data.rateLimitChat || "30",
+            rateLimitScan: json.data.rateLimitScan || "20",
+            rateLimitReport: json.data.rateLimitReport || "10",
+            rateLimitWebhook: json.data.rateLimitWebhook || "100",
+            rateLimitToolDaily: json.data.rateLimitToolDaily || "100",
             ...Object.fromEntries(
               Object.keys(PAYMENT_DEFAULTS).map((k) => [k, json.data[k] ?? PAYMENT_DEFAULTS[k]])
             ),
@@ -1659,6 +1669,9 @@ function SettingsTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
         </button>
         <button className={`sub-tab ${section === "tax" ? "active" : ""}`} onClick={() => setSection("tax")}>
           🏛️ Tax & Compliance
+        </button>
+        <button className={`sub-tab ${section === "ratelimits" ? "active" : ""}`} onClick={() => setSection("ratelimits")}>
+          🚦 Rate Limits
         </button>
       </div>
 
@@ -1864,6 +1877,46 @@ function SettingsTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Rate Limits ── */}
+      {section === "ratelimits" && (
+        <div className="settings-grid">
+          <div className="card settings-card">
+            <h4>🚦 Rate Limits</h4>
+            <p className="text-muted" style={{ marginBottom: 16, fontSize: "0.8rem" }}>
+              Control how many requests each user can make per minute (or per day for tools).
+              This protects your system from abuse and runaway costs. Changes take effect within 1 minute.
+            </p>
+            <div className="form-grid" style={{ gap: 16 }}>
+              <label>
+                <span className="form-label">💬 Chat Messages (per user / minute)</span>
+                <input type="number" min="1" max="1000" value={settings.rateLimitChat} onChange={(e) => upd("rateLimitChat", e.target.value)} />
+                <span className="form-hint">Max messages a user can send per minute in the AI chat. Default: 30</span>
+              </label>
+              <label>
+                <span className="form-label">📋 Report Generation (per user / minute)</span>
+                <input type="number" min="1" max="100" value={settings.rateLimitReport} onChange={(e) => upd("rateLimitReport", e.target.value)} />
+                <span className="form-hint">Max AI reports a user can generate per minute. Default: 10</span>
+              </label>
+              <label>
+                <span className="form-label">📸 Document Scanning (per user / minute)</span>
+                <input type="number" min="1" max="500" value={settings.rateLimitScan} onChange={(e) => upd("rateLimitScan", e.target.value)} />
+                <span className="form-hint">Max barcode/invoice/stock-sheet scans per minute. Default: 20</span>
+              </label>
+              <label>
+                <span className="form-label">🔗 Webhook Events (per source / minute)</span>
+                <input type="number" min="1" max="10000" value={settings.rateLimitWebhook} onChange={(e) => upd("rateLimitWebhook", e.target.value)} />
+                <span className="form-hint">Max incoming webhook events per source per minute. Default: 100</span>
+              </label>
+              <label>
+                <span className="form-label">🔧 Custom Tool Runs (per user / day)</span>
+                <input type="number" min="1" max="10000" value={settings.rateLimitToolDaily} onChange={(e) => upd("rateLimitToolDaily", e.target.value)} />
+                <span className="form-hint">Max custom tool invocations per user per 24 hours. Default: 100</span>
+              </label>
+            </div>
           </div>
         </div>
       )}

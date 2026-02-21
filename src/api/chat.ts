@@ -1,10 +1,12 @@
 import { createRouter, validator, sse, websocket } from "@agentuity/runtime";
 import type { SSEStream } from "@agentuity/runtime";
 import { errorMiddleware, ValidationError, NotFoundError } from "@lib/errors";
-import { authMiddleware, verifyToken } from "@services/auth";
-import type { AuthUser } from "@services/auth";
+import { sessionMiddleware } from "@lib/auth";
+import { verifyToken } from "@services/auth";
+import type { AppUser as AuthUser } from "@lib/auth";
 import { chatMessageSchema, chatFeedbackSchema } from "@lib/validation";
 import { maskPII } from "@lib/pii";
+import { dynamicRateLimit } from "@lib/rate-limit";
 import {
   db,
   chatSessions,
@@ -35,6 +37,9 @@ import {
 // ────────────────────────────────────────────────────────────
 
 const sessionStreams = new Map<string, Set<SSEStream>>();
+
+// Per-session AbortController for cancelling in-flight AI generations
+const sessionAbortControllers = new Map<string, AbortController>();
 
 function addStream(sessionId: string, stream: SSEStream) {
   let streams = sessionStreams.get(sessionId);
@@ -93,12 +98,12 @@ chat.use("/chat/*", async (c, next) => {
     await next();
     return;
   }
-  return authMiddleware()(c, next);
+  return sessionMiddleware()(c, next);
 });
 
 // ── Helper: extract user from context ────────────────────────
 function getUser(c: any): AuthUser {
-  return c.get("authUser" as any) as AuthUser;
+  return c.get("appUser" as any) as AuthUser;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -283,7 +288,10 @@ chat.get("/chat/sessions/:id/events", sse(async (c, stream) => {
  * 5. Broadcasts message.done
  * 6. Auto-titles the session on first message
  */
-chat.post("/chat/sessions/:id/send", validator({ input: chatMessageSchema }), async (c) => {
+chat.post("/chat/sessions/:id/send",
+  dynamicRateLimit("rateLimitChat", { windowMs: 60_000, prefix: "chat-send", message: "Too many messages. Please wait a moment." }),
+  validator({ input: chatMessageSchema }),
+  async (c) => {
   const user = getUser(c);
   const sessionId = c.req.param("id");
   const { message, attachmentIds } = c.req.valid("json");
@@ -347,7 +355,7 @@ chat.post("/chat/sessions/:id/send", validator({ input: chatMessageSchema }), as
   const logger = (c as any).var?.logger;
   c.waitUntil(async () => {
     try {
-      await processStream(sessionId, message, recentMessages, summary, session.title, sandboxApi, kvStore, logger);
+      await processStream(sessionId, message, recentMessages, summary, session.title, sandboxApi, kvStore, logger, user.name);
     } catch (err: any) {
       broadcast(sessionId, "error", {
         message: err?.message || "Stream processing failed",
@@ -357,6 +365,33 @@ chat.post("/chat/sessions/:id/send", validator({ input: chatMessageSchema }), as
 
   // Return immediately (fire-and-forget)
   return c.json({ data: { messageId: sessionId, status: "processing" } });
+});
+
+// ════════════════════════════════════════════════════════════
+// CANCEL GENERATION
+// ════════════════════════════════════════════════════════════
+
+/**
+ * POST /sessions/:id/cancel — Abort the in-flight AI generation.
+ *
+ * Aborts the AbortController for the session, which propagates to the
+ * Vercel AI SDK's streamText() call. The SSE bus broadcasts a
+ * session.status=idle and a message indicating cancellation.
+ */
+chat.post("/chat/sessions/:id/cancel", async (c) => {
+  const sessionId = c.req.param("id");
+  const controller = sessionAbortControllers.get(sessionId);
+  if (controller) {
+    controller.abort();
+    sessionAbortControllers.delete(sessionId);
+  }
+  // Broadcast idle status so all connected clients update
+  broadcast(sessionId, "session.status", { status: "idle" });
+  broadcast(sessionId, "message.done", {
+    messageId: `cancelled-${Date.now()}`,
+    cancelled: true,
+  });
+  return c.json({ data: { status: "cancelled" } });
 });
 
 /**
@@ -376,9 +411,14 @@ async function processStream(
   sessionTitle: string | null,
   sandboxApi?: any,
   kv?: any,
-  logger?: any
+  logger?: any,
+  userName?: string
 ) {
   const streamStart = Date.now();
+
+  // ── Abort controller for cancel/interrupt support ──
+  const abortController = new AbortController();
+  sessionAbortControllers.set(sessionId, abortController);
 
   // ── Load agent config (single source — same as agent handler setup) ──
   const agentConfig = await getAgentConfigWithDefaults("data-science");
@@ -430,10 +470,11 @@ async function processStream(
   const result = streamText({
     model: await getModel(modelId),
     ...(temperature !== undefined ? { temperature } : {}),
-    system: buildSystemPrompt(conversationSummary, ai, customToolsSection, routingExamples),
+    system: buildSystemPrompt(conversationSummary, ai, customToolsSection, routingExamples, userName),
     messages,
     tools: allTools,
     maxSteps,
+    abortSignal: abortController.signal,
     onFinish: async ({ steps, usage }) => {
       const durationMs = Date.now() - streamStart;
 
@@ -506,52 +547,68 @@ async function processStream(
     status: string;
   }> = [];
 
-  for await (const chunk of fullStream) {
-    switch (chunk.type) {
-      case "text-delta":
-        // Phase 7.5: Mask PII in streaming text deltas
-        const { masked: maskedDelta } = maskPII(chunk.textDelta);
-        fullText += maskedDelta;
-        broadcast(sessionId, "message.delta", {
-          content: maskedDelta,
-        });
+  let aborted = false;
+  try {
+    for await (const chunk of fullStream) {
+      // Check if aborted mid-stream
+      if (abortController.signal.aborted) {
+        aborted = true;
         break;
+      }
+      switch (chunk.type) {
+        case "text-delta":
+          // Phase 7.5: Mask PII in streaming text deltas
+          const { masked: maskedDelta } = maskPII(chunk.textDelta);
+          fullText += maskedDelta;
+          broadcast(sessionId, "message.delta", {
+            content: maskedDelta,
+          });
+          break;
 
-      case "tool-call":
-        // Tool call started
-        broadcast(sessionId, "tool.start", {
-          toolId: chunk.toolCallId,
-          name: chunk.toolName,
-          input: chunk.args,
-        });
-        toolCalls.push({
-          id: chunk.toolCallId,
-          name: chunk.toolName,
-          input: chunk.args as Record<string, unknown>,
-          status: "running",
-        });
-        break;
+        case "tool-call":
+          // Tool call started
+          broadcast(sessionId, "tool.start", {
+            toolId: chunk.toolCallId,
+            name: chunk.toolName,
+            input: chunk.args,
+          });
+          toolCalls.push({
+            id: chunk.toolCallId,
+            name: chunk.toolName,
+            input: chunk.args as Record<string, unknown>,
+            status: "running",
+          });
+          break;
 
-      case "tool-result":
-        // Tool call completed
-        broadcast(sessionId, "tool.result", {
-          toolId: chunk.toolCallId,
-          name: chunk.toolName,
-          output: chunk.result,
-        });
-        // Update the matching tool call
-        const tc = toolCalls.find((t) => t.id === chunk.toolCallId);
-        if (tc) {
-          tc.output = chunk.result;
-          tc.status = "completed";
-        }
-        break;
+        case "tool-result":
+          // Tool call completed
+          broadcast(sessionId, "tool.result", {
+            toolId: chunk.toolCallId,
+            name: chunk.toolName,
+            output: chunk.result,
+          });
+          // Update the matching tool call
+          const tc = toolCalls.find((t) => t.id === chunk.toolCallId);
+          if (tc) {
+            tc.output = chunk.result;
+            tc.status = "completed";
+          }
+          break;
 
-      case "error":
-        broadcast(sessionId, "error", {
-          message: String((chunk as any).error ?? "Unknown error"),
-        });
-        break;
+        case "error":
+          broadcast(sessionId, "error", {
+            message: String((chunk as any).error ?? "Unknown error"),
+          });
+          break;
+      }
+    }
+  } catch (err: any) {
+    // AbortError is expected when user cancels — not a real error
+    if (err?.name === "AbortError" || abortController.signal.aborted) {
+      aborted = true;
+      if (fullText) fullText += "\n\n*(Generation stopped by user)*";
+    } else {
+      throw err;
     }
   }
 
@@ -631,6 +688,9 @@ async function processStream(
   } catch {
     // Non-critical
   }
+
+  // Clean up abort controller
+  sessionAbortControllers.delete(sessionId);
 }
 
 /**
@@ -847,7 +907,8 @@ chat.get("/chat/ws", websocket((c, ws) => {
         session.title,
         undefined, // sandboxApi
         undefined, // kv
-        undefined  // logger
+        undefined, // logger
+        undefined  // userName (not available in WS context)
       ).catch((err: any) => {
         broadcast(sessionId, "error", { message: err?.message || "Stream failed" });
       });
@@ -857,7 +918,14 @@ chat.get("/chat/ws", websocket((c, ws) => {
 
     // ── Cancel ──
     if (data.type === "cancel") {
-      ws.send(JSON.stringify({ type: "cancel.ack", properties: { sessionId: data.sessionId } }));
+      const cancelSessionId = data.sessionId;
+      const controller = sessionAbortControllers.get(cancelSessionId);
+      if (controller) {
+        controller.abort();
+        sessionAbortControllers.delete(cancelSessionId);
+      }
+      broadcast(cancelSessionId, "session.status", { status: "idle" });
+      ws.send(JSON.stringify({ type: "cancel.ack", properties: { sessionId: cancelSessionId } }));
       return;
     }
 

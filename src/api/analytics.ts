@@ -17,7 +17,7 @@
 
 import { createRouter, validator } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
+import { sessionMiddleware } from "@lib/auth";
 import {
   createFewShotExampleSchema,
   updateFewShotExampleSchema,
@@ -27,7 +27,7 @@ import * as exampleSvc from "@services/few-shot-examples";
 
 const router = createRouter();
 router.use(errorMiddleware());
-router.use(authMiddleware());
+router.use(sessionMiddleware());
 
 // ── Routing Analytics ──────────────────────────────────────
 

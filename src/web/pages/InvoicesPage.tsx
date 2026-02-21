@@ -79,9 +79,7 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
         reader.readAsDataURL(file);
       });
 
-      const token = localStorage.getItem("biq_token");
       const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
 
       // Step 2: Send to document scanner agent for OCR
       setUploadMessage({ type: "success", text: "Scanning invoice with AI..." });

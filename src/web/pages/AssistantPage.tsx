@@ -47,6 +47,7 @@ export default function AssistantPage({ config }: AssistantPageProps) {
     deleteSession,
     sendMessage,
     retryLastMessage,
+    cancelStream,
     submitFeedback,
   } = useChatStream();
 
@@ -55,7 +56,6 @@ export default function AssistantPage({ config }: AssistantPageProps) {
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
@@ -106,10 +106,8 @@ export default function AssistantPage({ config }: AssistantPageProps) {
 
       const formData = new FormData();
       formData.append("file", file);
-      const token = localStorage.getItem("biq_token");
       const res = await fetch(`/api/chat/sessions/${sessionId}/attachments`, {
         method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
       });
       if (!res.ok) {
@@ -348,12 +346,8 @@ export default function AssistantPage({ config }: AssistantPageProps) {
           {streaming ? (
             <button
               className="btn btn-danger"
-              onClick={() => {
-                // Abort current stream by creating a new session (soft cancel)
-                abortRef.current?.abort();
-                window.location.reload();
-              }}
-              title="Cancel generation"
+              onClick={cancelStream}
+              title="Stop generation"
             >
               ■ Stop
             </button>

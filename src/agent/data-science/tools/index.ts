@@ -10,6 +10,7 @@ import {
   analyzeTrendsTool,
   generateReportTool,
   searchKnowledgeTool,
+  exportReportTool,
 } from "./specialists";
 import { createRunAnalysisTool } from "./sandbox";
 import { buildDynamicTools } from "./custom";
@@ -28,6 +29,7 @@ export type {
   AnalyzeTrendsResult,
   GenerateReportResult,
   SearchKnowledgeResult,
+  ExportReportResult,
 } from "./types";
 
 /**
@@ -37,6 +39,7 @@ export const sharedTools = {
   query_database: queryDatabaseTool,
   analyze_trends: analyzeTrendsTool,
   generate_report: generateReportTool,
+  export_report: exportReportTool,
   search_knowledge: searchKnowledgeTool,
   get_business_snapshot: getBusinessSnapshotTool,
 };

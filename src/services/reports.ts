@@ -97,6 +97,14 @@ export async function saveReport(input: SaveReportInput): Promise<SavedReport> {
     })
     .returning();
 
+  // Phase 6.4: Also persist to S3 for permanent archival (fire-and-forget)
+  uploadReportToS3(saved.id, input.content, input.format, {
+    title: input.title,
+    reportType: input.reportType,
+  }).catch(() => {
+    // S3 upload is best-effort — DB is the primary store
+  });
+
   return saved as SavedReport;
 }
 
@@ -181,12 +189,24 @@ export async function getReportVersions(
     .orderBy(desc(savedReports.version))) as ReportListItem[];
 }
 
-/** Delete a report by ID. */
+/** Delete a report by ID (and its S3 copy). */
 export async function deleteReport(id: string): Promise<boolean> {
+  // Get format before deletion for S3 cleanup
+  const [report] = await db
+    .select({ format: savedReports.format })
+    .from(savedReports)
+    .where(eq(savedReports.id, id))
+    .limit(1);
+
   const result = await db
     .delete(savedReports)
     .where(eq(savedReports.id, id))
     .returning({ id: savedReports.id });
+
+  // Clean up S3 copy (fire-and-forget)
+  if (result.length > 0 && report?.format) {
+    deleteReportFromS3(id, report.format).catch(() => {});
+  }
 
   return result.length > 0;
 }

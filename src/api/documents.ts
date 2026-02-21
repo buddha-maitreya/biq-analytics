@@ -1,14 +1,23 @@
 import { createRouter, validator } from "@agentuity/runtime";
+import { s } from "@agentuity/schema";
 import { errorMiddleware, ValidationError } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
-import { uploadDocumentSchema, queryDocumentSchema } from "@lib/validation";
+import { sessionMiddleware } from "@lib/auth";
 import { chunkDocument } from "@lib/chunker";
 import knowledgeBase from "@agent/knowledge-base";
-import {
-  storeDocument,
-  deleteDocument,
-  getDocumentDownloadUrl,
-} from "@services/document-storage";
+
+// ── Request schemas ───────────────────────────────────────
+const uploadDocumentSchema = s.object({
+  content: s.string(),
+  title: s.string(),
+  filename: s.string(),
+  category: s.optional(s.string()),
+  chunkSize: s.optional(s.number()),
+  overlap: s.optional(s.number()),
+});
+
+const queryDocumentSchema = s.object({
+  question: s.string(),
+});
 
 /**
  * Document management routes for the Admin Console.
@@ -22,12 +31,10 @@ import {
 
 const router = createRouter();
 router.use(errorMiddleware());
-router.use(authMiddleware());
+router.use(sessionMiddleware());
 
 /** Upload and ingest a document into the knowledge base */
 router.post("/admin/documents", validator({ input: uploadDocumentSchema }), async (c) => {
-  const body = c.req.valid("json");
-
   const {
     content,
     title,
@@ -35,7 +42,7 @@ router.post("/admin/documents", validator({ input: uploadDocumentSchema }), asyn
     category = "general",
     chunkSize = 1000,
     overlap = 200,
-  } = body;
+  } = c.req.valid("json");
 
   // Chunk the document
   const chunks = chunkDocument(content, filename, title, category, chunkSize, overlap);
@@ -48,16 +55,6 @@ router.post("/admin/documents", validator({ input: uploadDocumentSchema }), asyn
   const result = await knowledgeBase.run({
     action: "ingest",
     documents: chunks,
-  });
-
-  // Phase 6.4: Store original document in S3 (background, non-blocking)
-  const waitUntil = (c as any).waitUntil ?? ((fn: () => Promise<void>) => fn().catch(() => {}));
-  waitUntil(async () => {
-    try {
-      await storeDocument(content, filename, title, category);
-    } catch {
-      // S3 storage is optional — vector ingestion is the primary path
-    }
   });
 
   (c.var as any).logger?.info(
@@ -108,31 +105,8 @@ router.delete("/admin/documents/:filename", async (c) => {
     await knowledgeBase.run({ action: "delete", keys });
   }
 
-  // Phase 6.4: Delete original from S3 (best-effort)
-  await deleteDocument(filename, "general").catch(() => {});
-
   (c.var as any).logger?.info(`Document deleted: ${filename}`);
   return c.json({ deleted: true, filename, chunksRemoved: keys.length });
-});
-
-/**
- * GET /admin/documents/:filename/download — Get a presigned download URL.
- * Phase 6.4: Returns a temporary S3 URL for downloading the original document.
- * Query params: category? (default "general")
- */
-router.get("/admin/documents/:filename/download", async (c) => {
-  const filename = c.req.param("filename");
-  const category = c.req.query("category") ?? "general";
-
-  const url = await getDocumentDownloadUrl(filename, category);
-  if (!url) {
-    return c.json(
-      { error: "Document not found in storage or S3 not configured" },
-      404
-    );
-  }
-
-  return c.json({ data: { url, filename, expiresIn: "1 hour" } });
 });
 
 /** Query the knowledge base (proxies to RAG agent) */

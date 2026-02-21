@@ -1,12 +1,11 @@
-import { createRouter, validator } from "@agentuity/runtime";
+import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
-import { createWarehouseSchema, updateWarehouseSchema } from "@lib/validation";
+import { sessionMiddleware } from "@lib/auth";
 import * as svc from "@services/warehouses";
 
 const router = createRouter();
 router.use(errorMiddleware());
-router.use(authMiddleware());
+router.use(sessionMiddleware());
 
 router.get("/warehouses", async (c) => {
   const result = await svc.listWarehouses();
@@ -23,15 +22,15 @@ router.get("/warehouses/:id", async (c) => {
   return c.json({ data: warehouse });
 });
 
-router.post("/warehouses", validator({ input: createWarehouseSchema }), async (c) => {
-  const body = c.req.valid("json");
+router.post("/warehouses", async (c) => {
+  const body = await c.req.json();
   const warehouse = await svc.createWarehouse(body);
   return c.json({ data: warehouse }, 201);
 });
 
-router.put("/warehouses/:id", validator({ input: updateWarehouseSchema }), async (c) => {
+router.put("/warehouses/:id", async (c) => {
   const id = c.req.param("id");
-  const body = c.req.valid("json");
+  const body = await c.req.json();
   const warehouse = await svc.updateWarehouse(id, body);
   return c.json({ data: warehouse });
 });

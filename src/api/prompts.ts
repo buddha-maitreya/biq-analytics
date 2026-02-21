@@ -17,7 +17,7 @@
 
 import { createRouter, validator } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
-import { authMiddleware } from "@services/auth";
+import { sessionMiddleware } from "@lib/auth";
 import {
   createPromptTemplateSchema,
   testPromptSchema,
@@ -30,7 +30,7 @@ import { getAllSettings } from "@services/settings";
 
 const router = createRouter();
 router.use(errorMiddleware());
-router.use(authMiddleware());
+router.use(sessionMiddleware());
 
 /** GET /api/admin/prompts — list all prompt templates */
 router.get("/admin/prompts", async (c) => {
@@ -98,7 +98,7 @@ router.post(
 
       // Assemble the system prompt from sections
       const systemPrompt = Object.entries(merged)
-        .map(([key, val]) => injectLabels(val))
+        .map(([key, val]) => injectLabels(String(val)))
         .join("\n\n");
 
       const result = await generateText({
@@ -195,7 +195,7 @@ The user operates "${businessName}" — a business in the ${industry}${subText} 
 Your task: Generate prompt template sections for the AI agents of this business platform. 
 The platform has these AI agents:
 - data-science: The "Brain" / orchestrator — queries databases, delegates to specialists
-- insights-analyzer: The "Analyst" — runs statistical computations in a sandbox (JavaScript)
+- insights-analyzer: The "Analyst" — runs statistical computations in a sandbox (Python with numpy/pandas/scipy/sklearn/statsmodels)
 - report-generator: The "Writer" — produces professional business reports
 - knowledge-base: The "Librarian" — searches uploaded documents via vector similarity
 - * (global): Fallback templates that apply to all agents

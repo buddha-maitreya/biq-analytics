@@ -2,7 +2,7 @@
  * Insights Analyzer Agent -- Types, schemas, and constants
  */
 
-import { z } from "zod";
+import { s } from "@agentuity/schema";
 import type { AgentConfigRow } from "@services/agent-configs";
 
 // ────────────────────────────────────────────────────────────
@@ -18,11 +18,11 @@ export interface InsightsConfig {
   temperature: number | undefined;
   /** Snapshot ID for pre-installed sandbox dependencies */
   sandboxSnapshotId?: string;
-  /** Sandbox runtime (default: "bun:1") */
+  /** Sandbox runtime (default: "python:3.14") */
   sandboxRuntime?: string;
-  /** Pre-install dependencies if no snapshot */
+  /** @deprecated Use snapshots instead. Pre-install dependencies if no snapshot. */
   sandboxDeps?: string[];
-  /** Sandbox memory limit (default: "256MB") */
+  /** Sandbox memory limit (default: "256Mi") */
   sandboxMemory?: string;
 }
 
@@ -30,64 +30,57 @@ export interface InsightsConfig {
 // Schemas -- Zod with .describe() for LLM-facing clarity
 // ────────────────────────────────────────────────────────────
 
-export const inputSchema = z.object({
-  analysis: z
+export const inputSchema = s.object({
+  analysis: s
     .string()
-    .describe("Type of statistical analysis to perform (e.g. demand-forecast, anomaly-detection, restock-recommendations, sales-trends, or custom types)")
-    .refine((v) => v.length > 0, "Analysis type is required"),
-  timeframeDays: z
+    .describe("Type of statistical analysis to perform (e.g. demand-forecast, anomaly-detection, restock-recommendations, sales-trends, or custom types)"),
+  timeframeDays: s
     .number()
-    .int()
-    .min(1)
-    .max(365)
-    .default(30)
-    .describe("Number of days of historical data to analyze"),
-  productId: z
-    .string()
-    .uuid()
-    .optional()
-    .describe("Optional product ID to focus the analysis on"),
-  limit: z
+    .describe("Number of days of historical data to analyze (1-365, default: 30)"),
+  productId: s.optional(
+    s.string().describe("Optional product ID (UUID) to focus the analysis on")
+  ),
+  limit: s
     .number()
-    .int()
-    .min(1)
-    .max(50)
-    .default(10)
-    .describe("Maximum number of items to include in results"),
+    .describe("Maximum number of items to include in results (1-50, default: 10)"),
 });
 
-export const insightSchema = z.object({
-  title: z.string().describe("Concise headline for the insight"),
-  severity: z
+export const insightSchema = s.object({
+  title: s.string().describe("Concise headline for the insight"),
+  severity: s
     .enum(["info", "warning", "critical"])
     .describe("Business impact severity"),
-  description: z
+  description: s
     .string()
     .describe("Plain-English explanation of the finding"),
-  recommendation: z
+  recommendation: s
     .string()
     .describe("Specific, actionable next step"),
-  affectedItems: z
-    .array(z.string())
-    .optional()
-    .describe("Product names/SKUs affected"),
-  confidence: z
+  affectedItems: s.optional(
+    s.array(s.string()).describe("Product names/SKUs affected")
+  ),
+  confidence: s
     .number()
-    .min(0)
-    .max(1)
-    .describe("Computation-based confidence score derived from sample size, data completeness, and statistical significance"),
-  dataPoints: z
-    .record(z.unknown())
-    .optional()
-    .describe("Supporting numeric data"),
+    .describe("Computation-based confidence score derived from sample size, data completeness, and statistical significance (0-1)"),
+  dataPoints: s.optional(
+    s.record(s.string(), s.unknown()).describe("Supporting numeric data")
+  ),
 });
 
 /** TypeScript type for a single insight item. */
-export type InsightItem = z.infer<typeof insightSchema>;
+export interface InsightItem {
+  title: string;
+  severity: "info" | "warning" | "critical";
+  description: string;
+  recommendation: string;
+  affectedItems?: string[];
+  confidence: number;
+  dataPoints?: Record<string, unknown>;
+}
 
-export const outputSchema = z.object({
-  analysisType: z.string().describe("The analysis type that was performed"),
-  generatedAt: z.string().describe("ISO timestamp of generation"),
-  insights: z.array(insightSchema).describe("Structured business insights"),
-  summary: z.string().describe("Executive summary paragraph"),
+export const outputSchema = s.object({
+  analysisType: s.string().describe("The analysis type that was performed"),
+  generatedAt: s.string().describe("ISO timestamp of generation"),
+  insights: s.array(insightSchema).describe("Structured business insights"),
+  summary: s.string().describe("Executive summary paragraph"),
 });

@@ -1,0 +1,590 @@
+# Client Onboarding Guide
+
+**Business IQ Enterprise — Single-Tenant Deployment**
+
+This guide covers the complete process for onboarding a new client, from initial deployment to post-deploy configuration, analytics sandbox setup, and troubleshooting.
+
+---
+
+## Table of Contents
+
+1. [Prerequisites](#prerequisites)
+2. [Deployment Workflow](#deployment-workflow)
+3. [Database Setup](#database-setup)
+4. [Environment Configuration](#environment-configuration)
+5. [Analytics Sandbox Setup (Python)](#analytics-sandbox-setup-python)
+6. [Post-Deployment Verification](#post-deployment-verification)
+7. [Agent Configuration](#agent-configuration)
+8. [Troubleshooting](#troubleshooting)
+
+---
+
+## Prerequisites
+
+Before onboarding a new client, ensure you have:
+
+- [ ] Agentuity CLI installed and authenticated (`agentuity login`)
+- [ ] Access to the Agentuity console ([https://console.agentuity.dev](https://console.agentuity.dev))
+- [ ] GitHub access to the repository
+- [ ] WSL (Ubuntu 24.04) configured on the deployment machine (Windows)
+- [ ] Client configuration details collected (see [Environment Configuration](#environment-configuration))
+
+### WSL Setup (One-Time — Already Done on Dev Machine)
+
+```bash
+# Install Ubuntu in WSL
+wsl --install Ubuntu-24.04
+
+# Inside WSL:
+curl -fsSL https://bun.sh/install | bash          # Install Bun
+curl -sSL https://agentuity.sh | sh                # Install Agentuity CLI
+sudo apt install -y unzip gh                        # Prerequisites
+gh auth login                                       # GitHub auth
+git clone https://github.com/buddha-maitreya/business-iq-enterprise.git
+```
+
+---
+
+## Deployment Workflow
+
+Each client gets their own Agentuity project, database, and deployment. **No shared resources.**
+
+### Step 1: Create Agentuity Project
+
+```bash
+agentuity project create --name "client-name-biq" --dir ./business-iq-enterprise --database new --no-install --no-build
+```
+
+This does three things:
+- Registers a new project in Agentuity cloud
+- Creates `agentuity.json` with `projectId`, `orgId`, `region`
+- Provisions a dedicated Neon Postgres database (`DATABASE_URL` auto-injected)
+
+### Step 2: Configure Environment Variables
+
+Set client-specific config via the Agentuity console or CLI:
+
+```bash
+# Pull auto-injected secrets (DATABASE_URL, AGENTUITY_SDK_KEY)
+agentuity cloud env pull
+
+# Set remaining config (see Environment Configuration section below)
+agentuity cloud env set COMPANY_NAME "Client Business Name"
+agentuity cloud env set LLM_PROVIDER_KEY "sk-..."
+# ... etc
+```
+
+### Step 3: Deploy
+
+**From desktop PowerShell (required — WSL one-liner):**
+
+```powershell
+wsl -d Ubuntu-24.04 -- bash -lc "cd ~/business-iq-enterprise && git pull && source ~/.bashrc && agentuity deploy"
+```
+
+**Or from inside WSL terminal directly:**
+
+```bash
+cd ~/business-iq-enterprise
+git pull
+source ~/.bashrc
+agentuity deploy
+```
+
+**Expected output on success:**
+
+```
+✓ Sync Env & Secrets
+✓ Build, Verify and Package
+  ✓ Typechecked in ~9s
+  ✓ Server built in ~1s
+✓ Security Scan
+✓ Encrypt and Upload Deployment
+✓ Provision Deployment
+✓ Your project was deployed!
+```
+
+### Step 4: Run Database Migrations
+
+```bash
+bunx drizzle-kit migrate
+```
+
+This creates all tables in the client's dedicated Neon Postgres database.
+
+### Step 5: Seed Initial Data (Optional)
+
+```bash
+bun demo/seed-auth.ts          # Create default admin user
+bun demo/seed-demo.ts          # Seed sample products, categories, customers
+bun demo/seed-orders-90d.ts    # Generate 90 days of sample order history
+```
+
+---
+
+## Database Setup
+
+Each client gets a **dedicated Neon Postgres database** — no shared data between deployments.
+
+### Provisioning
+
+```bash
+agentuity cloud db create --name "client-db"
+```
+
+`DATABASE_URL` is automatically injected into the deployment environment. No manual connection string management.
+
+### Migrations
+
+```bash
+# Generate migration from schema changes
+bunx drizzle-kit generate
+
+# Apply migrations
+bunx drizzle-kit migrate
+```
+
+### Schema Notes
+
+- Schema is **industry-neutral** — generic columns (`name`, `unit`, `price`, `category`)
+- Industry-specific attributes go in `metadata` JSONB columns
+- No `tenant_id` columns — the entire database belongs to one client
+- Statuses use `varchar` (not enums) so each deployment defines its own workflows
+
+---
+
+## Environment Configuration
+
+All client-specific values are injected via environment variables:
+
+### Infrastructure (Auto-Injected)
+
+| Variable | Source | Notes |
+|----------|--------|-------|
+| `DATABASE_URL` | `agentuity cloud db create` | Auto-set |
+| `AGENTUITY_SDK_KEY` | Project creation | Auto-set |
+
+### Required — Set Per Client
+
+| Variable | Example | Purpose |
+|----------|---------|---------|
+| `LLM_PROVIDER_KEY` | `sk-...` | AI API key (OpenAI/Anthropic/Groq) |
+| `COMPANY_NAME` | `Acme Trading Co.` | Client's business name |
+| `CURRENCY` | `USD`, `KES`, `EUR` | Display currency |
+| `TAX_RATE` | `0.16` | Default tax rate (16%) |
+| `TIMEZONE` | `Africa/Nairobi` | Client timezone |
+
+### Optional — Industry Terminology
+
+| Variable | Default | Example for Restaurant | Example for Hardware |
+|----------|---------|----------------------|---------------------|
+| `PRODUCT_LABEL` | `Product` | `Menu Item` | `Product` |
+| `PRODUCT_LABEL_PLURAL` | `Products` | `Menu Items` | `Products` |
+| `ORDER_LABEL` | `Order` | `Ticket` | `Sales Order` |
+| `ORDER_LABEL_PLURAL` | `Orders` | `Tickets` | `Sales Orders` |
+| `CUSTOMER_LABEL` | `Customer` | `Guest` | `Customer` |
+| `CUSTOMER_LABEL_PLURAL` | `Customers` | `Guests` | `Customers` |
+| `WAREHOUSE_LABEL` | `Warehouse` | `Kitchen` | `Store` |
+| `INVOICE_LABEL` | `Invoice` | `Bill` | `Invoice` |
+| `UNIT_DEFAULT` | `piece` | `portion` | `piece` |
+
+### Optional — Branding
+
+| Variable | Purpose |
+|----------|---------|
+| `COMPANY_LOGO_URL` | Client logo URL (displayed in app + reports) |
+
+---
+
+## Analytics Sandbox Setup (Python)
+
+The analytics engine runs LLM-generated **Python 3.14** code in isolated Agentuity sandboxes for statistical analysis: demand forecasting, anomaly detection, trend analysis, restock recommendations, and more.
+
+### Architecture
+
+```
+User asks analytical question
+        │
+        ▼
+ Data Science Agent (The Brain)
+        │
+        ├──▶ SQL query → Neon Postgres → raw data
+        │
+        ▼
+ Insights Analyzer Agent (The Analyst)
+        │
+        ├──▶ LLM generates Python code (numpy/pandas/scipy/sklearn/statsmodels)
+        │
+        ▼
+ Agentuity Sandbox (python:3.14)
+        │
+        ├──▶ Runs Python code against data
+        ├──▶ Returns structured JSON results
+        │
+        ▼
+ Formatted insights returned to user
+```
+
+### Runtime
+
+The sandbox uses `python:3.14` with the `uv` package manager. This is an Agentuity-provided runtime — **no configuration needed in the console**.
+
+### Creating the Analytics Snapshot (One-Time, Post-Deploy)
+
+A **snapshot** pre-installs data science packages so they don't need to be installed on every sandbox execution. This is a **one-time setup per deployment**.
+
+#### Option A: Admin API Endpoint (Recommended)
+
+```bash
+curl -X POST https://<your-deployment-url>/api/admin/sandbox/snapshot \
+  -H "Authorization: Bearer <session-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"runtime": "python:3.14"}'
+```
+
+**Response:**
+
+```json
+{
+  "data": {
+    "snapshotId": "snap_abc123...",
+    "runtime": "python:3.14",
+    "message": "Snapshot created. Set this snapshotId in the insights-analyzer agent config..."
+  }
+}
+```
+
+**With extra packages** (optional):
+
+```json
+{"runtime": "python:3.14", "extraDeps": ["xgboost", "prophet", "plotly"]}
+```
+
+#### Option B: Agentuity Console (Manual)
+
+1. Go to **Agentuity Console → Sandbox → Create Sandbox**
+2. Select runtime: `python:3.14`
+3. In the sandbox terminal, run:
+   ```bash
+   uv pip install numpy pandas scipy scikit-learn statsmodels
+   ```
+4. Go to **Sandbox → Snapshots → Create Snapshot**
+5. Name it `analysis-python-3.14`, tag it `latest`
+6. Copy the `snapshotId`
+
+#### Step 2: Configure the Agent to Use the Snapshot
+
+After getting the `snapshotId`, set it in the agent config:
+
+**Via Admin Console UI:**
+1. Navigate to **Admin → Agent Configs → insights-analyzer**
+2. In the JSON config section, add:
+   ```json
+   {
+     "sandboxSnapshotId": "snap_abc123...",
+     "sandboxRuntime": "python:3.14"
+   }
+   ```
+3. Save
+
+**Via API:**
+
+```bash
+curl -X PUT https://<your-deployment-url>/api/agent-configs/insights-analyzer \
+  -H "Authorization: Bearer <session-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "config": {
+      "sandboxSnapshotId": "snap_abc123...",
+      "sandboxRuntime": "python:3.14"
+    }
+  }'
+```
+
+Also configure the data-science agent (The Brain) if it uses sandbox directly:
+
+```bash
+curl -X PUT https://<your-deployment-url>/api/agent-configs/data-science \
+  -H "Authorization: Bearer <session-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "config": {
+      "sandboxSnapshotId": "snap_abc123...",
+      "sandboxRuntime": "python:3.14"
+    }
+  }'
+```
+
+### Pre-Installed Packages in Snapshot
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `numpy` | Latest | Numerical computing, arrays, linear algebra |
+| `pandas` | Latest | DataFrames, time series, aggregation |
+| `scipy` | Latest | Statistical functions, hypothesis tests, optimization |
+| `scikit-learn` | Latest | Machine learning (regression, clustering, anomaly detection) |
+| `statsmodels` | Latest | Time series forecasting (Exponential Smoothing, ARIMA, seasonal decomposition) |
+
+### What Works Without a Snapshot
+
+Even without creating a snapshot, the analytics sandbox still works using Python's standard library:
+
+- `math`, `statistics` — basic calculations
+- `datetime`, `collections`, `itertools` — data manipulation
+- `json`, `csv` — data parsing
+- `re` — pattern matching
+
+The LLM will fall back to manual implementations of statistical methods. It works, but is less efficient and less accurate than numpy/scipy.
+
+### Sandbox Security
+
+- **Network: ALWAYS disabled** — no data exfiltration possible
+- **SQL: Read-only** — only SELECT/WITH queries allowed (validated server-side)
+- **Timeout: 30 seconds** (configurable via `sandboxTimeoutMs` in agent config)
+- **Memory: 256Mi** (configurable via `sandboxMemoryMb` in agent config)
+- **Isolation: Full** — each execution runs in its own container, destroyed after use
+
+---
+
+## Post-Deployment Verification
+
+After deploying a new client, verify these work:
+
+### 1. Health Check
+
+```bash
+curl https://<deployment-url>/api/health
+# Should return: {"status":"ok","timestamp":"..."}
+```
+
+### 2. Config Endpoint
+
+```bash
+curl https://<deployment-url>/api/config
+# Should return company name, labels, currency, features
+```
+
+### 3. Admin Login
+
+Navigate to `https://<deployment-url>` in a browser. Log in with the seeded admin credentials.
+
+### 4. Test Analytics (After Snapshot Setup)
+
+In the Assistant chat, ask:
+- "How are sales trending?" — should trigger The Analyst with Python sandbox
+- "Which products are running low?" — should trigger demand forecast analysis
+- "Give me a sales summary report" — should trigger The Writer for report generation
+- "Export a report as PDF" — should generate PDF with cover page, TOC, and "Prepared by"
+
+### 5. Test Document Scanner
+
+Upload a barcode/QR code image or invoice — should trigger The Scanner agent.
+
+---
+
+## Agent Configuration
+
+All agents are configurable per-deployment via the Admin Console → Agent Configs.
+
+### insights-analyzer (The Analyst)
+
+| Config Key | Default | Purpose |
+|-----------|---------|---------|
+| `sandboxTimeoutMs` | `30000` | Max execution time per sandbox run |
+| `sandboxSnapshotId` | _(none)_ | Pre-installed Python packages snapshot |
+| `sandboxRuntime` | `python:3.14` | Sandbox runtime |
+| `sandboxMemoryMb` | `256` | Sandbox memory limit in MB |
+| `maxSteps` | `5` | Max LLM tool call iterations |
+| `modelOverride` | _(default)_ | Override AI model (e.g. `gpt-4o`, `claude-sonnet-4-20250514`) |
+| `temperature` | _(default)_ | Model temperature |
+| `tokenBudget` | `50000` | Max tokens per invocation |
+
+### data-science (The Brain)
+
+| Config Key | Default | Purpose |
+|-----------|---------|---------|
+| `sandboxSnapshotId` | _(none)_ | Pre-installed Python packages snapshot |
+| `sandboxRuntime` | `python:3.14` | Sandbox runtime for direct analysis |
+| `maxSteps` | `10` | Max tool call iterations |
+| `modelOverride` | _(default)_ | Override AI model |
+
+### report-generator (The Writer)
+
+| Config Key | Default | Purpose |
+|-----------|---------|---------|
+| `maxSteps` | `5` | Max SQL fetch iterations |
+| `modelOverride` | _(default)_ | Override AI model |
+
+### knowledge-base (The Librarian)
+
+| Config Key | Default | Purpose |
+|-----------|---------|---------|
+| `chunkSize` | `1000` | Document chunk size for vector store |
+| `chunkOverlap` | `200` | Overlap between chunks |
+| `modelOverride` | _(default)_ | Override AI model |
+
+---
+
+## Troubleshooting
+
+### Deployment Issues
+
+#### Build fails with backslash path errors
+
+**Cause:** Running build on Windows instead of WSL. The Agentuity CLI generates files with Windows backslash paths that break TypeScript/Bun.
+
+**Fix:** Always build and deploy from WSL:
+
+```powershell
+wsl -d Ubuntu-24.04 -- bash -lc "cd ~/business-iq-enterprise && git pull && source ~/.bashrc && agentuity deploy"
+```
+
+#### `agentuity: command not found` in WSL
+
+**Fix:** Source the shell profile first:
+
+```bash
+source ~/.bashrc
+```
+
+#### Auth expired
+
+**Fix:** Re-authenticate:
+
+```bash
+agentuity login
+```
+
+### Analytics / Sandbox Issues
+
+#### "Sandbox not available" error in chat
+
+**Cause:** The agent doesn't have access to `ctx.sandbox`. This can happen if the Agentuity SDK version is outdated or the agent wasn't properly registered.
+
+**Fix:**
+1. Verify the agent is discovered: check that `src/agent/insights-analyzer/index.ts` exists and exports correctly
+2. Redeploy: `agentuity deploy`
+3. Check Agentuity console → Agents tab to confirm the agent is listed
+
+#### Analytics returns "No module named numpy" (or pandas, scipy, etc.)
+
+**Cause:** No snapshot configured. The raw `python:3.14` sandbox only has the Python standard library.
+
+**Fix:** Create a snapshot (see [Analytics Sandbox Setup](#analytics-sandbox-setup-python) above) and set the `sandboxSnapshotId` in agent config.
+
+#### Analytics timeout
+
+**Cause:** Computation exceeds the 30-second limit. Often caused by too much data or inefficient code.
+
+**Fix:**
+1. Increase timeout: Set `sandboxTimeoutMs` to `60000` (60s) in agent config
+2. Increase memory: Set `sandboxMemoryMb` to `512` in agent config
+3. The LLM will automatically retry with simpler code if it hits a timeout
+
+#### "IndentationError" or "SyntaxError" in sandbox
+
+**Cause:** LLM generated malformed Python code.
+
+**Fix:** This is auto-handled — the error classification system returns a structured hint to the LLM, which corrects the code and retries (up to `maxSteps` iterations). If it persists:
+1. Check the model in use — `gpt-4o` and `claude-sonnet-4-20250514` generate the best Python code
+2. Try a different model via `modelOverride` in agent config
+
+#### Snapshot creation fails
+
+**Cause:** Network must be enabled during snapshot creation (to download packages). If the sandbox API is unavailable:
+
+**Fix:**
+1. Verify the deployment has sandbox access in the Agentuity console
+2. Try creating the snapshot from the Agentuity console UI instead (Sandbox → Create Sandbox)
+3. Check deployment logs: `agentuity cloud deployment logs <deploy_id> --limit=100`
+
+### Report Export Issues
+
+#### PDF/DOCX/PPTX missing "Prepared by" or Table of Contents
+
+**Cause:** The user is not authenticated, so no name is available for the "Prepared by" field.
+
+**Fix:** Ensure the user is logged in. The `preparedBy` field is populated from the authenticated session's `user.name`.
+
+#### Report lacks Executive Summary or Conclusion
+
+**Cause:** The LLM didn't follow the structured format.
+
+**Fix:** This is enforced via the system prompt. If it persists:
+1. Try a more capable model (`gpt-4o`, `claude-sonnet-4-20250514`)
+2. Check custom instructions in AI settings — ensure they don't conflict
+
+### Database Issues
+
+#### Migration failures
+
+```bash
+# Check current migration status
+bunx drizzle-kit check
+
+# Regenerate from schema
+bunx drizzle-kit generate
+
+# Apply
+bunx drizzle-kit migrate
+```
+
+#### Connection refused
+
+**Fix:** Verify `DATABASE_URL` is set:
+
+```bash
+agentuity cloud env pull
+```
+
+---
+
+## Onboarding Checklist
+
+Use this checklist when deploying for a new client:
+
+- [ ] **Create Agentuity project** — `agentuity project create --name "client-biq" --database new`
+- [ ] **Set environment variables** — Company name, currency, tax rate, API keys
+- [ ] **Set industry labels** — Product/Order/Customer/Warehouse terminology
+- [ ] **Deploy** — `agentuity deploy` from WSL
+- [ ] **Run migrations** — `bunx drizzle-kit migrate`
+- [ ] **Seed admin user** — `bun demo/seed-auth.ts`
+- [ ] **Create analytics snapshot** — `POST /admin/sandbox/snapshot`
+- [ ] **Configure snapshot ID** — Set in insights-analyzer + data-science agent configs
+- [ ] **Verify health** — `GET /api/health`
+- [ ] **Test assistant** — Ask "How are sales trending?" in chat
+- [ ] **Test report export** — Generate and export a sales report as PDF
+- [ ] **Client handoff** — Share login URL, credentials, and user guide
+
+---
+
+## Quick Reference
+
+### Deployment Commands (from Desktop PowerShell)
+
+```powershell
+# Deploy
+wsl -d Ubuntu-24.04 -- bash -lc "cd ~/business-iq-enterprise && git pull && source ~/.bashrc && agentuity deploy"
+
+# Build only (check for errors)
+wsl -d Ubuntu-24.04 -- bash -lc "cd ~/business-iq-enterprise && git pull && source ~/.bashrc && agentuity build"
+
+# View logs
+wsl -d Ubuntu-24.04 -- bash -lc "source ~/.bashrc && agentuity cloud deployment logs --limit=100"
+```
+
+### API Endpoints Reference
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/health` | GET | Health check |
+| `/api/config` | GET | App configuration |
+| `/api/admin/sandbox/snapshot` | POST | Create Python analytics snapshot |
+| `/api/agent-configs/:agentName` | GET/PUT | Agent configuration |
+| `/api/admin/stats` | GET | Dashboard statistics |
+
+### Support & Resources
+
+- **Agentuity Docs:** [https://agentuity.dev/docs](https://agentuity.dev/docs)
+- **Agentuity Console:** [https://console.agentuity.dev](https://console.agentuity.dev)
+- **Repository:** [https://github.com/buddha-maitreya/business-iq-enterprise](https://github.com/buddha-maitreya/business-iq-enterprise)

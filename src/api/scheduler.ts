@@ -33,7 +33,7 @@ import {
 import scheduler from "@agent/scheduler";
 
 // ── Request schemas ───────────────────────────────────────
-const createScheduleSchema = s.object({
+export const createScheduleSchema = s.object({
   name: s.string(),
   taskType: s.string(),
   cronExpression: s.optional(s.string()),

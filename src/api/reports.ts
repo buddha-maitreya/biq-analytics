@@ -8,7 +8,7 @@ import { listReports, getReportById, deleteReport, getReportDownloadUrl } from "
 import { exportReport, type ExportFormat, EXPORT_FORMATS } from "@lib/report-export";
 
 // ── Request schema ────────────────────────────────────────
-const generateReportSchema = s.object({
+export const generateReportSchema = s.object({
   type: s.enum([
     "sales-summary",
     "inventory-health",
@@ -108,7 +108,7 @@ reports.get("/:id/download", async (c) => {
 // REPORT EXPORT (PDF / Excel / Word / PowerPoint)
 // ════════════════════════════════════════════════════════════
 
-const exportSchema = s.object({
+export const exportSchema = s.object({
   content: s.string(),
   title: s.string(),
   format: s.enum(["pdf", "xlsx", "docx", "pptx"]),

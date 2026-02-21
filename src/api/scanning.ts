@@ -15,7 +15,7 @@ import { dynamicRateLimit } from "@lib/rate-limit";
 import scanner from "@agent/document-scanner";
 
 // ── Request schema for all scan endpoints ───────────────────
-const scanBodySchema = s.object({
+export const scanBodySchema = s.object({
   /** Base64-encoded image data (JPEG, PNG, or WebP) */
   imageData: s.optional(s.string()),
   /** URL to the image/document (alternative to imageData) */

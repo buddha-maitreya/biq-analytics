@@ -6,7 +6,7 @@ import { chunkDocument } from "@lib/chunker";
 import knowledgeBase from "@agent/knowledge-base";
 
 // ── Request schemas ───────────────────────────────────────
-const uploadDocumentSchema = s.object({
+export const uploadDocumentSchema = s.object({
   content: s.string(),
   title: s.string(),
   filename: s.string(),
@@ -15,7 +15,7 @@ const uploadDocumentSchema = s.object({
   overlap: s.optional(s.number()),
 });
 
-const queryDocumentSchema = s.object({
+export const queryDocumentSchema = s.object({
   question: s.string(),
 });
 

@@ -108,6 +108,22 @@ const agent = createAgent("data-import", {
 
   handler: async (ctx, input) => {
     const startTime = Date.now();
+
+    if (!ctx.config) {
+      ctx.logger.warn("ctx.config undefined — app setup may have failed");
+      return {
+        success: false,
+        importType: input.importType,
+        recordsProcessed: 0,
+        recordsCreated: 0,
+        recordsUpdated: 0,
+        recordsSkipped: 0,
+        errors: [{ row: 0, message: "Import unavailable — configuration not loaded. Please retry." }],
+        durationMs: Date.now() - startTime,
+        dryRun: input.dryRun,
+      };
+    }
+
     ctx.logger.info("Data import started", {
       importType: input.importType,
       sourceType: input.source.type,

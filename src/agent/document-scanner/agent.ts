@@ -174,6 +174,15 @@ const agent = createAgent("document-scanner", {
   handler: async (ctx, input) => {
     ctx.state.set("startedAt", Date.now());
 
+    if (!ctx.config) {
+      ctx.logger.warn("ctx.config undefined — app setup may have failed");
+      return {
+        success: false,
+        mode: input.mode,
+        error: "Document scanner unavailable — configuration not loaded. Please retry.",
+      };
+    }
+
     const { agentConfig, temperature } = ctx.config;
 
     // Validate input: need either imageData or imageUrl

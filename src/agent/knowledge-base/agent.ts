@@ -73,6 +73,14 @@ const agent = createAgent("knowledge-base", {
     // Phase 1.10: Telemetry collector
     const collector = new SpanCollector("knowledge-base");
 
+    if (!ctx.config) {
+      ctx.logger.warn("ctx.config undefined — app setup may have failed");
+      return {
+        success: false,
+        answer: "Knowledge base unavailable — configuration not loaded. Please retry.",
+      };
+    }
+
     const { agentConfig, topK, similarityThreshold, temperature } = ctx.config;
 
     switch (input.action) {

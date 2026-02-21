@@ -975,14 +975,18 @@ export async function createAnalysisSnapshot(
 
   try {
     // Install packages using the appropriate package manager
-    // Python runtime uses uv (fast package manager) — command: uv pip install
-    const installCmd = resolved.startsWith("python")
-      ? ["uv", "pip", "install", ...deps]
-      : resolved.startsWith("node")
-        ? ["npm", "install", ...deps]
-        : ["bun", "add", ...deps];
-
-    await sandbox.execute({ command: installCmd });
+    if (resolved.startsWith("python")) {
+      // Try pip3 first (universally available), fall back to pip
+      try {
+        await sandbox.execute({ command: ["pip3", "install", ...deps] });
+      } catch {
+        await sandbox.execute({ command: ["pip", "install", ...deps] });
+      }
+    } else if (resolved.startsWith("node")) {
+      await sandbox.execute({ command: ["npm", "install", ...deps] });
+    } else {
+      await sandbox.execute({ command: ["bun", "add", ...deps] });
+    }
 
     // Save snapshot via the sandbox snapshot management API
     const sandboxId = sandbox.sandboxId ?? sandbox.id;

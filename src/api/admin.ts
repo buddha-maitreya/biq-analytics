@@ -142,17 +142,22 @@ router.post("/admin/sandbox/snapshot", async (c) => {
 
   c.var.logger?.info("Creating analysis snapshot", { runtime, extraDeps });
 
-  const result = await createAnalysisSnapshot(sandboxApi, runtime, extraDeps);
+  try {
+    const result = await createAnalysisSnapshot(sandboxApi, runtime, extraDeps);
 
-  c.var.logger?.info("Analysis snapshot created", { snapshotId: result.snapshotId });
+    c.var.logger?.info("Analysis snapshot created", { snapshotId: result.snapshotId });
 
-  return c.json({
-    data: {
-      snapshotId: result.snapshotId,
-      runtime,
-      message: "Snapshot created. Set this snapshotId in the insights-analyzer agent config (sandboxSnapshotId) to use pre-installed packages.",
-    },
-  }, 201);
+    return c.json({
+      data: {
+        snapshotId: result.snapshotId,
+        runtime,
+        message: "Snapshot created. Set this snapshotId in the insights-analyzer agent config (sandboxSnapshotId) to use pre-installed packages.",
+      },
+    }, 201);
+  } catch (err: any) {
+    c.var.logger?.error("Snapshot creation failed", { error: err?.message ?? String(err) });
+    return c.json({ error: "Snapshot creation failed", detail: err?.message ?? String(err) }, 500);
+  }
 });
 
 export default router;

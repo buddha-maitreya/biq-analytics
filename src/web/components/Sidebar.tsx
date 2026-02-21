@@ -58,11 +58,17 @@ const PERMISSION_PAGES: Record<string, Page> = {
 };
 
 export default function Sidebar({ config, currentPage, onNavigate, user, onLogout, mobileOpen, onCloseMobile }: SidebarProps) {
-  // ── Pending approval count badge ──
+  // ── Pending approval count badge (visibility-aware, adaptive interval) ──
   const [pendingCount, setPendingCount] = useState(0);
   useEffect(() => {
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const ACTIVE_INTERVAL = 5 * 60_000;   // 5 min when tab is visible
+    const HIDDEN_INTERVAL = 15 * 60_000;  // 15 min when tab is hidden
+
     const fetchCount = async () => {
+      // Skip if tab is hidden — we'll fetch on visibility change
+      if (document.visibilityState === "hidden") return;
       try {
         const res = await fetch("/api/approvals/pending/count");
         if (res.ok && !cancelled) {
@@ -71,9 +77,31 @@ export default function Sidebar({ config, currentPage, onNavigate, user, onLogou
         }
       } catch { /* ignore */ }
     };
-    fetchCount();
-    const interval = setInterval(fetchCount, 60_000); // poll every 60s
-    return () => { cancelled = true; clearInterval(interval); };
+
+    const scheduleNext = () => {
+      if (cancelled) return;
+      const delay = document.visibilityState === "hidden" ? HIDDEN_INTERVAL : ACTIVE_INTERVAL;
+      timer = setTimeout(() => { fetchCount().then(scheduleNext); }, delay);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        // Tab became visible — fetch immediately and reset timer
+        fetchCount();
+        if (timer) clearTimeout(timer);
+        scheduleNext();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    fetchCount(); // initial fetch
+    scheduleNext();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, []);
 
   // super_admin sees everything; others get role-based pages + permission-granted pages

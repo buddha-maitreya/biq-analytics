@@ -86,6 +86,9 @@ Key relationships:
 - prompt_templates.created_by -> users.id (who edited prompt)
 
 IMPORTANT QUERY PATTERNS:
+- orders does NOT have a 'status' column — it has status_id (uuid FK). To filter by status name: JOIN order_statuses os ON orders.status_id = os.id WHERE os.name = 'completed'
+- order_statuses.name values: pending, confirmed, processing, shipped, delivered, completed, cancelled, refunded
+- Revenue queries: SUM(o.total_amount) FROM orders o JOIN order_statuses os ON o.status_id = os.id WHERE os.name IN ('completed','delivered','shipped') AND o.created_at >= date
 - To filter orders by date, ALWAYS use orders.created_at (e.g. WHERE o.created_at >= NOW() - INTERVAL '30 days'). NEVER use order_items.start_date for this — that column is only for service bookings.
 - To find fast/slow-moving products, JOIN order_items with orders and filter on orders.created_at.
 - order_items.start_date and end_date are ONLY for service bookings (item_type = 'service'), not for stock sales.

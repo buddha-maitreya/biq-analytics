@@ -239,6 +239,35 @@ function InsightsResult({ output }: { output: any }) {
 }
 
 function ReportResult({ output }: { output: any }) {
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const handleExport = async (format: "pdf" | "xlsx" | "docx" | "pptx" = "pdf") => {
+    if (exporting || !output?.content) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      const res = await fetch("/api/reports/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: output.content,
+          title: output.title || "Business Report",
+          format,
+          subtitle: output.reportType || undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Export failed");
+      if (json.data?.downloadUrl) {
+        window.open(json.data.downloadUrl, "_blank");
+      }
+    } catch (err: any) {
+      setExportError(err?.message || "Export failed");
+    }
+    setExporting(false);
+  };
+
   return (
     <div className="tool-report">
       <div className="tool-report-title">{output.title}</div>
@@ -247,9 +276,36 @@ function ReportResult({ output }: { output: any }) {
         {output.period?.end?.split("T")[0]}
       </div>
       <div className="tool-report-content">
-        {/* Simple markdown rendering: headers, bold, lists */}
         {renderSimpleMarkdown(output.content || "")}
       </div>
+      {output.content && (
+        <div className="tool-report-actions">
+          <button
+            className="btn btn-primary btn-sm tool-report-download-btn"
+            onClick={() => handleExport("pdf")}
+            disabled={exporting}
+          >
+            {exporting ? "⏳ Generating..." : "📥 Download PDF"}
+          </button>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => handleExport("xlsx")}
+            disabled={exporting}
+            title="Download as Excel"
+          >
+            📊 Excel
+          </button>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => handleExport("docx")}
+            disabled={exporting}
+            title="Download as Word"
+          >
+            📄 Word
+          </button>
+          {exportError && <span className="tool-export-error">{exportError}</span>}
+        </div>
+      )}
     </div>
   );
 }

@@ -29,6 +29,15 @@ IMPORTANT: The database is PostgreSQL (NOT MySQL). You MUST use PostgreSQL synta
 - Current date: CURRENT_DATE, CURRENT_TIMESTAMP, NOW()
 Available tables: products, categories, warehouses, inventory, inventory_transactions, customers, orders, order_items, order_statuses, invoices, payments, users, notifications, tax_rules, asset_categories, assets, service_categories, services, service_bookings, booking_assets, booking_stock_allocations.
 Key columns: products(id, sku, name, price, cost_price, unit, category_id, is_active, is_consumable, is_sellable), orders(id, order_number, customer_id, status_id, total_amount, created_at), order_items(order_id, item_type, product_id, service_id, description, quantity, unit_price, total_amount, start_date, end_date), inventory(product_id, warehouse_id, quantity), customers(id, name, email, phone), invoices(id, invoice_number, total_amount, paid_amount, status), assets(id, asset_code, name, category_id, condition_status, location, assigned_to_staff_id, is_active), services(id, service_code, name, category_id, base_price, pricing_model, capacity_limit, requires_asset, requires_stock), service_bookings(id, order_item_id, service_date, start_time, end_time, status, assigned_guide_id, assigned_vehicle_id).
+
+CRITICAL PATTERNS:
+- orders does NOT have a 'status' column. Order status is in order_statuses table. To filter by status: JOIN order_statuses os ON o.status_id = os.id WHERE os.name = 'completed'
+- order_statuses.name values: pending, confirmed, processing, shipped, delivered, completed, cancelled, refunded
+- For revenue: SUM(o.total_amount) from orders o JOIN order_statuses os ON o.status_id = os.id WHERE os.name IN ('completed','delivered','shipped') AND o.created_at >= date
+- For date filtering: use orders.created_at, NEVER order_items.start_date (that is for service bookings only)
+- invoices.status values: draft, sent, paid, overdue, cancelled
+- payments tracks actual payments against invoices
+
 Always use SELECT only. Use aggregations, JOINs, and GROUP BY as needed.`,
   parameters: z.object({
     query: z.string().describe("SQL SELECT query to execute"),

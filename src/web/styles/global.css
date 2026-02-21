@@ -1978,6 +1978,26 @@ textarea {
   margin-top: 6px;
 }
 
+/* Report download actions */
+.tool-report-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+.tool-report-download-btn {
+  font-weight: 600;
+}
+
+.tool-export-error {
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
 /* -- Tool-specific: Knowledge search -- */
 
 .tool-knowledge {

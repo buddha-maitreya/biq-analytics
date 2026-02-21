@@ -91,6 +91,7 @@ export interface CreateToolInput {
   // Common
   isActive?: boolean;
   sortOrder?: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface UpdateToolInput extends Partial<CreateToolInput> {}

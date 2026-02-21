@@ -202,6 +202,35 @@ const TAB_DESCRIPTIONS: Record<AdminTab, string> = {
   settings: "Company branding, payment providers, and system configuration",
 };
 
+/* ---------- Reusable FormField wrapper ---------- */
+function FormField({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--color-text)" }}>{label}</label>
+      {hint && <span style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: -2 }}>{hint}</span>}
+      {children}
+    </div>
+  );
+}
+
+/* ---------- Reusable InfoBox ---------- */
+function InfoBox({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{
+      padding: "12px 16px",
+      borderRadius: 8,
+      background: "var(--color-bg-elevated, #1e293b)",
+      border: "1px solid var(--color-border, #334155)",
+      fontSize: "0.82rem",
+      lineHeight: 1.6,
+      color: "var(--color-text-muted, #94a3b8)",
+      marginTop: 12,
+    }}>
+      {children}
+    </div>
+  );
+}
+
 export default function AdminPage({ config, onSaved }: AdminPageProps) {
   const [tab, setTab] = useState<AdminTab>("knowledge");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -2049,7 +2078,7 @@ function AIConfigTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(["identity"]));
-  const toastTimer = useRef<ReturnType<typeof setTimeout>>();
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const showToast = useCallback((type: "success" | "error", text: string) => {
     setToast({ type, text });

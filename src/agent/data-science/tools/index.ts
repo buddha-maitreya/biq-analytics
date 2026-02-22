@@ -10,6 +10,7 @@ import {
   analyzeTrendsTool,
   generateReportTool,
   searchKnowledgeTool,
+  scanDocumentTool,
   exportReportTool,
 } from "./specialists";
 import { createRunAnalysisTool } from "./sandbox";
@@ -29,6 +30,7 @@ export type {
   AnalyzeTrendsResult,
   GenerateReportResult,
   SearchKnowledgeResult,
+  ScanDocumentResult,
   ExportReportResult,
 } from "./types";
 
@@ -41,6 +43,7 @@ export const sharedTools = {
   generate_report: generateReportTool,
   export_report: exportReportTool,
   search_knowledge: searchKnowledgeTool,
+  scan_document: scanDocumentTool,
   get_business_snapshot: getBusinessSnapshotTool,
 };
 

@@ -1,12 +1,21 @@
 // Scheduler Cron Route — Phase 5.6
-// Runs every 15 minutes to check for due schedules and execute them.
-// Each due schedule is dispatched to the scheduler agent for execution.
+//
+// The platform-managed cron tick fires every 15 minutes. This is the
+// scheduler engine's heartbeat — it cannot be removed without removing
+// the route file entirely.
+//
+// To avoid wasting resources when no automation is needed, the handler
+// checks the "schedulerEnabled" business setting (DB-driven, toggled
+// from the Admin Console → Automation section). When disabled, the
+// tick returns immediately — no schedule queries, no agent dispatches.
+//
 // Manual override: POST /admin/scheduler/run-all (triggers all due schedules now)
 
 import { createRouter, cron } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
 import { sessionMiddleware } from "@lib/auth";
 import { getDueSchedules } from "@services/scheduler";
+import { isSchedulerEnabled } from "@services/settings";
 import schedulerAgent from "@agent/scheduler";
 
 const router = createRouter();
@@ -18,7 +27,13 @@ router.post(
   "/scheduler/tick",
   cron("*/15 * * * *", async (c) => {
     const logger = c.var.logger;
-    logger.info("Scheduler cron tick — checking for due schedules");
+
+    // ── Master switch check (DB-driven, cached 30s) ──
+    const enabled = await isSchedulerEnabled();
+    if (!enabled) {
+      logger.info("Scheduler engine disabled — skipping tick");
+      return c.json({ skipped: true, reason: "scheduler_disabled" });
+    }
 
     const dueSchedules = await getDueSchedules();
 

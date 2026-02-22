@@ -30,6 +30,7 @@ import {
   markScheduleRun,
 } from "@services/scheduler";
 import { getAgentConfigWithDefaults } from "@services/agent-configs";
+import { runAllEvals } from "@api/eval-cron";
 import { db, notifications, users } from "@db/index";
 import { eq, sql } from "drizzle-orm";
 
@@ -48,7 +49,7 @@ const inputSchema = s.object({
   scheduleId: s.string().describe("ID of the schedule to execute (UUID)"),
   /** Task type determines the execution strategy */
   taskType: s
-    .enum(["report", "insight", "alert", "cleanup", "custom"])
+    .enum(["report", "insight", "alert", "cleanup", "eval", "custom"])
     .describe("Type of scheduled task"),
   /** Task-specific configuration */
   taskConfig: s
@@ -237,6 +238,24 @@ async function executeCleanupTask(
   return { target, olderThanDays, rowsAffected };
 }
 
+async function executeEvalTask(
+  taskConfig: Record<string, unknown>,
+  ctx: any
+): Promise<Record<string, unknown>> {
+  ctx.logger.info("Executing scheduled eval suite");
+
+  const result = await runAllEvals(ctx.logger);
+
+  return {
+    totalTests: result.totalTests,
+    passed: result.passed,
+    failed: result.failed,
+    passRate: result.totalTests > 0
+      ? Math.round((result.passed / result.totalTests) * 100)
+      : 0,
+  };
+}
+
 // ── Agent Definition ────────────────────────────────────────
 
 const scheduler = createAgent("scheduler", {
@@ -286,6 +305,9 @@ const scheduler = createAgent("scheduler", {
           break;
         case "cleanup":
           result = await executeCleanupTask(input.taskConfig, ctx);
+          break;
+        case "eval":
+          result = await executeEvalTask(input.taskConfig, ctx);
           break;
         case "custom":
           // Custom tasks just log their config — extensible via future plugins

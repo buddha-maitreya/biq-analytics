@@ -126,6 +126,25 @@ export interface SearchKnowledgeError extends ToolErrorResult {}
 export type SearchKnowledgeResult = SearchKnowledgeSuccess | SearchKnowledgeError;
 
 // ────────────────────────────────────────────────────────────
+// scan_document (specialist delegation — document-scanner)
+// ────────────────────────────────────────────────────────────
+
+export interface ScanDocumentSuccess {
+  success: true;
+  mode: "barcode" | "stock-sheet" | "invoice";
+  data: unknown;
+  rawText?: string;
+  confidence?: number;
+}
+
+export interface ScanDocumentError extends ToolErrorResult {
+  success: false;
+  mode: "barcode" | "stock-sheet" | "invoice";
+}
+
+export type ScanDocumentResult = ScanDocumentSuccess | ScanDocumentError;
+
+// ────────────────────────────────────────────────────────────
 // export_report (binary export — PDF/Excel/Word/PowerPoint)
 // ────────────────────────────────────────────────────────────
 

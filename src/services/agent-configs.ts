@@ -58,7 +58,11 @@ const AGENT_DEFAULTS: Record<string, Omit<UpsertAgentConfigInput, "agentName">> 
     maxSteps: 8,
     timeoutMs: 60000,
     executionPriority: 0,
-    config: { enableSandbox: true, compressionThreshold: 20 },
+    config: {
+      enableSandbox: true,
+      compressionThreshold: 20,
+      sandboxSnapshotId: "snp_set_this_in_admin_console",
+    },
   },
   "insights-analyzer": {
     displayName: "The Analyst",

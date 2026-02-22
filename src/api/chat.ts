@@ -1,5 +1,6 @@
 import { createRouter, validator, sse, websocket } from "@agentuity/runtime";
 import type { SSEStream } from "@agentuity/runtime";
+import { s3 } from "bun";
 import { errorMiddleware, ValidationError, NotFoundError } from "@lib/errors";
 import { sessionMiddleware } from "@lib/auth";
 import { verifyToken } from "@services/auth";
@@ -299,11 +300,20 @@ chat.post("/chat/sessions/:id/send",
       if (matched.length > 0) {
         const descriptions = matched.map((a: any) => {
           const isImage = a.contentType?.startsWith("image/");
-          return `[Attached ${isImage ? "image" : "file"}: "${a.filename}" (${a.contentType}, ${Math.round((a.sizeBytes || 0) / 1024)}KB)]`;
+          // Generate presigned S3 URL so the scan_document tool can access the file
+          let downloadUrl = "";
+          try {
+            downloadUrl = s3.presign(a.s3Key, { expiresIn: 3600 });
+          } catch {
+            // S3 presign failed — tool won't be able to access the file directly
+          }
+          return `[Attached ${isImage ? "image" : "file"}: "${a.filename}" (${a.contentType}, ${Math.round((a.sizeBytes || 0) / 1024)}KB)${downloadUrl ? ` | URL: ${downloadUrl}` : ""}]`;
         });
         attachmentContext = "\n\n" + descriptions.join("\n") +
-          "\n\nThe user has uploaded the above file(s). If they contain barcodes, QR codes, invoices, or stock sheets, " +
-          "use the document-scanner agent capabilities to process them. Describe what you see and take the requested action.";
+          "\n\nThe user has uploaded the above file(s). " +
+          "If they contain barcodes, QR codes, invoices, or stock sheets, use the scan_document tool to process them — " +
+          "pass the attachment URL shown above as the imageUrl parameter. " +
+          "For other file types, describe what you know about the file and take the requested action.";
       }
     } catch {
       // Non-critical — continue without attachment context

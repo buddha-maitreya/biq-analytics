@@ -303,6 +303,14 @@ function ReportResult({ output }: { output: any }) {
           >
             📄 Word
           </button>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => handleExport("pptx")}
+            disabled={exporting}
+            title="Download as PowerPoint"
+          >
+            📙 PPTX
+          </button>
           {exportError && <span className="tool-export-error">{exportError}</span>}
         </div>
       )}

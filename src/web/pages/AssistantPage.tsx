@@ -68,6 +68,8 @@ export default function AssistantPage({ config }: AssistantPageProps) {
       analyze_trends: "📊 The Analyst is computing...",
       generate_report: "📝 The Writer is drafting...",
       search_knowledge: "📚 The Librarian is searching...",
+      scan_document: "📷 The Scanner is processing...",
+      export_report: "📄 Exporting report...",
       get_business_snapshot: "🧠 The Brain is analyzing...",
     };
     return map[active.name] ?? `⚙️ Running ${active.name}...`;

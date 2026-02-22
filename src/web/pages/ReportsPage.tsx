@@ -18,7 +18,7 @@ interface SavedReport {
 }
 
 type ReportType = "sales-summary" | "inventory-health" | "customer-activity" | "financial-overview";
-type ExportFormat = "xlsx" | "csv" | "pdf";
+type ExportFormat = "pdf" | "xlsx" | "docx" | "pptx" | "csv";
 
 const REPORT_TYPES = [
   { value: "sales-summary" as const, label: "Sales Summary", icon: "📊", desc: "Revenue, orders, top products, and sales trends" },
@@ -28,9 +28,11 @@ const REPORT_TYPES = [
 ];
 
 const FORMAT_OPTIONS: { value: ExportFormat; label: string; icon: string; desc: string }[] = [
+  { value: "pdf",  label: "PDF (.pdf)",   icon: "📕", desc: "Print-ready formatted report" },
   { value: "xlsx", label: "Excel (.xlsx)", icon: "📗", desc: "Spreadsheet with formatted tables" },
-  { value: "csv", label: "CSV (.csv)", icon: "📄", desc: "Comma-separated for any tool" },
-  { value: "pdf", label: "PDF (.pdf)", icon: "📕", desc: "Print-ready formatted report" },
+  { value: "docx", label: "Word (.docx)",  icon: "📘", desc: "Editable Word document" },
+  { value: "pptx", label: "PowerPoint (.pptx)", icon: "📙", desc: "Presentation slides" },
+  { value: "csv",  label: "CSV (.csv)",    icon: "📄", desc: "Comma-separated for any tool" },
 ];
 
 function getPresetRange(preset: string): { start: string; end: string } {
@@ -77,7 +79,9 @@ export default function ReportsPage({ config }: ReportsPageProps) {
   const [datePreset, setDatePreset] = useState("last30");
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
-  const [exportFormat, setExportFormat] = useState<ExportFormat>("xlsx");
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("pdf");
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [reportContent, setReportContent] = useState<string | null>(null);
   const [reportTitle, setReportTitle] = useState<string>("");
   const [loading, setLoading] = useState(false);
@@ -194,148 +198,55 @@ export default function ReportsPage({ config }: ReportsPageProps) {
     URL.revokeObjectURL(url);
   };
 
-  const handleDownload = () => {
-    if (!reportContent) return;
+  const handleDownload = async () => {
+    if (!reportContent || exporting) return;
     const ts = new Date().toISOString().slice(0, 10);
     const baseName = `${reportType}-${ts}`;
+    setExportError(null);
 
-    switch (exportFormat) {
-      case "csv": {
-        // Extract tables from markdown content into CSV
-        const lines = reportContent.split("\n");
-        const csvLines: string[] = [];
-        for (const line of lines) {
-          if (line.startsWith("|") && !line.match(/^\|[\s-|]+$/)) {
-            const cells = line.split("|").filter(Boolean).map(c => {
-              const trimmed = c.trim();
-              // Escape commas and quotes in CSV
-              return trimmed.includes(",") || trimmed.includes('"')
-                ? `"${trimmed.replace(/"/g, '""')}"` : trimmed;
-            });
-            csvLines.push(cells.join(","));
-          } else if (line.trim() && !line.startsWith("#") && !line.startsWith("-") && !line.startsWith("*")) {
-            csvLines.push(line.trim());
-          }
-        }
-        downloadFile(csvLines.join("\n"), `${baseName}.csv`, "text/csv;charset=utf-8;");
-        break;
-      }
-      case "xlsx": {
-        // Generate a simple XML spreadsheet (opens in Excel)
-        const lines = reportContent.split("\n");
-        const rows: string[][] = [];
-        // Title row
-        rows.push([reportTitle, `Generated: ${generatedAt}`, `Period: ${effectiveRange.start} to ${effectiveRange.end}`]);
-        rows.push([]);
-
-        for (const line of lines) {
-          if (line.startsWith("|") && !line.match(/^\|[\s-|]+$/)) {
-            const cells = line.split("|").filter(Boolean).map(c => c.trim());
-            rows.push(cells);
-          } else if (line.startsWith("# ") || line.startsWith("## ") || line.startsWith("### ")) {
-            rows.push([]);
-            rows.push([line.replace(/^#+\s*/, "")]);
-          } else if (line.trim() && !line.startsWith("-") && !line.startsWith("*")) {
-            rows.push([line.trim()]);
-          }
-        }
-
-        const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        const xmlRows = rows.map(row => {
-          const cells = row.map(cell => {
-            const isNum = /^\d[\d,.]*$/.test(cell.replace(/[,$%]/g, ""));
-            return isNum
-              ? `<Cell><Data ss:Type="Number">${cell.replace(/[,$%]/g, "")}</Data></Cell>`
-              : `<Cell><Data ss:Type="String">${escXml(cell)}</Data></Cell>`;
-          }).join("");
-          return `<Row>${cells}</Row>`;
-        }).join("\n");
-
-        const xml = `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-<Styles>
-  <Style ss:ID="Header"><Font ss:Bold="1" ss:Size="11"/></Style>
-  <Style ss:ID="Title"><Font ss:Bold="1" ss:Size="14"/></Style>
-</Styles>
-<Worksheet ss:Name="${escXml(reportTitle.slice(0, 31))}">
-<Table>
-${xmlRows}
-</Table>
-</Worksheet>
-</Workbook>`;
-
-        downloadFile(xml, `${baseName}.xlsx`, "application/vnd.ms-excel");
-        break;
-      }
-      case "pdf": {
-        // Generate a printable HTML and trigger print dialog
-        let html = reportContent
-          .replace(/^### (.*$)/gm, "<h3>$1</h3>")
-          .replace(/^## (.*$)/gm, "<h2>$1</h2>")
-          .replace(/^# (.*$)/gm, "<h1>$1</h1>")
-          .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-          .replace(/\*(.*?)\*/g, "<em>$1</em>");
-
-        // Convert markdown tables to HTML tables
-        const tableRegex = /(\|.+\|[\r\n]+\|[-|\s:]+\|[\r\n]+((\|.+\|[\r\n]*)+))/g;
-        html = html.replace(tableRegex, (match) => {
-          const rows = match.trim().split("\n").filter(r => !r.match(/^\|[\s-|:]+$/));
-          let table = "<table><thead>";
-          rows.forEach((row, idx) => {
-            const cells = row.split("|").filter(Boolean).map(c => c.trim());
-            const tag = idx === 0 ? "th" : "td";
-            const rowHtml = cells.map(c => `<${tag}>${c}</${tag}>`).join("");
-            if (idx === 0) {
-              table += `<tr>${rowHtml}</tr></thead><tbody>`;
-            } else {
-              table += `<tr>${rowHtml}</tr>`;
-            }
+    if (exportFormat === "csv") {
+      // CSV: client-side markdown table extraction (no server round-trip needed)
+      const lines = reportContent.split("\n");
+      const csvLines: string[] = [];
+      for (const line of lines) {
+        if (line.startsWith("|") && !line.match(/^\|[\s-|]+$/)) {
+          const cells = line.split("|").filter(Boolean).map(c => {
+            const trimmed = c.trim();
+            return trimmed.includes(",") || trimmed.includes('"')
+              ? `"${trimmed.replace(/"/g, '""')}"` : trimmed;
           });
-          table += "</tbody></table>";
-          return table;
-        });
-
-        html = html.replace(/\n/g, "<br>");
-
-        const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>${reportTitle}</title>
-<style>
-  @media print { @page { margin: 1cm; } }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; color: #1a202c; font-size: 12px; }
-  h1 { font-size: 20px; border-bottom: 2px solid #3b82f6; padding-bottom: 8px; }
-  h2 { font-size: 16px; margin-top: 24px; color: #2563eb; }
-  h3 { font-size: 14px; margin-top: 16px; }
-  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
-  th, td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; font-size: 11px; }
-  th { background: #f1f5f9; font-weight: 600; }
-  tr:nth-child(even) { background: #fafbfc; }
-  .header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; }
-  .meta { color: #64748b; font-size: 11px; }
-</style></head><body>
-<div class="header">
-  <h1>${reportTitle}</h1>
-  <div class="meta">
-    <div>${config.companyName}</div>
-    <div>${effectiveRange.start} — ${effectiveRange.end}</div>
-    <div>Generated: ${generatedAt}</div>
-  </div>
-</div>
-${html}
-</body></html>`;
-
-        // Open in new window and trigger print (which allows Save as PDF)
-        const printWindow = window.open("", "_blank");
-        if (printWindow) {
-          printWindow.document.write(fullHtml);
-          printWindow.document.close();
-          setTimeout(() => printWindow.print(), 300);
-        } else {
-          // Fallback: download as HTML
-          downloadFile(fullHtml, `${baseName}.html`, "text/html");
+          csvLines.push(cells.join(","));
+        } else if (line.trim() && !line.startsWith("#") && !line.startsWith("-") && !line.startsWith("*")) {
+          csvLines.push(line.trim());
         }
-        break;
       }
+      downloadFile(csvLines.join("\n"), `${baseName}.csv`, "text/csv;charset=utf-8;");
+      return;
+    }
+
+    // pdf / xlsx / docx / pptx — call the server export API for professional branded output
+    setExporting(true);
+    try {
+      const res = await fetch("/api/reports/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          content: reportContent,
+          title: reportTitle,
+          format: exportFormat,
+          subtitle: REPORT_TYPES.find(r => r.value === reportType)?.label,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Export failed");
+      if (json.data?.downloadUrl) {
+        window.open(json.data.downloadUrl, "_blank");
+      }
+    } catch (err: any) {
+      setExportError(err?.message || "Export failed. Please try again.");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -500,13 +411,25 @@ ${html}
               </span>
             </div>
             <div className="report-download-btns">
-              <button className="btn btn-sm btn-primary" onClick={handleDownload} title={`Download as ${exportFormat.toUpperCase()}`}>
-                {FORMAT_OPTIONS.find(f => f.value === exportFormat)?.icon} Download .{exportFormat.toUpperCase()}
+              <button
+                className="btn btn-sm btn-primary"
+                onClick={handleDownload}
+                disabled={exporting}
+                title={`Download as ${exportFormat.toUpperCase()}`}
+              >
+                {exporting
+                  ? "⏳ Exporting…"
+                  : `${FORMAT_OPTIONS.find(f => f.value === exportFormat)?.icon} Download .${exportFormat.toUpperCase()}`}
               </button>
               <button className="btn btn-sm btn-secondary" onClick={() => navigator.clipboard.writeText(reportContent)} title="Copy raw content">
                 📋 Copy
               </button>
             </div>
+            {exportError && (
+              <p className="text-danger" style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>
+                ⚠️ {exportError}
+              </p>
+            )}
           </div>
           <div className="report-content-area">
             <pre className="report-text">{reportContent}</pre>

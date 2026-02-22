@@ -32,6 +32,12 @@ const DEFAULTS: Record<string, string> = {
   /** Max custom tool invocations per user per 24h */
   rateLimitToolDaily: "100",
 
+  // ── Automation Engine ─────────────────────────────────────
+  /** Master switch for the scheduler cron engine. When "false", the
+   *  platform-managed cron tick still fires (unavoidable) but returns
+   *  immediately without checking for due schedules — zero work done. */
+  schedulerEnabled: "false",
+
   // ── AI Configuration ──────────────────────────────────────
   // These control how the AI assistant behaves for this deployment.
   // All are optional — sensible defaults are used when empty.
@@ -220,4 +226,42 @@ export async function getRateLimits(): Promise<RateLimitSettings> {
   };
   _rlCacheAt = now;
   return _rlCache;
+}
+
+// ── Scheduler Engine Control ────────────────────────────────
+
+/** In-memory cache for scheduler enabled flag (short TTL to pick up changes fast) */
+let _schedulerEnabledCache: boolean | null = null;
+let _schedulerEnabledAt = 0;
+const SCHEDULER_CACHE_TTL = 30_000; // 30 seconds
+
+/** Invalidate the scheduler enabled cache (called when toggled via admin) */
+export function invalidateSchedulerCache() {
+  _schedulerEnabledCache = null;
+  _schedulerEnabledAt = 0;
+}
+
+/**
+ * Check if the scheduler engine is enabled. Cached for 30s.
+ * When disabled, the cron tick still fires (platform-managed) but
+ * returns immediately without executing any schedules.
+ */
+export async function isSchedulerEnabled(): Promise<boolean> {
+  const now = Date.now();
+  if (_schedulerEnabledCache !== null && now - _schedulerEnabledAt < SCHEDULER_CACHE_TTL) {
+    return _schedulerEnabledCache;
+  }
+  const val = await getSetting("schedulerEnabled");
+  _schedulerEnabledCache = val === "true";
+  _schedulerEnabledAt = now;
+  return _schedulerEnabledCache;
+}
+
+/**
+ * Enable or disable the scheduler engine.
+ * Persists to business_settings and invalidates cache immediately.
+ */
+export async function setSchedulerEnabled(enabled: boolean): Promise<void> {
+  await updateSettings({ schedulerEnabled: enabled ? "true" : "false" });
+  invalidateSchedulerCache();
 }

@@ -18,13 +18,14 @@
 import { createRouter } from "@agentuity/runtime";
 import { s3 } from "bun";
 import { errorMiddleware } from "@lib/errors";
-import { sessionMiddleware } from "@lib/auth";
 import { db, attachments as attachmentsTable } from "@db/index";
 import { eq, and } from "drizzle-orm";
 
 const attachments = createRouter();
 attachments.use(errorMiddleware());
-attachments.use(sessionMiddleware());
+// NOTE: sessionMiddleware is already applied by chat.ts (which mounts this
+// router) via chat.use("/chat/*", sessionMiddleware()). Adding it again here
+// would double-execute auth checks. We rely on the parent middleware.
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -106,7 +107,13 @@ function attachmentS3Key(
  */
 attachments.post("/chat/sessions/:sessionId/attachments", async (c) => {
   const sessionId = c.req.param("sessionId");
-  const userId = (c.var as any).userId as string;
+  // sessionMiddleware sets c.var.appUser (AppUser object), not c.var.userId.
+  // Extract .id from the appUser object for the DB insert.
+  const appUser = (c as any).get("appUser");
+  if (!appUser?.id) {
+    return c.json({ error: "Authentication required" }, 401);
+  }
+  const userId = appUser.id as string;
 
   // Parse multipart form data
   const body = await c.req.parseBody();

@@ -134,11 +134,17 @@ const agent = createAgent("data-science", {
 
     // Build per-request tool set -- sandbox API injected via closure
     const sandboxCfg = (agentConfig.config ?? {}) as Record<string, unknown>;
-    const allTools = await getAllTools(
-      {
-        sandboxApi: ctx.sandbox,
-        sandboxTimeoutMs,
-        snapshotId: sandboxCfg.sandboxSnapshotId as string | undefined,
+        // If snapshot ID is the placeholder, treat it as undefined to avoid API errors
+        const finalSnapshotId =
+          sandboxCfg.sandboxSnapshotId === "snp_set_this_in_admin_console"
+            ? undefined
+            : (sandboxCfg.sandboxSnapshotId as string | undefined);
+
+        const allTools = await getAllTools(
+          {
+            sandboxApi: ctx.sandbox,
+            sandboxTimeoutMs,
+            snapshotId: finalSnapshotId,
         runtime: (sandboxCfg.sandboxRuntime as any) ?? undefined,
         dependencies: sandboxCfg.sandboxDeps as string[] | undefined,
         memory: sandboxCfg.sandboxMemory as string | undefined,

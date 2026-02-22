@@ -136,10 +136,17 @@ const NAV_SECTIONS: NavSection[] = [
       { key: "model", label: "AI Model", icon: "🤖" },
       { key: "ai", label: "Prompt Engineering", icon: "✍️" },
       { key: "tools", label: "Custom Tools", icon: "🧩" },
-      { key: "agents", label: "AI Agents", icon: "🧬" },
       { key: "prompts", label: "Prompt Templates", icon: "📋" },
-      { key: "evals", label: "Evaluations", icon: "📊" },
       { key: "examples", label: "Few-Shot Examples", icon: "💡" },
+    ],
+  },
+  {
+    label: "Agents",
+    items: [
+      { key: "agents", label: "Agent Configuration", icon: "🧬" },
+      { key: "scheduler", label: "Task Scheduler", icon: "⏰" },
+      { key: "evals", label: "Evaluations", icon: "📊" },
+      { key: "observability", label: "Observability", icon: "📡" },
     ],
   },
   {
@@ -147,8 +154,6 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { key: "users", label: "Users & Access", icon: "🔐" },
       { key: "approvals", label: "Approval Workflows", icon: "✅" },
-      { key: "scheduler", label: "Scheduler", icon: "⏰" },
-      { key: "observability", label: "Observability", icon: "📡" },
     ],
   },
   {
@@ -161,6 +166,7 @@ const NAV_SECTIONS: NavSection[] = [
 
 const SECTION_KEYS: Record<string, string> = {
   "AI & Intelligence": "ai",
+  "Agents": "agents",
   "Operations": "ops",
   "Configuration": "config",
 };
@@ -171,7 +177,7 @@ const TAB_TITLES: Record<AdminTab, string> = {
   model: "AI Model Configuration",
   ai: "Prompt Engineering",
   tools: "Custom Tools",
-  agents: "AI Agents",
+  agents: "Agent Configuration",
   prompts: "Prompt Templates",
   evals: "Evaluation Dashboard",
   examples: "Few-Shot Examples",
@@ -189,7 +195,7 @@ const TAB_DESCRIPTIONS: Record<AdminTab, string> = {
   model: "Select your AI provider, model, and manage API credentials",
   ai: "Configure AI personality, tone, reasoning, and safety guardrails",
   tools: "Create custom tool integrations for the AI to use",
-  agents: "Fine-tune individual AI agent behavior and specializations",
+  agents: "Configure agent behavior, models, temperature, and specializations",
   prompts: "Manage reusable prompt templates for consistent AI responses",
   evals: "Monitor AI response quality with automated evaluations",
   examples: "Provide example interactions to improve AI accuracy",
@@ -4308,6 +4314,7 @@ const TASK_TYPE_LABELS: Record<string, { icon: string; label: string; desc: stri
   insight: { icon: "💡", label: "Insight", desc: "Run insight analysis" },
   alert: { icon: "🔔", label: "Alert", desc: "Check alert conditions (low stock, overdue invoices)" },
   cleanup: { icon: "🧹", label: "Cleanup", desc: "Purge old sessions, notifications, executions" },
+  eval: { icon: "🧪", label: "Evaluation", desc: "Run AI agent evaluation suites to catch regressions" },
   custom: { icon: "⚙️", label: "Custom", desc: "Custom task with arbitrary config" },
 };
 
@@ -4321,6 +4328,8 @@ function SchedulerTab() {
   const [summary, setSummary] = useState<ExecutionSummary | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [running, setRunning] = useState<string | null>(null);
+  const [engineEnabled, setEngineEnabled] = useState(false);
+  const [engineLoading, setEngineLoading] = useState(true);
   const [formData, setFormData] = useState({
     name: "",
     taskType: "report",
@@ -4343,7 +4352,34 @@ function SchedulerTab() {
     }
   };
 
-  useEffect(() => { fetchSchedules(); }, []);
+  const fetchEngineStatus = async () => {
+    try {
+      const res = await fetch("/api/admin/scheduler/status", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setEngineEnabled(!!data.enabled);
+      }
+    } catch { /* ignore */ } finally {
+      setEngineLoading(false);
+    }
+  };
+
+  const toggleEngine = async () => {
+    const newState = !engineEnabled;
+    try {
+      const res = await fetch("/api/admin/scheduler/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ enabled: newState }),
+      });
+      if (res.ok) {
+        setEngineEnabled(newState);
+      }
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => { fetchSchedules(); fetchEngineStatus(); }, []);
 
   const handleSave = async () => {
     let config: Record<string, unknown>;
@@ -4449,6 +4485,48 @@ function SchedulerTab() {
 
   return (
     <div>
+      {/* ── Scheduler Engine Master Switch ── */}
+      <div className="card" style={{
+        padding: 16,
+        marginBottom: 20,
+        border: engineEnabled ? "1px solid #10b981" : "1px solid var(--color-border)",
+        background: engineEnabled
+          ? "rgba(16, 185, 129, 0.05)"
+          : "var(--color-bg-elevated, #1e293b)",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+              <span style={{ fontSize: 20 }}>{engineEnabled ? "🟢" : "🔴"}</span>
+              <strong style={{ fontSize: "1rem" }}>Automation Engine</strong>
+              <span style={{
+                padding: "2px 10px",
+                borderRadius: 12,
+                fontSize: 11,
+                fontWeight: 700,
+                background: engineEnabled ? "#10b981" : "#6b7280",
+                color: "#fff",
+              }}>
+                {engineLoading ? "..." : engineEnabled ? "RUNNING" : "STOPPED"}
+              </span>
+            </div>
+            <div className="text-muted" style={{ fontSize: 12 }}>
+              {engineEnabled
+                ? "The scheduler checks for due tasks every 15 minutes and executes them automatically."
+                : "The scheduler is paused. No automated tasks will run until you enable it. You can still trigger tasks manually."}
+            </div>
+          </div>
+          <button
+            className={`btn btn-sm ${engineEnabled ? "btn-danger" : "btn-primary"}`}
+            onClick={toggleEngine}
+            disabled={engineLoading}
+            style={{ minWidth: 100 }}
+          >
+            {engineEnabled ? "⏸ Disable" : "▶️ Enable"}
+          </button>
+        </div>
+      </div>
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <h3>⏰ Scheduled Tasks</h3>
         <button className="btn btn-primary btn-sm" onClick={() => { resetForm(); setShowForm(!showForm); }}>
@@ -4638,11 +4716,11 @@ function SchedulerTab() {
       )}
 
       <InfoBox>
-        <strong>⏰ Scheduler</strong> automates recurring tasks. The cron engine checks every 15 minutes for due schedules
-        and dispatches them to the Scheduler Agent. Task types include <em>report</em> (generates reports),
-        <em>insight</em> (runs analysis), <em>alert</em> (checks low-stock/overdue invoices),
-        <em>cleanup</em> (purges old data), and <em>custom</em>. Schedules auto-disable after reaching
-        the max failure threshold.
+        <strong>⏰ Task Scheduler</strong> — All automated tasks are controlled from this console. Nothing runs unless
+        you enable the engine above. When enabled, the scheduler checks every 15 minutes for due tasks and dispatches them
+        to the Scheduler Agent. Task types: <em>report</em>, <em>insight</em>, <em>alert</em>, <em>cleanup</em>,
+        <em>eval</em> (AI agent evaluations), and <em>custom</em>. Individual schedules can be paused independently
+        and auto-disable after reaching the max failure threshold.
       </InfoBox>
     </div>
   );

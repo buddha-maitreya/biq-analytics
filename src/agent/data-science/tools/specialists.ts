@@ -4,6 +4,7 @@
  * analyzeTrendsTool: Delegates to The Analyst (insights-analyzer)
  * generateReportTool: Delegates to The Writer (report-generator)
  * searchKnowledgeTool: Delegates to The Librarian (knowledge-base)
+ * scanDocumentTool: Delegates to The Scanner (document-scanner)
  *
  * All tools return structured error objects with errorType + errorHint
  * so the LLM can report failures clearly to the user.
@@ -14,11 +15,13 @@ import { z } from "zod";
 import insightsAnalyzer from "@agent/insights-analyzer";
 import reportGenerator from "@agent/report-generator";
 import knowledgeBase from "@agent/knowledge-base";
+import documentScanner from "@agent/document-scanner";
 import { exportReport, type ExportFormat } from "@lib/report-export";
 import type {
   AnalyzeTrendsResult,
   GenerateReportResult,
   SearchKnowledgeResult,
+  ScanDocumentResult,
   ExportReportResult,
 } from "./types";
 
@@ -133,6 +136,68 @@ export const searchKnowledgeTool = tool({
       };
     } catch (err) {
       return agentError("Knowledge Base", err);
+    }
+  },
+});
+
+export const scanDocumentTool = tool({
+  description:
+    "Delegate to The Scanner (document-scanner) for processing uploaded images and documents. " +
+    "Use when the user has uploaded a file (image, PDF, etc.) and wants to: scan barcodes/QR codes, " +
+    "extract inventory data from stock sheets (OCR), or parse invoice data from invoice images. " +
+    "Requires either an image URL (S3 presigned URL from the attachment) or base64-encoded image data.",
+  parameters: z.object({
+    mode: z
+      .enum(["barcode", "stock-sheet", "invoice"])
+      .describe("Processing mode: 'barcode' for barcode/QR scanning, 'stock-sheet' for inventory OCR, 'invoice' for invoice data extraction"),
+    imageUrl: z
+      .string()
+      .optional()
+      .describe("URL to the image (S3 presigned URL from attached files). Preferred over base64."),
+    imageData: z
+      .string()
+      .optional()
+      .describe("Base64-encoded image data (JPEG, PNG, WebP). Use imageUrl instead when available."),
+    context: z
+      .string()
+      .optional()
+      .describe("Additional context to help with recognition (e.g. 'this is a stock sheet from warehouse A')"),
+  }),
+  execute: async ({ mode, imageUrl, imageData, context }): Promise<ScanDocumentResult> => {
+    if (!imageUrl && !imageData) {
+      return {
+        success: false,
+        mode,
+        error: "No image provided. Supply either an imageUrl (from the attached file) or imageData (base64).",
+        errorType: "validation",
+        errorHint: "Ask the user to upload an image first, then reference the attachment URL provided in the conversation.",
+      };
+    }
+    try {
+      const result = await documentScanner.run({
+        mode,
+        imageUrl,
+        imageData,
+        context,
+      });
+      if (result.success) {
+        return {
+          success: true,
+          mode: result.mode,
+          data: result.data,
+          rawText: result.rawText,
+          confidence: result.confidence,
+        };
+      }
+      return {
+        success: false,
+        mode: result.mode,
+        error: result.error ?? "Document scanning failed",
+        errorType: "agent",
+        errorHint: "The scanner could not process the image. Ask the user to try a clearer photo or different format.",
+      };
+    } catch (err) {
+      return { ...agentError("Document Scanner", err), success: false, mode };
     }
   },
 });

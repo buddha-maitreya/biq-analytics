@@ -625,6 +625,61 @@ Phase 1 (Architecture) ─── foundation for everything
 
 ---
 
+---
+
+## Phase 8 — Report Export Surgery & Deployment Hardening
+
+### 8.1 Report Export: Server-Side API (ReportsPage)
+
+**Status:** ✅ Complete
+
+The Reports page uses a basic client-side converter for PDF/XLSX (fake XML for xlsx,
+browser print dialog for PDF). The server already has a full export pipeline using
+jsPDF, ExcelJS, DOCX, PptxGenJS with company branding applied automatically.
+
+- [x] `src/lib/report-export.ts` — Full server-side PDF/XLSX/DOCX/PPTX generation with branding
+- [x] `POST /api/reports/export` — Server export API endpoint
+- [x] `POST /api/reports/:id/export` — Export a saved report by ID
+- [x] Fix `ReportsPage.handleDownload` — call `/api/reports/export` for pdf/xlsx/docx/pptx
+      instead of client-side markdown → XML/print-dialog conversion
+- [x] Add DOCX and PPTX to `FORMAT_OPTIONS` in ReportsPage (all 5 formats: PDF/XLSX/DOCX/PPTX/CSV)
+- [x] Add PPTX download button to `ToolCallCard` `ReportResult` component (PDF/Excel/Word/PPTX)
+
+### 8.2 Sandbox Infrastructure: Python Snapshot
+
+**Status:** 🔄 In Progress (blocked by platform bug)
+
+- [x] Sandbox created (`sbx_0d9bb09bd86dcc51b94d95d5dad61a307d1958a387ddfa02d47bc5737007`)
+- [x] Dependencies installed via `uv venv && uv pip install numpy pandas scipy scikit-learn statsmodels`
+- [x] Verified: `source .venv/bin/activate && python3 -c 'import numpy, pandas, scipy, sklearn, statsmodels' && echo All OK` → **All OK**
+- [ ] **Blocked**: `agentuity cloud sandbox snapshot create` returns 500 Internal Server Error
+      — escalated to Agentuity support. Once resolved, run snapshot + tag `biq-datascience-v1`
+- [x] Safety guard added to `data-science` agent — ignores placeholder snapshot ID
+- [x] Placeholder `sandboxSnapshotId: "snp_set_this_in_admin_console"` added to default agent config
+
+### 8.3 Scheduler Overhaul (Completed)
+
+**Status:** ✅ Complete
+
+- [x] Master on/off switch (`schedulerEnabled` setting, defaults `false`)
+- [x] `scheduler-cron.ts` — cron tick guarded by master switch (early return when disabled)
+- [x] `eval-cron.ts` — removed hardcoded `cron("0 3 * * *")`, extracted `runAllEvals()` as export
+- [x] Scheduler agent — added `eval` task type with handler calling `runAllEvals()`
+- [x] Admin API — `GET /admin/scheduler/status` + `POST /admin/scheduler/toggle`
+- [x] Admin UI sidebar — "Agents" section with Task Scheduler, Agent Configuration, Evaluations, Observability
+- [x] SchedulerTab — Engine on/off toggle panel with live status indicator
+- [x] `TASK_TYPE_LABELS` — `eval` entry added
+- [x] InfoBox updated to state that nothing runs unless engine is enabled
+
+### 8.4 Demo & Knowledge Base Test Document
+
+**Status:** ✅ Complete
+
+- [x] `demo/safari-biq-knowledge-base.txt` — Safari lodge SOPs for testing RAG pipeline
+- [x] Test sequence: upload → ingest → query → assert answers grounded in document
+
+---
+
 ## Changelog
 
 | Date | Phase | Action |
@@ -642,3 +697,7 @@ Phase 1 (Architecture) ─── foundation for everything
 | 2025-07-22 | 7.7 | Scalability: @agentuity/evals preset evals (safety, pii, politeness, conciseness, format, answerCompleteness) added to 4 agents with middleware transforms |
 | 2025-07-22 | 7.7 | Scalability: Workbench test prompts (`welcome` exports) added to all 7 agents |
 | 2025-07-22 | 7.7 | Scalability: Rate limiting wired into reports, scanning (3 endpoints), and webhooks routes |
+| 2026-02-22 | 8.3 | Scheduler overhaul: master switch, hardcoded crons removed, eval task type, admin UI "Agents" section |
+| 2026-02-22 | 8.2 | Python sandbox created with numpy/pandas/scipy/sklearn/statsmodels; snapshot blocked by platform 500 error (escalated) |
+| 2026-02-22 | 8.4 | Demo knowledge base document created for RAG pipeline testing |
+| 2026-02-22 | 8.1 | Report export surgery complete: ReportsPage calls server API (PDF/XLSX/DOCX/PPTX/CSV); ToolCallCard PPTX button added |

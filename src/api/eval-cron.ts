@@ -1,18 +1,17 @@
 /**
- * Automated Eval Cron Route — Phase 7.6
+ * Eval Routes — Phase 7.6
  *
- * Scheduled endpoint that triggers evaluation suites for all agents.
- * Runs on a cron schedule (default: daily at 3 AM) to catch regressions.
+ * Endpoints for running agent evaluation suites.
  *
- * The cron handler:
- *   1. Sends a set of standard test prompts to each agent
- *   2. Stores eval results via the eval-results service
- *   3. Logs a summary of pass/fail rates
+ * IMPORTANT: Automated eval scheduling is handled entirely via the
+ * Admin Console → Automation → Scheduler. Create a schedule with
+ * taskType "eval" to run evals on any cron cadence. No hardcoded
+ * cron is shipped — each deployment decides if/when evals run.
  *
  * Manual trigger: POST /api/admin/evals/run
  */
 
-import { createRouter, cron } from "@agentuity/runtime";
+import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
 import { sessionMiddleware } from "@lib/auth";
 import { recordEvalResults, type RecordEvalInput } from "@services/eval-results";
@@ -166,85 +165,17 @@ async function runAgentEvals(
   return results;
 }
 
-// ── Cron handler: daily at 3 AM ─────────────────────────────
-
-router.post(
-  "/admin/evals/run-scheduled",
-  cron("0 3 * * *", async (c) => {
-    const logger = c.var.logger ?? console;
-    logger.info("Starting automated eval run (scheduled)");
-
-    const allResults: RecordEvalInput[] = [];
-
-    // Run data-science agent evals
-    try {
-      const dataScienceAgent = await import("@agent/data-science");
-      const dsResults = await runAgentEvals(
-        "data-science",
-        dataScienceAgent,
-        DATA_SCIENCE_TESTS,
-        logger
-      );
-      allResults.push(...dsResults);
-    } catch (err: any) {
-      logger.warn("Failed to run data-science evals", {
-        error: err.message?.slice(0, 200),
-      });
-    }
-
-    // Run knowledge-base agent evals
-    try {
-      const kbAgent = await import("@agent/knowledge-base");
-      const kbResults = await runAgentEvals(
-        "knowledge-base",
-        kbAgent,
-        KNOWLEDGE_BASE_TESTS,
-        logger
-      );
-      allResults.push(...kbResults);
-    } catch (err: any) {
-      logger.warn("Failed to run knowledge-base evals", {
-        error: err.message?.slice(0, 200),
-      });
-    }
-
-    // Persist all results
-    if (allResults.length > 0) {
-      try {
-        await recordEvalResults(allResults);
-        logger.info("Automated eval results saved", {
-          totalTests: allResults.length,
-          passed: allResults.filter((r) => r.passed).length,
-          failed: allResults.filter((r) => !r.passed).length,
-        });
-      } catch (err: any) {
-        logger.warn("Failed to persist eval results", {
-          error: err.message?.slice(0, 200),
-        });
-      }
-    }
-
-    return c.json({
-      success: true,
-      totalTests: allResults.length,
-      passed: allResults.filter((r) => r.passed).length,
-      failed: allResults.filter((r) => !r.passed).length,
-      results: allResults.map((r) => ({
-        agent: r.agentName,
-        eval: r.evalName,
-        passed: r.passed,
-        score: r.score,
-      })),
-    });
-  })
-);
-
-// ── Manual trigger (admin-only) ─────────────────────────────
-
-router.post("/admin/evals/run", sessionMiddleware(), async (c) => {
-  const logger = c.var.logger ?? console;
-  logger.info("Starting manual eval run");
-
+/**
+ * Run all eval suites and persist results.
+ * Shared implementation for both the manual trigger and the scheduler task.
+ */
+export async function runAllEvals(logger: any): Promise<{
+  success: boolean;
+  totalTests: number;
+  passed: number;
+  failed: number;
+  results: Array<{ agent: string; eval: string; passed: boolean; score: number; reason?: string }>;
+}> {
   const allResults: RecordEvalInput[] = [];
 
   // Run data-science agent evals
@@ -283,6 +214,11 @@ router.post("/admin/evals/run", sessionMiddleware(), async (c) => {
   if (allResults.length > 0) {
     try {
       await recordEvalResults(allResults);
+      logger.info("Eval results saved", {
+        totalTests: allResults.length,
+        passed: allResults.filter((r) => r.passed).length,
+        failed: allResults.filter((r) => !r.passed).length,
+      });
     } catch (err: any) {
       logger.warn("Failed to persist eval results", {
         error: err.message?.slice(0, 200),
@@ -290,7 +226,7 @@ router.post("/admin/evals/run", sessionMiddleware(), async (c) => {
     }
   }
 
-  return c.json({
+  return {
     success: true,
     totalTests: allResults.length,
     passed: allResults.filter((r) => r.passed).length,
@@ -299,10 +235,19 @@ router.post("/admin/evals/run", sessionMiddleware(), async (c) => {
       agent: r.agentName,
       eval: r.evalName,
       passed: r.passed,
-      score: r.score,
+      score: r.score ?? 0,
       reason: r.reason,
     })),
-  });
+  };
+}
+
+// ── Manual trigger (admin-only) ─────────────────────────────
+
+router.post("/admin/evals/run", sessionMiddleware(), async (c) => {
+  const logger = c.var.logger ?? console;
+  logger.info("Starting manual eval run");
+  const result = await runAllEvals(logger);
+  return c.json(result);
 });
 
 export default router;

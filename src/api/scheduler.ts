@@ -30,6 +30,10 @@ import {
   listExecutions,
   getExecutionSummary,
 } from "@services/scheduler";
+import {
+  isSchedulerEnabled,
+  setSchedulerEnabled,
+} from "@services/settings";
 import scheduler from "@agent/scheduler";
 
 // ── Request schemas ───────────────────────────────────────
@@ -151,6 +155,22 @@ router.get("/admin/schedules/summary", async (c) => {
   const sinceDays = parseInt(url.searchParams.get("sinceDays") ?? "30", 10);
   const summary = await getExecutionSummary(sinceDays);
   return c.json(summary);
+});
+
+// ── Scheduler engine status ─────────────────────────────────
+
+/** GET /admin/scheduler/status — Check if the scheduler engine is enabled */
+router.get("/admin/scheduler/status", async (c) => {
+  const enabled = await isSchedulerEnabled();
+  return c.json({ enabled });
+});
+
+/** POST /admin/scheduler/toggle — Enable or disable the scheduler engine */
+router.post("/admin/scheduler/toggle", async (c) => {
+  const body = await c.req.json();
+  const enabled = !!body.enabled;
+  await setSchedulerEnabled(enabled);
+  return c.json({ enabled });
 });
 
 export default router;

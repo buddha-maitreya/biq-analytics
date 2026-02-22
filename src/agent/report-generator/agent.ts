@@ -92,17 +92,46 @@ const agent = createAgent("report-generator", {
   schema: { input: inputSchema, output: outputSchema },
 
   setup: async (): Promise<ReportConfig> => {
-    const agentConfig = await getAgentConfigWithDefaults("report-generator");
-    const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
+    // Wrap in try/catch — if DB is unreachable on cold start, return safe
+    // defaults so the handler still runs (with degraded config) instead of
+    // crashing with "undefined is not an object (evaluating 'Y.config')".
+    try {
+      const agentConfig = await getAgentConfigWithDefaults("report-generator");
+      const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
 
-    return {
-      agentConfig,
-      maxSqlSteps: (cfg.maxSqlSteps as number) ?? 6,
-      defaultFormat: (cfg.defaultFormat as string) ?? "markdown",
-      temperature: agentConfig.temperature
-        ? parseFloat(agentConfig.temperature)
-        : undefined,
-    };
+      return {
+        agentConfig,
+        maxSqlSteps: (cfg.maxSqlSteps as number) ?? 6,
+        defaultFormat: (cfg.defaultFormat as string) ?? "markdown",
+        temperature: agentConfig.temperature
+          ? parseFloat(agentConfig.temperature)
+          : undefined,
+      };
+    } catch (err) {
+      console.error("[report-generator] setup() failed, using defaults:", err);
+      return {
+        agentConfig: {
+          id: "fallback-setup",
+          agentName: "report-generator",
+          displayName: "The Writer",
+          description: "Professional report writer",
+          isActive: true,
+          modelOverride: null,
+          temperature: null,
+          maxSteps: 6,
+          timeoutMs: 30000,
+          customInstructions: null,
+          executionPriority: 2,
+          config: { defaultFormat: "markdown", maxSqlSteps: 6 },
+          metadata: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        maxSqlSteps: 6,
+        defaultFormat: "markdown",
+        temperature: undefined,
+      };
+    }
   },
 
   shutdown: async (_app, _config) => {
@@ -125,7 +154,15 @@ const agent = createAgent("report-generator", {
     // labels, companyName, currency used throughout this handler.
     const runtimeConfig = (ctx.config ?? {}) as Partial<ReportConfig>;
 
-    const { agentConfig: rawAgentConfig, maxSqlSteps, defaultFormat, temperature } = runtimeConfig;
+    // Destructure with safe defaults — if ctx.config is undefined (setup() wasn't
+    // called or runtime skipped it), maxSqlSteps would be undefined → Vercel AI SDK
+    // defaults maxSteps to 1 → LLM gets one step → reports silently fail.
+    const {
+      agentConfig: rawAgentConfig,
+      maxSqlSteps = 6,
+      defaultFormat = "markdown",
+      temperature,
+    } = runtimeConfig;
 
     // Fallback if agentConfig is missing (which can happen even if ctx.config exists)
     const fallbackAgentConfig: AgentConfigRow = {

@@ -59,24 +59,55 @@ const agent = createAgent("insights-analyzer", {
   schema: { input: inputSchema, output: outputSchema },
 
   setup: async (): Promise<InsightsConfig> => {
-    const agentConfig = await getAgentConfigWithDefaults("insights-analyzer");
-    const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
+    try {
+      const agentConfig = await getAgentConfigWithDefaults("insights-analyzer");
+      const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
 
-    return {
-      agentConfig,
-      sandboxTimeoutMs: (cfg.sandboxTimeoutMs as number) ?? 30_000,
-      structuringModel: (cfg.structuringModel as string) ?? "gpt-4o-mini",
-      maxSteps: agentConfig.maxSteps ?? 5,
-      temperature: agentConfig.temperature
-        ? parseFloat(agentConfig.temperature)
-        : undefined,
-      sandboxSnapshotId: cfg.sandboxSnapshotId as string | undefined,
-      sandboxRuntime: cfg.sandboxRuntime as string | undefined,
-      sandboxDeps: cfg.sandboxDeps as string[] | undefined,
-      sandboxMemory: (cfg.sandboxMemoryMb as number)
-        ? `${cfg.sandboxMemoryMb}MB`
-        : undefined,
-    };
+      return {
+        agentConfig,
+        sandboxTimeoutMs: (cfg.sandboxTimeoutMs as number) ?? 30_000,
+        structuringModel: (cfg.structuringModel as string) ?? "gpt-4o-mini",
+        maxSteps: agentConfig.maxSteps ?? 5,
+        temperature: agentConfig.temperature
+          ? parseFloat(agentConfig.temperature)
+          : undefined,
+        sandboxSnapshotId: cfg.sandboxSnapshotId as string | undefined,
+        sandboxRuntime: cfg.sandboxRuntime as string | undefined,
+        sandboxDeps: cfg.sandboxDeps as string[] | undefined,
+        sandboxMemory: (cfg.sandboxMemoryMb as number)
+          ? `${cfg.sandboxMemoryMb}MB`
+          : undefined,
+      };
+    } catch (err) {
+      console.error("[insights-analyzer] setup() failed, using defaults:", err);
+      return {
+        agentConfig: {
+          id: "fallback-setup",
+          agentName: "insights-analyzer",
+          displayName: "The Analyst",
+          description: "Statistical analysis specialist",
+          isActive: true,
+          modelOverride: null,
+          temperature: null,
+          maxSteps: 5,
+          timeoutMs: 30000,
+          customInstructions: null,
+          executionPriority: 3,
+          config: {},
+          metadata: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        sandboxTimeoutMs: 30_000,
+        structuringModel: "gpt-4o-mini",
+        maxSteps: 5,
+        temperature: undefined,
+        sandboxSnapshotId: undefined,
+        sandboxRuntime: undefined,
+        sandboxDeps: undefined,
+        sandboxMemory: undefined,
+      };
+    }
   },
 
   shutdown: async (_app, _config) => {

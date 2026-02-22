@@ -89,7 +89,27 @@ const app = await createApp({
     }
 
     // Pre-load AI settings once on startup (not per-request)
-    const aiSettings = await getAISettings();
+    // Wrapped in try-catch so a transient DB issue doesn't crash the entire app.
+    let aiSettings: AISettings;
+    try {
+      aiSettings = await getAISettings();
+    } catch (err) {
+      console.error("[app] Failed to load AI settings, using empty defaults:", err);
+      aiSettings = {
+        aiPersonality: "",
+        aiEnvironment: "",
+        aiTone: "",
+        aiGoal: "",
+        aiBusinessContext: "",
+        aiResponseFormatting: "",
+        aiQueryReasoning: "",
+        aiToolGuidelines: "",
+        aiGuardrails: "",
+        aiInsightsInstructions: "",
+        aiReportInstructions: "",
+        aiWelcomeMessage: "",
+      };
+    }
 
     getLogger()?.info("App started", { timestamp: Date.now() });
 

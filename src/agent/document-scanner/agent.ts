@@ -158,13 +158,37 @@ const agent = createAgent("document-scanner", {
   schema: { input: inputSchema, output: outputSchema },
 
   setup: async (): Promise<DocumentScannerConfig> => {
-    const agentConfig = await getAgentConfigWithDefaults("document-scanner");
-    return {
-      agentConfig,
-      temperature: agentConfig.temperature
-        ? parseFloat(agentConfig.temperature)
-        : 0, // Low temperature for accurate extraction
-    };
+    try {
+      const agentConfig = await getAgentConfigWithDefaults("document-scanner");
+      return {
+        agentConfig,
+        temperature: agentConfig.temperature
+          ? parseFloat(agentConfig.temperature)
+          : 0, // Low temperature for accurate extraction
+      };
+    } catch (err) {
+      console.error("[document-scanner] setup() failed, using defaults:", err);
+      return {
+        agentConfig: {
+          id: "fallback-setup",
+          agentName: "document-scanner",
+          displayName: "The Scanner",
+          description: "Document processing specialist",
+          isActive: true,
+          modelOverride: null,
+          temperature: null,
+          maxSteps: 3,
+          timeoutMs: 30000,
+          customInstructions: null,
+          executionPriority: 4,
+          config: {},
+          metadata: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        temperature: 0,
+      };
+    }
   },
 
   shutdown: async (_app, _config) => {

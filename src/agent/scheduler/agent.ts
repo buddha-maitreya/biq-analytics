@@ -264,13 +264,21 @@ const scheduler = createAgent("scheduler", {
   schema: { input: inputSchema, output: outputSchema },
 
   setup: async (): Promise<SchedulerConfig> => {
-    const agentConfig = await getAgentConfigWithDefaults("scheduler");
-    const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
+    try {
+      const agentConfig = await getAgentConfigWithDefaults("scheduler");
+      const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
 
-    return {
-      maxRetries: (cfg.maxRetries as number) ?? 3,
-      defaultTimeoutMs: (cfg.defaultTimeoutMs as number) ?? 60_000,
-    };
+      return {
+        maxRetries: (cfg.maxRetries as number) ?? 3,
+        defaultTimeoutMs: (cfg.defaultTimeoutMs as number) ?? 60_000,
+      };
+    } catch (err) {
+      console.error("[scheduler] setup() failed, using defaults:", err);
+      return {
+        maxRetries: 3,
+        defaultTimeoutMs: 60_000,
+      };
+    }
   },
 
   shutdown: async (_app, _config) => {

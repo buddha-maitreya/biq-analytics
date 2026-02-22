@@ -55,24 +55,55 @@ const agent = createAgent("data-science", {
   schema: { input: inputSchema, output: outputSchema },
 
   setup: async (): Promise<DataScienceConfig> => {
-    const agentConfig = await getAgentConfigWithDefaults("data-science");
-    const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
+    try {
+      const agentConfig = await getAgentConfigWithDefaults("data-science");
+      const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
 
-    return {
-      agentConfig,
-      maxSteps: agentConfig.maxSteps ?? 8,
-      recentMessageCount:
-        (cfg.recentMessageCount as number) ?? DEFAULT_RECENT_MESSAGE_COUNT,
-      compressionThreshold:
-        (cfg.compressionThreshold as number) ?? DEFAULT_COMPRESSION_THRESHOLD,
-      compressionModel: (cfg.compressionModel as string) ?? "gpt-4o-mini",
-      sandboxTimeoutMs: (cfg.sandboxTimeoutMs as number) ?? 30_000,
-      modelId: agentConfig.modelOverride ?? "gpt-4o",
-      temperature: agentConfig.temperature
-        ? parseFloat(agentConfig.temperature)
-        : undefined,
-      routingExamples: cfg.routingExamples as any[] | undefined,
-    };
+      return {
+        agentConfig,
+        maxSteps: agentConfig.maxSteps ?? 8,
+        recentMessageCount:
+          (cfg.recentMessageCount as number) ?? DEFAULT_RECENT_MESSAGE_COUNT,
+        compressionThreshold:
+          (cfg.compressionThreshold as number) ?? DEFAULT_COMPRESSION_THRESHOLD,
+        compressionModel: (cfg.compressionModel as string) ?? "gpt-4o-mini",
+        sandboxTimeoutMs: (cfg.sandboxTimeoutMs as number) ?? 30_000,
+        modelId: agentConfig.modelOverride ?? "gpt-4o",
+        temperature: agentConfig.temperature
+          ? parseFloat(agentConfig.temperature)
+          : undefined,
+        routingExamples: cfg.routingExamples as any[] | undefined,
+      };
+    } catch (err) {
+      console.error("[data-science] setup() failed, using defaults:", err);
+      return {
+        agentConfig: {
+          id: "fallback-setup",
+          agentName: "data-science",
+          displayName: "The Brain",
+          description: "Central orchestrator",
+          isActive: true,
+          modelOverride: null,
+          temperature: null,
+          maxSteps: 8,
+          timeoutMs: 30000,
+          customInstructions: null,
+          executionPriority: 1,
+          config: {},
+          metadata: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        maxSteps: 8,
+        recentMessageCount: DEFAULT_RECENT_MESSAGE_COUNT,
+        compressionThreshold: DEFAULT_COMPRESSION_THRESHOLD,
+        compressionModel: "gpt-4o-mini",
+        sandboxTimeoutMs: 30_000,
+        modelId: "gpt-4o",
+        temperature: undefined,
+        routingExamples: undefined,
+      };
+    }
   },
 
   shutdown: async (_app, _config) => {

@@ -92,13 +92,21 @@ const agent = createAgent("data-import", {
   schema: { input: inputSchema, output: outputSchema },
 
   setup: async (): Promise<DataImportConfig> => {
-    const agentConfig = await getAgentConfigWithDefaults("data-import");
-    const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
+    try {
+      const agentConfig = await getAgentConfigWithDefaults("data-import");
+      const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
 
-    return {
-      maxBatchSize: (cfg.maxBatchSize as number) ?? 1000,
-      defaultTimeout: (cfg.defaultTimeoutMs as number) ?? 30_000,
-    };
+      return {
+        maxBatchSize: (cfg.maxBatchSize as number) ?? 1000,
+        defaultTimeout: (cfg.defaultTimeoutMs as number) ?? 30_000,
+      };
+    } catch (err) {
+      console.error("[data-import] setup() failed, using defaults:", err);
+      return {
+        maxBatchSize: 1000,
+        defaultTimeout: 30_000,
+      };
+    }
   },
 
   shutdown: async (_app, _config) => {

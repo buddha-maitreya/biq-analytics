@@ -6,7 +6,7 @@ interface AdminPageProps {
   onSaved?: () => void;
 }
 
-type AdminTab = "users" | "approvals" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools" | "model" | "agents" | "prompts" | "evals" | "examples" | "scheduler" | "observability";
+type AdminTab = "users" | "approvals" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools" | "model" | "agents" | "prompts" | "evals" | "examples" | "scheduler" | "observability" | "reports";
 
 /* ---------- Sub-types ---------- */
 interface RBACConfig {
@@ -154,6 +154,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { key: "users", label: "Users & Access", icon: "🔐" },
       { key: "approvals", label: "Approval Workflows", icon: "✅" },
+      { key: "reports", label: "Reports", icon: "📄" },
     ],
   },
   {
@@ -185,6 +186,7 @@ const TAB_TITLES: Record<AdminTab, string> = {
   observability: "Observability & Logs",
   users: "Users & Access Control",
   approvals: "Approval Workflows",
+  reports: "Report Settings",
   statuses: "Order Statuses",
   tax: "Tax Rules",
   settings: "Business Profile",
@@ -203,6 +205,7 @@ const TAB_DESCRIPTIONS: Record<AdminTab, string> = {
   observability: "Monitor system health, logs, and performance metrics",
   users: "Manage users, roles, permissions, and warehouse assignments",
   approvals: "Configure multi-step approval chains for business actions",
+  reports: "Configure report layout, content limits, charts, and formatting options",
   statuses: "Define order lifecycle statuses and transitions",
   tax: "Configure tax rules and compliance settings",
   settings: "Company branding, payment providers, and system configuration",
@@ -315,6 +318,7 @@ export default function AdminPage({ config, onSaved }: AdminPageProps) {
           {tab === "examples" && <FewShotExamplesTab />}
           {tab === "scheduler" && <SchedulerTab />}
           {tab === "observability" && <ObservabilityTab />}
+          {tab === "reports" && <ReportSettingsTab />}
           {tab === "settings" && <SettingsTab config={config} onSaved={onSaved} />}
         </div>
       </div>
@@ -5512,6 +5516,240 @@ function ApprovalWorkflowsTab() {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ===== REPORT SETTINGS TAB ===== */
+
+function ReportSettingsTab() {
+  const [settings, setSettings] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
+
+  useEffect(() => {
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((d) => {
+        // Extract report-related keys from all settings
+        const all = d.data || {};
+        const reportKeys: Record<string, string> = {};
+        for (const [k, v] of Object.entries(all)) {
+          if (k.startsWith("report")) reportKeys[k] = v as string;
+        }
+        // Ensure defaults for any missing keys
+        const defaults: Record<string, string> = {
+          reportTitlePage: "true",
+          reportTocPage: "true",
+          reportExecSummaryWords: "200",
+          reportMaxPages: "20",
+          reportMaxWords: "5000",
+          reportReferencesPage: "true",
+          reportChartsEnabled: "true",
+          reportMaxChartDataPoints: "15",
+          reportConfidentialFooter: "true",
+          reportMaxCharts: "4",
+        };
+        setSettings({ ...defaults, ...reportKeys });
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const update = (key: string, val: string) =>
+    setSettings((prev) => ({ ...prev, [key]: val }));
+
+  const save = async () => {
+    setSaving(true);
+    setSaveMsg("");
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+      });
+      if (res.ok) {
+        setSaveMsg("Report settings saved successfully");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setSaveMsg(`Error: ${(err as any).error || "Failed to save"}`);
+      }
+    } catch (e: any) {
+      setSaveMsg(`Error: ${e.message}`);
+    } finally {
+      setSaving(false);
+      setTimeout(() => setSaveMsg(""), 3000);
+    }
+  };
+
+  if (loading) return <div className="admin-empty"><p>Loading report settings...</p></div>;
+
+  const Toggle = ({ label, desc, settingKey }: { label: string; desc: string; settingKey: string }) => (
+    <div className="report-setting-row">
+      <div className="report-setting-info">
+        <span className="report-setting-label">{label}</span>
+        <span className="report-setting-desc">{desc}</span>
+      </div>
+      <label className="toggle-switch">
+        <input
+          type="checkbox"
+          checked={settings[settingKey] !== "false"}
+          onChange={(e) => update(settingKey, e.target.checked ? "true" : "false")}
+        />
+        <span className="toggle-slider" />
+      </label>
+    </div>
+  );
+
+  const NumberInput = ({ label, desc, settingKey, min, max, suffix }: { label: string; desc: string; settingKey: string; min: number; max: number; suffix?: string }) => (
+    <div className="report-setting-row">
+      <div className="report-setting-info">
+        <span className="report-setting-label">{label}</span>
+        <span className="report-setting-desc">{desc}</span>
+      </div>
+      <div className="report-setting-input">
+        <input
+          type="number"
+          className="input input-sm"
+          value={settings[settingKey] || ""}
+          min={min}
+          max={max}
+          onChange={(e) => update(settingKey, e.target.value)}
+          style={{ width: 80, textAlign: "right" }}
+        />
+        {suffix && <span className="report-setting-suffix">{suffix}</span>}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="report-settings-tab">
+      {/* Layout Section */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">📐 Report Layout</h3>
+        <p className="settings-section-desc">Control the structural elements of generated reports</p>
+        <div className="report-settings-group">
+          <Toggle
+            label="Title Page"
+            desc="Include a branded cover page with company logo, report title, and date"
+            settingKey="reportTitlePage"
+          />
+          <Toggle
+            label="Table of Contents"
+            desc="Include a table of contents listing all report sections"
+            settingKey="reportTocPage"
+          />
+          <Toggle
+            label="References Section"
+            desc="Include a references section listing data sources at the end of the report"
+            settingKey="reportReferencesPage"
+          />
+          <Toggle
+            label="Confidential Footer"
+            desc='Show "Company Name — Confidential" in the footer of cover page'
+            settingKey="reportConfidentialFooter"
+          />
+        </div>
+      </div>
+
+      {/* Content Limits Section */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">📏 Content Limits</h3>
+        <p className="settings-section-desc">Set boundaries for report length and detail level</p>
+        <div className="report-settings-group">
+          <NumberInput
+            label="Executive Summary Length"
+            desc="Target word count for the executive summary (a concise overview of key findings)"
+            settingKey="reportExecSummaryWords"
+            min={50}
+            max={1000}
+            suffix="words"
+          />
+          <NumberInput
+            label="Maximum Page Count"
+            desc="Maximum number of pages for the entire report"
+            settingKey="reportMaxPages"
+            min={2}
+            max={100}
+            suffix="pages"
+          />
+          <NumberInput
+            label="Maximum Word Count"
+            desc="Maximum word count for the full report content"
+            settingKey="reportMaxWords"
+            min={500}
+            max={50000}
+            suffix="words"
+          />
+        </div>
+      </div>
+
+      {/* Charts & Visualizations Section */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">📊 Charts & Visualizations</h3>
+        <p className="settings-section-desc">Configure data visualizations embedded in reports</p>
+        <div className="report-settings-group">
+          <Toggle
+            label="Enable Charts"
+            desc="Include bar graphs, pie charts, and other data visualizations in reports"
+            settingKey="reportChartsEnabled"
+          />
+          <NumberInput
+            label="Maximum Charts Per Report"
+            desc="Limit the number of charts to keep reports focused"
+            settingKey="reportMaxCharts"
+            min={1}
+            max={10}
+            suffix="charts"
+          />
+          <NumberInput
+            label="Maximum Data Points Per Chart"
+            desc="Limit data points per chart to prevent clutter and maintain readability"
+            settingKey="reportMaxChartDataPoints"
+            min={3}
+            max={50}
+            suffix="points"
+          />
+        </div>
+      </div>
+
+      {/* Save Button */}
+      <div className="report-settings-actions">
+        <button className="btn btn-primary" onClick={save} disabled={saving}>
+          {saving ? "Saving..." : "Save Report Settings"}
+        </button>
+        {saveMsg && (
+          <span className={`save-feedback ${saveMsg.startsWith("Error") ? "error" : "success"}`}>
+            {saveMsg}
+          </span>
+        )}
+      </div>
+
+      <style>{`
+        .report-settings-tab { max-width: 720px; }
+        .settings-section { margin-bottom: 32px; }
+        .settings-section-title { font-size: 15px; font-weight: 600; margin: 0 0 4px 0; color: var(--text-primary, #1a1a2e); }
+        .settings-section-desc { font-size: 12px; color: var(--text-muted, #888); margin: 0 0 16px 0; }
+        .report-settings-group { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; overflow: hidden; }
+        .report-setting-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border, #e2e8f0); background: var(--bg-card, #fff); }
+        .report-setting-row:last-child { border-bottom: none; }
+        .report-setting-info { display: flex; flex-direction: column; gap: 2px; flex: 1; margin-right: 16px; }
+        .report-setting-label { font-size: 13px; font-weight: 500; color: var(--text-primary, #1a1a2e); }
+        .report-setting-desc { font-size: 11px; color: var(--text-muted, #888); line-height: 1.4; }
+        .report-setting-input { display: flex; align-items: center; gap: 6px; }
+        .report-setting-suffix { font-size: 11px; color: var(--text-muted, #888); }
+        .toggle-switch { position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0; }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: var(--border, #ccc); border-radius: 24px; transition: 0.2s; }
+        .toggle-slider::before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: 0.2s; }
+        .toggle-switch input:checked + .toggle-slider { background: var(--primary, #3b82f6); }
+        .toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
+        .report-settings-actions { display: flex; align-items: center; gap: 12px; padding-top: 8px; }
+        .save-feedback { font-size: 12px; }
+        .save-feedback.success { color: #059669; }
+        .save-feedback.error { color: #dc2626; }
+      `}</style>
     </div>
   );
 }

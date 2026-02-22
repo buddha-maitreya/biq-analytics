@@ -6,6 +6,7 @@ import * as settingsSvc from "@services/settings";
 import { invalidateConfigCache } from "./config";
 import { invalidateModelCache } from "@lib/ai";
 import { invalidateRateLimitCache } from "@lib/rate-limit";
+import { invalidateReportCache } from "@services/settings";
 import { generateText } from "ai";
 import * as objectStorage from "@services/object-storage";
 
@@ -32,7 +33,19 @@ router.put("/settings", validator({ input: updateSettingsSchema }), async (c) =>
   invalidateConfigCache();
   invalidateModelCache();
   invalidateRateLimitCache();
+  invalidateReportCache();
   return c.json({ data: updated });
+});
+
+/** GET /api/settings/reports — report-specific settings (parsed with defaults) */
+router.get("/settings/reports", async (c) => {
+  try {
+    const reportSettings = await settingsSvc.getReportSettings();
+    return c.json({ data: reportSettings });
+  } catch (err) {
+    console.error("Failed to load report settings:", err instanceof Error ? err.message : err);
+    return c.json({ data: settingsSvc.getReportSettingsDefaults() }, 500);
+  }
 });
 
 /** POST /api/settings/test-model — test AI provider connection */

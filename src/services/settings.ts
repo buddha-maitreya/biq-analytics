@@ -87,6 +87,28 @@ const DEFAULTS: Record<string, string> = {
   aiModelName: "gpt-4o-mini",
   /** Provider API key (stored encrypted in DB) */
   aiModelApiKey: "",
+
+  // ── Report Configuration ──────────────────────────────────
+  /** Whether to include a branded title/cover page */
+  reportTitlePage: "true",
+  /** Whether to include a Table of Contents page */
+  reportTocPage: "true",
+  /** Target word count for the Executive Summary section */
+  reportExecSummaryWords: "200",
+  /** Maximum number of pages for generated reports */
+  reportMaxPages: "20",
+  /** Maximum word count for the entire report */
+  reportMaxWords: "5000",
+  /** Whether to include a References section at the end */
+  reportReferencesPage: "true",
+  /** Whether to include data visualizations (charts/graphs) */
+  reportChartsEnabled: "true",
+  /** Maximum number of data points per chart (prevents clutter) */
+  reportMaxChartDataPoints: "15",
+  /** Whether to show "Confidential" in the footer */
+  reportConfidentialFooter: "true",
+  /** Maximum number of charts per report */
+  reportMaxCharts: "4",
 };
 
 /** Get a single setting by key */
@@ -176,6 +198,80 @@ export async function getAISettings(): Promise<AISettings> {
     ai[key] = all[key] ?? "";
   }
   return ai as AISettings;
+}
+
+// ── Report Settings ─────────────────────────────────────────
+
+export interface ReportSettings {
+  /** Whether to include a branded title/cover page */
+  titlePage: boolean;
+  /** Whether to include a Table of Contents page */
+  tocPage: boolean;
+  /** Target word count for the Executive Summary section */
+  execSummaryMaxWords: number;
+  /** Maximum number of pages for generated reports */
+  maxPages: number;
+  /** Maximum word count for the entire report */
+  maxWords: number;
+  /** Whether to include a References section at the end */
+  referencesPage: boolean;
+  /** Whether to include data visualizations (charts/graphs) */
+  chartsEnabled: boolean;
+  /** Maximum number of data points per chart */
+  maxChartDataPoints: number;
+  /** Whether to show "Confidential" in the footer */
+  confidentialFooter: boolean;
+  /** Maximum number of charts per report */
+  maxCharts: number;
+}
+
+/** In-memory cache for report settings */
+let _reportCache: ReportSettings | null = null;
+let _reportCacheAt = 0;
+const REPORT_CACHE_TTL = 60_000; // 1 minute
+
+/** Invalidate the report settings cache */
+export function invalidateReportCache() {
+  _reportCache = null;
+  _reportCacheAt = 0;
+}
+
+/** Get report settings as parsed values (cached for 1 min) */
+export async function getReportSettings(): Promise<ReportSettings> {
+  const now = Date.now();
+  if (_reportCache && now - _reportCacheAt < REPORT_CACHE_TTL) return _reportCache;
+
+  const all = await getAllSettings();
+  _reportCache = {
+    titlePage: all.reportTitlePage !== "false",
+    tocPage: all.reportTocPage !== "false",
+    execSummaryMaxWords: parseInt(all.reportExecSummaryWords, 10) || 200,
+    maxPages: parseInt(all.reportMaxPages, 10) || 20,
+    maxWords: parseInt(all.reportMaxWords, 10) || 5000,
+    referencesPage: all.reportReferencesPage !== "false",
+    chartsEnabled: all.reportChartsEnabled !== "false",
+    maxChartDataPoints: parseInt(all.reportMaxChartDataPoints, 10) || 15,
+    confidentialFooter: all.reportConfidentialFooter !== "false",
+    maxCharts: parseInt(all.reportMaxCharts, 10) || 4,
+  };
+  _reportCacheAt = now;
+  return _reportCache;
+}
+
+/** Return default report settings (for fallback when DB is unavailable) */
+export function getReportSettingsDefaults(): ReportSettings {
+  return {
+    titlePage: true,
+    tocPage: true,
+    execSummaryMaxWords: 200,
+    maxPages: 20,
+    maxWords: 5000,
+    referencesPage: true,
+    chartsEnabled: true,
+    maxChartDataPoints: 15,
+    confidentialFooter: true,
+    maxCharts: 4,
+  };
 }
 
 // ── Rate Limit Settings ─────────────────────────────────────

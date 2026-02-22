@@ -39,7 +39,8 @@ import {
   ImageRun,
 } from "docx";
 import * as objectStorage from "@services/object-storage";
-import { getAllSettings } from "@services/settings";
+import { getAllSettings, getReportSettings } from "@services/settings";
+import type { ReportSettings } from "@services/settings";
 import { renderCharts, toPptxChartData } from "@lib/charts";
 import type { ChartSpec, RenderedChart } from "@lib/charts";
 
@@ -230,6 +231,38 @@ function stripMd(text: string): string {
     .replace(/^[-*]\s+/gm, "• ")
     .replace(/^\d+\.\s+/gm, (m) => m)
     .trim();
+}
+
+/**
+ * Strip LLM-generated metadata lines from markdown content.
+ * The PDF template renders its own title page with title, date, company name,
+ * so we remove the LLM's duplicate metadata to avoid it appearing on content pages.
+ *
+ * Strips: h1 headings, "Prepared for:", "Date:", standalone "---" dividers,
+ * and any leading whitespace after removal.
+ */
+function stripLlmMetadata(content: string): string {
+  const lines = content.split("\n");
+  const cleaned: string[] = [];
+  let foundFirstH2 = false;
+
+  for (const line of lines) {
+    // Skip h1 headings (LLM-generated report title — duplicate of title page)
+    if (/^#\s+/.test(line) && !foundFirstH2) continue;
+    // Skip "Prepared for:" lines
+    if (/^\*{0,2}Prepared\s+for:/i.test(line)) continue;
+    // Skip "Date:" lines at the top
+    if (/^\*{0,2}Date:/i.test(line) && !foundFirstH2) continue;
+    // Skip standalone horizontal rules before first content
+    if (/^---+\s*$/.test(line) && !foundFirstH2) continue;
+    // Track when we hit the first ## heading (real content starts)
+    if (/^##\s+/.test(line)) foundFirstH2 = true;
+    cleaned.push(line);
+  }
+
+  // Remove leading blank lines
+  while (cleaned.length > 0 && cleaned[0].trim() === "") cleaned.shift();
+  return cleaned.join("\n");
 }
 
 /**
@@ -647,7 +680,7 @@ async function fetchLogoImage(
   }
 }
 
-async function exportPdf(input: ExportInput, branding: Branding, charts: RenderedChart[] = []): Promise<Buffer> {
+async function exportPdf(input: ExportInput, branding: Branding, charts: RenderedChart[] = [], reportCfg?: ReportSettings): Promise<Buffer> {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const boldFont = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -664,8 +697,15 @@ async function exportPdf(input: ExportInput, branding: Branding, charts: Rendere
     headerBg: brandRgb,
   };
 
+  // Report layout settings (defaults if not provided)
+  const showTitlePage = reportCfg?.titlePage ?? true;
+  const showTocPage = reportCfg?.tocPage ?? true;
+  const showReferences = reportCfg?.referencesPage ?? true;
+  const showConfidential = reportCfg?.confidentialFooter ?? true;
+
   // Track pages for footer numbering
   const allPages: PDFPage[] = [];
+  let titlePageIndex = -1; // Index of the title page in allPages (-1 if no title page)
 
   const addPage = (): PDFPage => {
     const page = doc.addPage(PageSizes.A4);
@@ -673,171 +713,202 @@ async function exportPdf(input: ExportInput, branding: Branding, charts: Rendere
     return page;
   };
 
-  // ── Title Page ──
-  const titlePage = addPage();
-
-  // Brand header bar
-  titlePage.drawRectangle({
-    x: 0,
-    y: pageH - 130,
-    width: pageW,
-    height: 130,
-    color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
-  });
-
-  // Company logo (right-aligned in header bar)
+  // ── Title Page (conditional) ──
   const logoData = await fetchLogoImage(branding.logoUrl);
-  if (logoData) {
-    try {
-      const logoImage =
-        logoData.format === "png"
-          ? await doc.embedPng(logoData.bytes)
-          : await doc.embedJpg(logoData.bytes);
 
-      // Scale logo to fit within the header bar (max 90px tall, max 160px wide)
-      const maxH = 90;
-      const maxW = 160;
-      const origW = logoImage.width;
-      const origH = logoImage.height;
-      const scale = Math.min(maxW / origW, maxH / origH, 1);
-      const drawW = origW * scale;
-      const drawH = origH * scale;
+  if (showTitlePage) {
+    const titlePage = addPage();
+    titlePageIndex = allPages.length - 1;
 
-      // Position: right side of header bar, vertically centered
-      const logoX = pageW - margin - drawW;
-      const logoY = pageH - 130 + (130 - drawH) / 2;
+    // Brand header bar
+    titlePage.drawRectangle({
+      x: 0,
+      y: pageH - 130,
+      width: pageW,
+      height: 130,
+      color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+    });
 
-      titlePage.drawImage(logoImage, {
-        x: logoX,
-        y: logoY,
-        width: drawW,
-        height: drawH,
-      });
-    } catch {
-      // Logo embed failed (corrupt image, unsupported variant) — skip silently
+    // Company logo (right-aligned in header bar)
+    if (logoData) {
+      try {
+        const logoImage =
+          logoData.format === "png"
+            ? await doc.embedPng(logoData.bytes)
+            : await doc.embedJpg(logoData.bytes);
+
+        const maxH = 90;
+        const maxW = 160;
+        const origW = logoImage.width;
+        const origH = logoImage.height;
+        const scale = Math.min(maxW / origW, maxH / origH, 1);
+        const drawW = origW * scale;
+        const drawH = origH * scale;
+
+        const logoX = pageW - margin - drawW;
+        const logoY = pageH - 130 + (130 - drawH) / 2;
+
+        titlePage.drawImage(logoImage, {
+          x: logoX,
+          y: logoY,
+          width: drawW,
+          height: drawH,
+        });
+      } catch {
+        // Logo embed failed — skip silently
+      }
     }
-  }
 
-  // Company name
-  titlePage.drawText(branding.companyName, {
-    x: margin,
-    y: pageH - 60,
-    size: 28,
-    font: boldFont,
-    color: rgb(1, 1, 1),
-  });
-
-  // Tagline
-  if (branding.tagline) {
-    titlePage.drawText(branding.tagline, {
+    // Company name in header bar
+    titlePage.drawText(branding.companyName, {
       x: margin,
-      y: pageH - 85,
-      size: 11,
-      font: italicFont,
-      color: rgb(0.9, 0.9, 0.9),
+      y: pageH - 60,
+      size: 28,
+      font: boldFont,
+      color: rgb(1, 1, 1),
     });
-  }
 
-  // Report title
-  titlePage.drawText(input.title, {
-    x: margin,
-    y: pageH - 180,
-    size: 24,
-    font: boldFont,
-    color: rgb(0.15, 0.15, 0.15),
-  });
+    // Tagline
+    if (branding.tagline) {
+      titlePage.drawText(branding.tagline, {
+        x: margin,
+        y: pageH - 85,
+        size: 11,
+        font: italicFont,
+        color: rgb(0.9, 0.9, 0.9),
+      });
+    }
 
-  // Subtitle
-  if (input.subtitle) {
-    titlePage.drawText(input.subtitle, {
+    // Report title
+    titlePage.drawText(input.title, {
       x: margin,
-      y: pageH - 210,
-      size: 13,
-      font,
-      color: rgb(0.45, 0.45, 0.45),
+      y: pageH - 180,
+      size: 24,
+      font: boldFont,
+      color: rgb(0.15, 0.15, 0.15),
     });
-  }
 
-  // Date
-  const dateStr = new Date().toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-  titlePage.drawText(`Generated: ${dateStr}`, {
-    x: margin,
-    y: pageH - 240,
-    size: 10,
-    font,
-    color: rgb(0.6, 0.6, 0.6),
-  });
+    // Subtitle
+    if (input.subtitle) {
+      titlePage.drawText(input.subtitle, {
+        x: margin,
+        y: pageH - 210,
+        size: 13,
+        font,
+        color: rgb(0.45, 0.45, 0.45),
+      });
+    }
 
-  // Prepared by
-  if (input.preparedBy) {
-    titlePage.drawText(`Prepared by: ${input.preparedBy}`, {
+    // Prepared for
+    titlePage.drawText(`Prepared for: ${branding.companyName}`, {
+      x: margin,
+      y: pageH - 240,
+      size: 10,
+      font: boldFont,
+      color: rgb(0.35, 0.35, 0.35),
+    });
+
+    // Date
+    const dateStr = new Date().toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    titlePage.drawText(`Date: ${dateStr}`, {
       x: margin,
       y: pageH - 256,
       size: 10,
       font,
       color: rgb(0.6, 0.6, 0.6),
     });
-  }
 
-  // Separator line at bottom
-  titlePage.drawLine({
-    start: { x: margin, y: 40 },
-    end: { x: pageW - margin, y: 40 },
-    thickness: 0.8,
-    color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
-  });
-  titlePage.drawText(`${branding.companyName} — Confidential`, {
-    x: margin,
-    y: 26,
-    size: 8,
-    font,
-    color: rgb(0.6, 0.6, 0.6),
-  });
-
-  // ── Table of Contents Page ──
-  const sections = parseMarkdown(input.content);
-  const tocPage = addPage();
-  let tocY = pageH - 60;
-
-  tocPage.drawText("Table of Contents", {
-    x: margin,
-    y: tocY,
-    size: 18,
-    font: boldFont,
-    color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
-  });
-  tocY -= 6;
-  tocPage.drawLine({
-    start: { x: margin, y: tocY },
-    end: { x: pageW - margin, y: tocY },
-    thickness: 0.6,
-    color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
-  });
-  tocY -= 20;
-
-  let tocNum = 1;
-  for (const section of sections) {
-    if (section.heading && section.level === 2) {
-      tocPage.drawText(`${tocNum}. ${section.heading}`, {
-        x: margin + 10,
-        y: tocY,
-        size: 11,
+    // Prepared by
+    if (input.preparedBy) {
+      titlePage.drawText(`Prepared by: ${input.preparedBy}`, {
+        x: margin,
+        y: pageH - 272,
+        size: 10,
         font,
-        color: rgb(0.25, 0.25, 0.25),
+        color: rgb(0.6, 0.6, 0.6),
       });
-      tocNum++;
-      tocY -= 18;
-      if (tocY < 60) break;
+    }
+
+    // Separator line at bottom
+    titlePage.drawLine({
+      start: { x: margin, y: 40 },
+      end: { x: pageW - margin, y: 40 },
+      thickness: 0.8,
+      color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+    });
+    if (showConfidential) {
+      titlePage.drawText(`${branding.companyName} — Confidential`, {
+        x: margin,
+        y: 26,
+        size: 8,
+        font,
+        color: rgb(0.6, 0.6, 0.6),
+      });
     }
   }
 
-  // ── Content Pages ──
-  let currentPage = addPage();
-  let y = pageH - 50;
+  // ── Parse content (strip LLM metadata before parsing) ──
+  const cleanedContent = stripLlmMetadata(input.content);
+  const sections = parseMarkdown(cleanedContent);
+
+  // ── Table of Contents (conditional) ──
+  // After TOC items, if there's room, continue content on the same page
+  let currentPage: PDFPage;
+  let y: number;
+
+  if (showTocPage) {
+    const tocPage = addPage();
+    let tocY = pageH - 60;
+
+    tocPage.drawText("Table of Contents", {
+      x: margin,
+      y: tocY,
+      size: 18,
+      font: boldFont,
+      color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+    });
+    tocY -= 6;
+    tocPage.drawLine({
+      start: { x: margin, y: tocY },
+      end: { x: pageW - margin, y: tocY },
+      thickness: 0.6,
+      color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+    });
+    tocY -= 20;
+
+    let tocNum = 1;
+    for (const section of sections) {
+      if (section.heading && section.level === 2) {
+        tocPage.drawText(`${tocNum}. ${section.heading}`, {
+          x: margin + 10,
+          y: tocY,
+          size: 11,
+          font,
+          color: rgb(0.25, 0.25, 0.25),
+        });
+        tocNum++;
+        tocY -= 18;
+        if (tocY < 60) break;
+      }
+    }
+
+    // Continue content on this page if enough room (> 250px remaining)
+    if (tocY > 250) {
+      currentPage = tocPage;
+      y = tocY - 30; // Small gap between TOC and content
+    } else {
+      currentPage = addPage();
+      y = pageH - 50;
+    }
+  } else {
+    // No TOC — start content on a fresh page
+    currentPage = addPage();
+    y = pageH - 50;
+  }
   const bottomMargin = 45;
   let tableCounter = 0; // For "Table N:" captions
   let chartCounter = 0; // For "Figure N:" captions
@@ -851,7 +922,7 @@ async function exportPdf(input: ExportInput, branding: Branding, charts: Rendere
 
   for (const section of sections) {
     // Skip References section in main loop — rendered separately with special formatting at the end
-    if (section.heading && /references?/i.test(section.heading)) {
+    if (showReferences && section.heading && /references?/i.test(section.heading)) {
       continue;
     }
 
@@ -1046,11 +1117,10 @@ async function exportPdf(input: ExportInput, branding: Branding, charts: Rendere
     }
   }
 
-  // ── References section (if present in content) ──
-  // The LLM includes a ## References section — render it with special formatting
-  const referencesSection = sections.find(
-    (s) => s.heading?.toLowerCase().includes("reference")
-  );
+  // ── References section (if enabled and present in content) ──
+  const referencesSection = showReferences
+    ? sections.find((s) => s.heading?.toLowerCase().includes("reference"))
+    : null;
   if (referencesSection && referencesSection.lines.some((l) => l.trim().length > 0)) {
     ensureSpace(40);
 
@@ -1112,22 +1182,27 @@ async function exportPdf(input: ExportInput, branding: Branding, charts: Rendere
   // ── Page footers (applied to all pages after generation) ──
   for (let i = 0; i < allPages.length; i++) {
     const pg = allPages[i];
-    // Separator line
-    pg.drawLine({
-      start: { x: margin, y: 30 },
-      end: { x: pageW - margin, y: 30 },
-      thickness: 0.4,
-      color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
-    });
-    // Company name
-    pg.drawText(branding.companyName, {
-      x: margin,
-      y: 18,
-      size: 7,
-      font,
-      color: rgb(0.6, 0.6, 0.6),
-    });
-    // Page number
+    const isTitlePage = i === titlePageIndex;
+
+    // Title page already has its own footer styling — skip separator + company name
+    if (!isTitlePage) {
+      // Separator line
+      pg.drawLine({
+        start: { x: margin, y: 30 },
+        end: { x: pageW - margin, y: 30 },
+        thickness: 0.4,
+        color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+      });
+      // Company name
+      pg.drawText(branding.companyName, {
+        x: margin,
+        y: 18,
+        size: 7,
+        font,
+        color: rgb(0.6, 0.6, 0.6),
+      });
+    }
+    // Page number (on all pages including title)
     const pageLabel = `Page ${i + 1} of ${allPages.length}`;
     const pageLabelWidth = font.widthOfTextAtSize(pageLabel, 7);
     pg.drawText(pageLabel, {
@@ -2090,10 +2165,27 @@ function extractChartBlocks(content: string): { content: string; charts: ChartSp
  */
 export async function exportReport(input: ExportInput): Promise<ExportResult> {
   const branding = await loadBranding();
+  const reportCfg = await getReportSettings();
 
   // ── Extract chart specs from markdown ```chart blocks + input.charts ──
   const { content: cleanContent, charts: extractedCharts } = extractChartBlocks(input.content);
-  const allChartSpecs = [...extractedCharts, ...(input.charts ?? [])];
+  let allChartSpecs = [...extractedCharts, ...(input.charts ?? [])];
+
+  // Respect report settings: disable charts or limit count/data points
+  if (!reportCfg.chartsEnabled) {
+    allChartSpecs = [];
+  } else {
+    // Limit number of charts
+    if (allChartSpecs.length > reportCfg.maxCharts) {
+      allChartSpecs = allChartSpecs.slice(0, reportCfg.maxCharts);
+    }
+    // Limit data points per chart
+    for (const spec of allChartSpecs) {
+      if (spec.data && spec.data.length > reportCfg.maxChartDataPoints) {
+        spec.data = spec.data.slice(0, reportCfg.maxChartDataPoints);
+      }
+    }
+  }
 
   // ── Pre-render charts to PNG/SVG ──
   let renderedCharts: RenderedChart[] = [];
@@ -2114,7 +2206,7 @@ export async function exportReport(input: ExportInput): Promise<ExportResult> {
   let buffer: Buffer;
   switch (input.format) {
     case "pdf":
-      buffer = await exportPdf(exportInput, branding, renderedCharts);
+      buffer = await exportPdf(exportInput, branding, renderedCharts, reportCfg);
       break;
     case "xlsx":
       buffer = await exportXlsx(exportInput, branding, renderedCharts);

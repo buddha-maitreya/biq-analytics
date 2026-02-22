@@ -207,6 +207,20 @@ const agent = createAgent("report-generator", {
       // DB unavailable — use env var fallback
     }
 
+    // ── Load report settings (layout, limits, chart config) ──
+    let reportSettings: import("@services/settings").ReportSettings;
+    try {
+      const { getReportSettings } = await import("@services/settings");
+      reportSettings = await getReportSettings();
+    } catch {
+      reportSettings = {
+        titlePage: true, tocPage: true, execSummaryMaxWords: 200,
+        maxPages: 20, maxWords: 5000, referencesPage: true,
+        chartsEnabled: true, maxChartDataPoints: 15,
+        confidentialFooter: true, maxCharts: 4,
+      };
+    }
+
     // ── Compute date range ──────────────────────────────────
     const end = input.endDate ? new Date(input.endDate) : new Date();
     const start = input.startDate
@@ -273,8 +287,8 @@ const agent = createAgent("report-generator", {
       (input.format || defaultFormat) as ReportFormat
     );
 
-    // ── Chart generation instructions (for export formats that support charts) ──
-    const chartInstruction = `
+    // ── Chart generation instructions (conditional on report settings) ──
+    const chartInstruction = reportSettings.chartsEnabled ? `
 CHARTS -- Visual Data Representation:
 When writing reports, include chart specifications for key data visualizations.
 Place each chart as a fenced code block with the language "chart" containing a JSON object.
@@ -292,7 +306,7 @@ Chart JSON schema:
 }
 
 RULES for charts:
-- Include 2-4 charts per report (not more).
+- Include ${Math.min(reportSettings.maxCharts, 4)} charts per report (not more).
 - Place each chart immediately after the related analysis section.
 - Use REAL data from the report — never fabricate chart data.
 - Choose chart types that best represent the data:
@@ -300,13 +314,26 @@ RULES for charts:
   • line/area: trends over time (daily/weekly revenue, order volume)
   • pie/donut: proportional breakdowns (category share, payment methods)
   • scatter: correlations (price vs quantity)
-- Keep chart data arrays concise (5-15 data points max).
+- Keep chart data arrays concise (max ${reportSettings.maxChartDataPoints} data points per chart).
 - The "data" array must be an array of objects with consistent keys matching xField/yField.
 
 Example (place this in your report where appropriate):
 \`\`\`chart
 {"type":"bar","title":"Top 5 Products by Revenue","data":[{"product":"Widget A","revenue":12500},{"product":"Widget B","revenue":9800},{"product":"Widget C","revenue":7200},{"product":"Widget D","revenue":5100},{"product":"Widget E","revenue":3400}],"xField":"product","yField":"revenue","xLabel":"Product","yLabel":"Revenue"}
 \`\`\`
+` : "\nDo NOT include any chart blocks in the report.\n";
+
+    // ── Report structure instructions (driven by settings) ──
+    const reportLimits = `
+REPORT LENGTH CONSTRAINTS:
+- Executive Summary: approximately ${reportSettings.execSummaryMaxWords} words (concise overview with key findings, period, and business impact)
+- Total report: approximately ${reportSettings.maxWords} words maximum
+- Target: ${reportSettings.maxPages} pages when exported to PDF
+
+CRITICAL FORMATTING RULES:
+- Do NOT include a title heading (# Title) — the PDF template renders its own title page.
+- Do NOT include "Prepared for:", "Date:", or "---" lines — these are handled by the export template.
+- Start your output directly with ## Executive Summary.
 `;
 
     // ── Fast path: pre-computed data provided ───────────────
@@ -338,6 +365,8 @@ Period: ${periodStr}${businessContext}${customInstructions}
 
 ${formatInstruction}
 
+${reportLimits}
+
 ${chartInstruction}`,
         prompt: `Write the "${title}" report for ${companyName}.
 Period: ${periodStr}
@@ -345,16 +374,16 @@ Period: ${periodStr}
 Pre-computed data:
 ${input.computedData}
 
-Report structure (FOLLOW THIS EXACTLY):
-1. Executive Summary (## Executive Summary) — 2-3 sentences summarizing the key findings and why this report matters to the business.
+Report structure (FOLLOW THIS EXACTLY — start directly with ## Executive Summary):
+1. Executive Summary (## Executive Summary) — approximately ${reportSettings.execSummaryMaxWords} words summarizing the key findings, period under review (${periodStr}), and why this report matters to ${companyName}.
 2. Key Metrics (## Key Metrics) — Present exact numbers from the data in a markdown table format.
 3. Detailed Analysis (## Detailed Analysis) — Interpret what the numbers mean for the business. Use markdown tables where data comparisons are relevant.
 4. Rankings & Breakdowns (## Rankings & Breakdowns) — Top products, customers, categories etc. Use ranked markdown tables.
-5. Conclusion (## Conclusion) — Key observations from the data and a specific, actionable recommended action plan with concrete next steps the business should take.
+5. Conclusion (## Conclusion) — Key observations from the data and a specific, actionable recommended action plan with concrete next steps the business should take.${reportSettings.referencesPage ? `
 6. References (## References) — List the data sources used to compile this report. Include database tables queried, date ranges analyzed, and any computed metrics referenced. Format as a numbered list. Example:
    1. Orders database — ${periodStr}
    2. Product inventory records
-   3. Customer transaction history`,
+   3. Customer transaction history` : ""}`,
 
       }),
         { model: agentConfig.modelOverride ?? "default", path: "fast", reportType: input.reportType }
@@ -508,22 +537,25 @@ SQL TIPS:
 
 ${formatInstruction}
 
+${reportLimits}
+
 ${chartInstruction}`,
       prompt: `${await getReportPromptForType(input.reportType, periodStr, startStr, endStr)}
 
 After fetching all the data you need, write a complete, professional "${title}" report.
+Start DIRECTLY with ## Executive Summary — do NOT include title headings, "Prepared for:", or "Date:" lines.
 
 Report structure (FOLLOW THIS EXACTLY):
-1. Executive Summary (## Executive Summary) — 2-3 sentences summarizing the key findings and why this report matters to the business.
+1. Executive Summary (## Executive Summary) — approximately ${reportSettings.execSummaryMaxWords} words summarizing the key findings, the period under review (${periodStr}), and why this report matters to ${companyName}.
 2. Key Metrics (## Key Metrics) — Present exact numbers from your queries in a markdown table. Do NOT approximate.
 3. Detailed Analysis (## Detailed Analysis) — Interpret what the numbers mean for the business. Use markdown tables where data comparisons are relevant.
 4. Rankings & Breakdowns (## Rankings & Breakdowns) — Top products, customers, categories, etc. Use ranked markdown tables.
-5. Conclusion (## Conclusion) — Key observations from the data and a specific, actionable recommended action plan with concrete next steps the business should take.
+5. Conclusion (## Conclusion) — Key observations from the data and a specific, actionable recommended action plan with concrete next steps the business should take.${reportSettings.referencesPage ? `
 6. References (## References) — List ALL data sources used. Include the specific database tables queried, date ranges analyzed, number of records examined, and any SQL aggregations performed. Format as a numbered list. Example:
    1. orders table — 30 records, period ${periodStr}
    2. order_items table — joined for product-level breakdown
    3. products table — inventory and pricing data
-   4. customers table — customer activity analysis
+   4. customers table — customer activity analysis` : ""}
 
 Use exact numbers -- never round or approximate. Reference specific product names, SKUs, and customer names.`,
       tools: { fetch_data: fetchDataTool },

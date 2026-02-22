@@ -1555,27 +1555,40 @@ export async function exportReport(input: ExportInput): Promise<ExportResult> {
     .substring(0, 60);
   const timestamp = new Date().toISOString().split("T")[0];
   const filename = `${sanitizedTitle}-${timestamp}.${EXTENSIONS[input.format]}`;
-
-  // Store in S3
-  const storageKey = `${timestamp}/${filename}`;
   const contentType = CONTENT_TYPES[input.format];
+  const sizeBytes = buffer.length;
 
-  const { sizeBytes } = await exportStorage.put(storageKey, buffer, {
-    contentType,
-    meta: {
-      title: input.title,
-      format: input.format,
-      generatedAt: new Date().toISOString(),
-      companyName: branding.companyName,
-    },
-  });
+  // Try S3 storage; fall back to base64 data URL if S3 is unavailable or fails
+  let downloadUrl: string;
+  let storageKey = "";
 
-  // Generate presigned download URL (1 hour expiry)
-  const downloadUrl = exportStorage.presign(storageKey, { expiresIn: 3600 });
+  if (objectStorage.isAvailable()) {
+    try {
+      storageKey = `${timestamp}/${filename}`;
+      await exportStorage.put(storageKey, buffer, {
+        contentType,
+        meta: {
+          title: input.title,
+          format: input.format,
+          generatedAt: new Date().toISOString(),
+          companyName: branding.companyName,
+        },
+      });
+      downloadUrl = exportStorage.presign(storageKey, { expiresIn: 3600 });
+    } catch (s3Err) {
+      // S3 configured but operation failed — fall back to base64 data URL
+      console.error("[report-export] S3 storage failed, falling back to data URL:", s3Err);
+      downloadUrl = `data:${contentType};base64,${buffer.toString("base64")}`;
+      storageKey = "";
+    }
+  } else {
+    // S3 not configured — return base64 data URL
+    downloadUrl = `data:${contentType};base64,${buffer.toString("base64")}`;
+  }
 
   return {
     downloadUrl,
-    storageKey: `report-exports/${storageKey}`,
+    storageKey: storageKey ? `report-exports/${storageKey}` : "",
     sizeBytes,
     filename,
     contentType,

@@ -278,6 +278,12 @@ IMPORTANT: The data has been pre-computed with mathematical precision.
 Do NOT recalculate or approximate -- use the EXACT numbers provided.
 Your job is to WRITE: structure, interpret, and narrate the data into a professional report.
 
+CRITICAL -- NO PLACEHOLDERS:
+NEVER use placeholder text like [Company Name], [Business Name], [Date], [Generation Date], [Your Name], etc.
+The company name is "${config.companyName}" -- use it directly.
+Today's date is ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })} -- use it directly.
+Always use REAL values, never bracketed placeholder tokens.
+
 Terminology: "${config.labels.product}" for products, "${config.labels.order}" for orders, "${config.labels.customer}" for customers.
 Currency: ${config.currency}
 Period: ${periodStr}${businessContext}${customInstructions}
@@ -421,6 +427,12 @@ ${DB_SCHEMA}
 Report period: ${periodStr} (start: ${startStr}, end: ${endStr})
 Terminology: "${config.labels.product}" for products, "${config.labels.order}" for orders, "${config.labels.customer}" for customers.
 Currency: ${config.currency}${businessContext}${customInstructions}
+
+CRITICAL -- NO PLACEHOLDERS:
+NEVER use placeholder text like [Company Name], [Business Name], [Date], [Generation Date], [Your Name], etc.
+The company name is "${config.companyName}" -- use it directly.
+Today's date is ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })} -- use it directly.
+Always use REAL values, never bracketed placeholder tokens.
 
 GUARDRAILS:
 - Only use read-only SELECT queries. Never generate INSERT, UPDATE, DELETE, DROP, or ALTER SQL.

@@ -143,15 +143,24 @@ reports.post("/reports/export",
   const { content, title, format, subtitle } = c.req.valid("json");
   const user = getAppUser(c);
 
-  const result = await exportReport({
-    content,
-    title,
-    format: format as ExportFormat,
-    subtitle,
-    preparedBy: user?.name ?? undefined,
-  });
+  try {
+    const result = await exportReport({
+      content,
+      title,
+      format: format as ExportFormat,
+      subtitle,
+      preparedBy: user?.name ?? undefined,
+    });
 
-  return c.json({ data: result });
+    return c.json({ data: result });
+  } catch (err: any) {
+    const message = err?.message ?? String(err);
+    console.error("[reports/export] Export failed:", message, err);
+    return c.json(
+      { error: `Export failed: ${message}` },
+      500
+    );
+  }
 });
 
 /**

@@ -35,6 +35,9 @@ export function buildSystemPrompt(
     ? `\nEnvironment:\n${ai.aiEnvironment.trim()}`
     : `\nEnvironment:\nYou operate inside the ${config.companyName} management platform. Users interact with you via a chat interface. You have access to the live business database, analytics agents, a knowledge base of uploaded documents, and custom business tools.`;
 
+  // Current date -- always injected so the LLM knows what "today" is
+  const currentDate = `\nCurrent date: ${new Date().toISOString().split("T")[0]} (${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })})`;
+
   // Tone -- communication style
   const tone = ai?.aiTone?.trim()
     ? `\nTone:\n${ai.aiTone.trim()}`
@@ -153,14 +156,20 @@ When the user asks you to export or compile data into a report (PDF, Excel, Word
 3. **Conclusion** (## Conclusion) — Key observations from the data and a recommended action plan with specific, actionable next steps.
 The export_report tool auto-generates a branded cover page with title, date, "Prepared by", and a Table of Contents from your ## headings.
 
-PROACTIVE REPORT OFFER:
-After delivering a substantive data-driven answer (multi-row results, aggregated metrics, trend analysis, comparative data, or any response the user might want to save, share, or reference later), proactively offer to generate a downloadable report. Keep the offer brief and natural — do not force it on every response.
-- Good: "Would you like me to put this into a report you can download (PDF, Excel, Word, or PowerPoint)?"
-- Do NOT offer on simple single-value answers ("your total revenue is $X"), yes/no answers, or clarification responses.
-- If the user accepts, use generate_report to produce the narrative, then export_report to create the downloadable file. These two steps are SEQUENTIAL — export_report needs generate_report's content.
-- Always pass the format the user chose (or ask if they didn't specify).`;
+AUTOMATIC REPORT EXPORT:
+When the user asks for a report (explicitly or implicitly), ALWAYS:
+1. Call generate_report to produce the narrative content.
+2. IMMEDIATELY call export_report with format "pdf" (unless the user specified a different format) to create the downloadable file.
+These two steps are SEQUENTIAL — export_report needs generate_report's content.
+Present the download link directly in your response — do NOT ask the user to choose a format or confirm before exporting.
+If the user wants a different format afterward, they can ask and you export again.
 
-  const base = `${personality}${environment}${tone}${goal}
+PROACTIVE REPORT OFFER (for non-report data queries):
+After delivering a substantive data-driven answer (multi-row results, aggregated metrics, trend analysis, comparative data), briefly offer to compile it into a downloadable report.
+- Good: "Would you like me to put this into a downloadable report?"
+- Do NOT offer on simple single-value answers, yes/no answers, or clarification responses.`;
+
+  const base = `${personality}${environment}${currentDate}${tone}${goal}
 
 ${coreRole}
 

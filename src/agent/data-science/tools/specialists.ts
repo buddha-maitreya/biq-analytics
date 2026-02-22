@@ -89,11 +89,11 @@ export const generateReportTool = tool({
     startDate: z
       .string()
       .optional()
-      .describe("Start date in ISO format. Defaults to 30 days ago."),
+      .describe("Start date in ISO format. Defaults to 30 days ago. IMPORTANT: When the user mentions a month or period without specifying a year, ALWAYS use the current year from the system prompt's 'Current date' field."),
     endDate: z
       .string()
       .optional()
-      .describe("End date in ISO format. Defaults to now."),
+      .describe("End date in ISO format. Defaults to now. IMPORTANT: When the user mentions a month or period without specifying a year, ALWAYS use the current year from the system prompt's 'Current date' field."),
   }),
   execute: async ({ reportType, startDate, endDate }): Promise<GenerateReportResult> => {
     try {

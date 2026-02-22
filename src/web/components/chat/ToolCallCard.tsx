@@ -260,7 +260,21 @@ function ReportResult({ output }: { output: any }) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Export failed");
       if (json.data?.downloadUrl) {
-        window.open(json.data.downloadUrl, "_blank");
+        if (json.data.downloadUrl.startsWith("data:")) {
+          // Data URL fallback (S3 unavailable) — download via blob
+          const fetchRes = await fetch(json.data.downloadUrl);
+          const blob = await fetchRes.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = blobUrl;
+          a.download = json.data.filename || `report.${format}`;
+          document.body.appendChild(a);
+          a.click();
+          URL.revokeObjectURL(blobUrl);
+          document.body.removeChild(a);
+        } else {
+          window.open(json.data.downloadUrl, "_blank");
+        }
       }
     } catch (err: any) {
       setExportError(err?.message || "Export failed");

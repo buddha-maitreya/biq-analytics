@@ -92,6 +92,36 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [activeSection, setActiveSection] = useState<"business" | "payments" | "tax" | "ai" | "tools">("business");
 
+  // Logo upload state
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
+
+  const handleLogoUpload = async (file: File) => {
+    setLogoError(null);
+    if (file.size > 2 * 1024 * 1024) {
+      setLogoError("Logo must be under 2 MB.");
+      return;
+    }
+    if (!["image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp"].includes(file.type)) {
+      setLogoError("Only PNG, JPG, SVG, or WebP files are allowed.");
+      return;
+    }
+    setLogoUploading(true);
+    try {
+      const form = new FormData();
+      form.append("logo", file);
+      const res = await fetch("/api/settings/logo", { method: "POST", body: form });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Upload failed");
+      if (json.data?.logoUrl) {
+        upd("businessLogoUrl", json.data.logoUrl);
+      }
+    } catch (err: any) {
+      setLogoError(err?.message || "Logo upload failed.");
+    }
+    setLogoUploading(false);
+  };
+
   // Custom tools state
   type ToolType = "server" | "client";
   interface CustomTool {
@@ -328,6 +358,64 @@ export default function SettingsPage({ config, onSaved }: SettingsPageProps) {
                 />
                 <span className="form-hint">Direct URL to your logo image (PNG, SVG, or JPG)</span>
               </label>
+
+              {/* ── Report Logo Upload ── */}
+              <div style={{ marginBottom: 8 }}>
+                <span className="form-label" style={{ display: "block", marginBottom: 6 }}>Upload Logo</span>
+                <div
+                  style={{
+                    border: "2px dashed var(--color-border, #d1d5db)",
+                    borderRadius: 8,
+                    padding: 16,
+                    textAlign: "center",
+                    background: "var(--color-bg-subtle, #f9fafb)",
+                    cursor: "pointer",
+                    position: "relative",
+                    transition: "border-color 0.2s",
+                  }}
+                  onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "var(--color-primary, #3b82f6)"; }}
+                  onDragLeave={(e) => { e.currentTarget.style.borderColor = "var(--color-border, #d1d5db)"; }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.currentTarget.style.borderColor = "var(--color-border, #d1d5db)";
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) handleLogoUpload(file);
+                  }}
+                  onClick={() => {
+                    const inp = document.createElement("input");
+                    inp.type = "file";
+                    inp.accept = "image/png,image/jpeg,image/svg+xml,image/webp";
+                    inp.onchange = () => { if (inp.files?.[0]) handleLogoUpload(inp.files[0]); };
+                    inp.click();
+                  }}
+                >
+                  {settings.businessLogoUrl ? (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
+                      <img
+                        src={settings.businessLogoUrl}
+                        alt="Company logo"
+                        style={{ maxHeight: 56, maxWidth: 160, objectFit: "contain", borderRadius: 4 }}
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      />
+                      <span style={{ fontSize: 13, color: "var(--color-text-muted, #6b7280)" }}>
+                        {logoUploading ? "Uploading..." : "Click or drag to replace"}
+                      </span>
+                    </div>
+                  ) : (
+                    <div>
+                      <span style={{ fontSize: 24 }}>📷</span>
+                      <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--color-text-muted, #6b7280)" }}>
+                        {logoUploading ? "Uploading..." : "Click or drag & drop your logo here"}
+                      </p>
+                      <p style={{ margin: "2px 0 0", fontSize: 11, color: "var(--color-text-muted, #9ca3af)" }}>
+                        PNG, JPG, SVG, or WebP — max 2 MB
+                      </p>
+                    </div>
+                  )}
+                </div>
+                {logoError && <span style={{ color: "var(--color-danger, #ef4444)", fontSize: 12, marginTop: 4, display: "block" }}>{logoError}</span>}
+                <span className="form-hint">Your logo appears on exported reports (PDF, Word, PowerPoint cover pages)</span>
+              </div>
 
               <label>
                 <span className="form-label">Currency</span>

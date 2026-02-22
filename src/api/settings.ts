@@ -7,6 +7,7 @@ import { invalidateConfigCache } from "./config";
 import { invalidateModelCache } from "@lib/ai";
 import { invalidateRateLimitCache } from "@lib/rate-limit";
 import { generateText } from "ai";
+import * as objectStorage from "@services/object-storage";
 
 const router = createRouter();
 router.use(errorMiddleware());
@@ -72,6 +73,100 @@ router.post("/settings/test-model", validator({ input: testModelSchema }), async
     const msg = err instanceof Error ? err.message : "Unknown error";
     return c.json({ success: false, error: msg }, 500);
   }
+});
+
+// ── Logo Upload ────────────────────────────────────────────
+
+const logoStorage = objectStorage.namespace("branding");
+
+/** Max logo file size: 2 MB */
+const MAX_LOGO_SIZE = 2 * 1024 * 1024;
+
+/** Allowed logo MIME types */
+const ALLOWED_LOGO_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/svg+xml",
+  "image/webp",
+]);
+
+/**
+ * POST /api/settings/logo — Upload a company logo.
+ *
+ * Expects multipart/form-data with a "logo" field (image file).
+ * Stores in S3 under branding/logo.{ext}, updates businessLogoUrl setting,
+ * and returns the presigned download URL.
+ */
+router.post("/settings/logo", async (c) => {
+  const body = await c.req.parseBody();
+  const file = body["logo"];
+
+  if (!file || typeof file === "string") {
+    return c.json({ error: "No file uploaded. Send a 'logo' field in multipart/form-data." }, 400);
+  }
+
+  const contentType = file.type || "application/octet-stream";
+  if (!ALLOWED_LOGO_TYPES.has(contentType)) {
+    return c.json({
+      error: `File type "${contentType}" not allowed. Allowed: PNG, JPG, SVG, WebP.`,
+    }, 400);
+  }
+
+  const buffer = await file.arrayBuffer();
+  if (buffer.byteLength > MAX_LOGO_SIZE) {
+    return c.json({
+      error: `Logo too large (${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB). Max: 2 MB.`,
+    }, 400);
+  }
+
+  // Determine file extension
+  const extMap: Record<string, string> = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/svg+xml": "svg",
+    "image/webp": "webp",
+  };
+  const ext = extMap[contentType] || "png";
+  const s3Key = `logo.${ext}`;
+
+  try {
+    // Upload to S3
+    await logoStorage.put(s3Key, Buffer.from(buffer), { contentType });
+
+    // Generate a long-lived presigned URL (7 days — will be refreshed on access)
+    const downloadUrl = logoStorage.presign(s3Key, { expiresIn: 604800 });
+
+    // Persist the URL in business settings
+    await settingsSvc.updateSettings({ businessLogoUrl: downloadUrl });
+    invalidateConfigCache();
+
+    return c.json({
+      data: {
+        logoUrl: downloadUrl,
+        filename: file.name || `logo.${ext}`,
+        sizeBytes: buffer.byteLength,
+        contentType,
+      },
+    });
+  } catch (err: any) {
+    const message = err?.message ?? String(err);
+    console.error("[settings/logo] Upload failed:", message);
+    return c.json({ error: `Logo upload failed: ${message}` }, 500);
+  }
+});
+
+/**
+ * DELETE /api/settings/logo — Remove the company logo.
+ *
+ * Clears the businessLogoUrl setting. Does not delete the S3 object
+ * (it will be overwritten on next upload).
+ */
+router.delete("/settings/logo", async (c) => {
+  await settingsSvc.updateSettings({ businessLogoUrl: "" });
+  invalidateConfigCache();
+  return c.json({ data: { removed: true } });
 });
 
 export default router;

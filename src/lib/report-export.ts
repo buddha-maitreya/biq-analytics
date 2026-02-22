@@ -36,6 +36,7 @@ import {
   Header,
   Footer,
   PageNumber,
+  ImageRun,
 } from "docx";
 import * as objectStorage from "@services/object-storage";
 import { getAllSettings } from "@services/settings";
@@ -467,6 +468,36 @@ async function drawTable(
 
 // ── PDF Export (pdf-lib — pure TypeScript) ──────────────────
 
+/**
+ * Fetch a logo image from a URL and return raw bytes + detected format.
+ * Returns null if the URL is empty, unreachable, or the format is unsupported.
+ */
+async function fetchLogoImage(
+  url: string
+): Promise<{ bytes: Uint8Array; format: "png" | "jpg" } | null> {
+  if (!url) return null;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf.length < 8) return null;
+
+    // Detect format from content-type or magic bytes
+    if (ct.includes("png") || (buf[0] === 0x89 && buf[1] === 0x50)) {
+      return { bytes: buf, format: "png" };
+    }
+    if (ct.includes("jpeg") || ct.includes("jpg") || (buf[0] === 0xff && buf[1] === 0xd8)) {
+      return { bytes: buf, format: "jpg" };
+    }
+    // SVG / WebP / other unsupported formats — skip silently
+    return null;
+  } catch {
+    // Network error, timeout, etc. — non-critical, skip logo
+    return null;
+  }
+}
+
 async function exportPdf(input: ExportInput, branding: Branding): Promise<Buffer> {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -504,6 +535,39 @@ async function exportPdf(input: ExportInput, branding: Branding): Promise<Buffer
     height: 130,
     color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
   });
+
+  // Company logo (right-aligned in header bar)
+  const logoData = await fetchLogoImage(branding.logoUrl);
+  if (logoData) {
+    try {
+      const logoImage =
+        logoData.format === "png"
+          ? await doc.embedPng(logoData.bytes)
+          : await doc.embedJpg(logoData.bytes);
+
+      // Scale logo to fit within the header bar (max 90px tall, max 160px wide)
+      const maxH = 90;
+      const maxW = 160;
+      const origW = logoImage.width;
+      const origH = logoImage.height;
+      const scale = Math.min(maxW / origW, maxH / origH, 1);
+      const drawW = origW * scale;
+      const drawH = origH * scale;
+
+      // Position: right side of header bar, vertically centered
+      const logoX = pageW - margin - drawW;
+      const logoY = pageH - 130 + (130 - drawH) / 2;
+
+      titlePage.drawImage(logoImage, {
+        x: logoX,
+        y: logoY,
+        width: drawW,
+        height: drawH,
+      });
+    } catch {
+      // Logo embed failed (corrupt image, unsupported variant) — skip silently
+    }
+  }
 
   // Company name
   titlePage.drawText(branding.companyName, {
@@ -911,6 +975,27 @@ async function exportDocx(input: ExportInput, branding: Branding): Promise<Buffe
 
   const children: Paragraph[] = [];
 
+  // Company logo (if available)
+  const docxLogo = await fetchLogoImage(branding.logoUrl);
+  if (docxLogo) {
+    try {
+      children.push(
+        new Paragraph({
+          children: [
+            new ImageRun({
+              data: docxLogo.bytes,
+              transformation: { width: 140, height: 60 },
+              type: docxLogo.format === "png" ? "png" : "jpg",
+            }),
+          ],
+          spacing: { after: 200 },
+        })
+      );
+    } catch {
+      // Logo embed failed — skip silently
+    }
+  }
+
   // Title
   children.push(
     new Paragraph({
@@ -1273,6 +1358,25 @@ async function exportPptx(input: ExportInput, branding: Branding): Promise<Buffe
     bold: true,
     fontFace: "Calibri",
   });
+
+  // Company logo (top-right corner of title slide)
+  const pptxLogo = await fetchLogoImage(branding.logoUrl);
+  if (pptxLogo) {
+    try {
+      const b64 = Buffer.from(pptxLogo.bytes).toString("base64");
+      const mimeType = pptxLogo.format === "png" ? "image/png" : "image/jpeg";
+      titleSlide.addImage({
+        data: `data:${mimeType};base64,${b64}`,
+        x: 7.5,
+        y: 0.3,
+        w: 1.8,
+        h: 1.0,
+        sizing: { type: "contain", w: 1.8, h: 1.0 },
+      });
+    } catch {
+      // Logo embed failed — skip silently
+    }
+  }
 
   titleSlide.addText(input.title, {
     x: 0.5,

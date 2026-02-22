@@ -1,0 +1,7 @@
+Pending features:
+User can upload document in the chat UI and the data populates automatically in relevant tables
+User can run approvals from the chat UI
+The chat UI can engage user on any pending actions 
+The chat UI greets and welcomes user by their name
+The chat UI to be conscious of the position and role of the user and therefore customize actionable items accordingly whenever needed
+The chat UI can run predictive analytics - i will updates the metrics for these

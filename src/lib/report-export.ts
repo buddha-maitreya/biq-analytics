@@ -40,6 +40,8 @@ import {
 } from "docx";
 import * as objectStorage from "@services/object-storage";
 import { getAllSettings } from "@services/settings";
+import { renderCharts, toPptxChartData } from "@lib/charts";
+import type { ChartSpec, RenderedChart } from "@lib/charts";
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -58,6 +60,8 @@ export interface ExportInput {
   tableData?: Record<string, unknown>[];
   /** Name of the person who prepared the report (logged-in user) */
   preparedBy?: string;
+  /** Optional chart specifications to render and embed in the export */
+  charts?: ChartSpec[];
 }
 
 export interface ExportResult {
@@ -151,22 +155,68 @@ function parseMarkdown(content: string): ParsedSection[] {
 }
 
 /**
- * Extract a markdown table from lines into header + rows.
+ * Parse a single pipe-delimited line into cell values.
+ */
+function parseTableLine(line: string): string[] {
+  return line
+    .split("|")
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0 && !/^[-:]+$/.test(c));
+}
+
+/**
+ * Check if a line is a markdown table separator (e.g. |---|---|).
+ */
+function isTableSeparator(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("|")) return false;
+  const cells = trimmed.split("|").filter((c) => c.trim().length > 0);
+  return cells.every((c) => /^[-:]+$/.test(c.trim()));
+}
+
+/**
+ * Extract ALL markdown tables from lines.
+ * Handles multiple tables within a single section by detecting
+ * header+separator boundaries.
+ */
+function extractTables(lines: string[]): { headers: string[]; rows: string[][] }[] {
+  const tables: { headers: string[]; rows: string[][] }[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i].trim();
+    // Look for a table header: a pipe-line followed by a separator line
+    if (line.startsWith("|") && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+      const headers = parseTableLine(lines[i]);
+      i += 2; // Skip header + separator
+      const rows: string[][] = [];
+      // Collect data rows until we hit a non-pipe line or a new separator (new table)
+      while (i < lines.length) {
+        const rowLine = lines[i].trim();
+        if (!rowLine.startsWith("|")) break;
+        // If this line is followed by a separator, it's a new table header — stop
+        if (i + 1 < lines.length && isTableSeparator(lines[i + 1])) break;
+        // Skip standalone separators between tables
+        if (isTableSeparator(lines[i])) { i++; continue; }
+        rows.push(parseTableLine(lines[i]));
+        i++;
+      }
+      if (headers.length > 0 && rows.length > 0) {
+        tables.push({ headers, rows });
+      }
+    } else {
+      i++;
+    }
+  }
+  return tables;
+}
+
+/**
+ * Legacy single-table extraction (backwards compat).
  */
 function extractTable(lines: string[]): { headers: string[]; rows: string[][] } | null {
-  const tableLines = lines.filter((l) => l.trim().startsWith("|"));
-  if (tableLines.length < 3) return null; // need header + separator + at least 1 row
-
-  const parse = (line: string) =>
-    line
-      .split("|")
-      .map((c) => c.trim())
-      .filter((c) => c.length > 0 && !/^[-:]+$/.test(c));
-
-  const headers = parse(tableLines[0]);
-  // Skip separator line (tableLines[1])
-  const rows = tableLines.slice(2).map(parse);
-  return headers.length > 0 ? { headers, rows } : null;
+  const tables = extractTables(lines);
+  return tables.length > 0 ? tables[0] : null;
 }
 
 /**
@@ -295,7 +345,8 @@ function calculateColumnWidths(
 }
 
 /**
- * Draw an elegant table on PDF pages.
+ * Draw an elegant table on PDF pages with full borderlines.
+ * Includes vertical column separators, outer frame, header accent.
  * Returns the Y position after the table (or on a new page).
  */
 async function drawTable(
@@ -317,6 +368,11 @@ async function drawTable(
   const bottomMargin = 40;
 
   const colWidths = calculateColumnWidths(headers, rows, contentWidth, font, boldFont, style);
+
+  // Track per-page segments for correct outer border drawing
+  // Each segment: { page, topY, bottomY } — the vertical span of the table on that page
+  const pageSegments: Array<{ page: PDFPage; topY: number; bottomY: number }> = [];
+  let currentSegmentTop = currentY;
 
   // ── Draw header row ──
   const headerLineHeight = style.headerFontSize + style.cellPaddingY * 2;
@@ -355,6 +411,18 @@ async function drawTable(
     xOffset += colWidths[i];
   }
 
+  // Header vertical column separators (subtle white lines for separation within colored header)
+  let colDivX = margin;
+  for (let ci = 0; ci < headers.length - 1; ci++) {
+    colDivX += colWidths[ci];
+    currentPage.drawLine({
+      start: { x: colDivX, y: currentY },
+      end: { x: colDivX, y: currentY - headerLineHeight },
+      thickness: 0.5,
+      color: rgb(1, 1, 1), // White separator inside colored header
+    });
+  }
+
   // Header bottom border (accent line)
   currentPage.drawLine({
     start: { x: margin, y: currentY - headerLineHeight },
@@ -385,8 +453,12 @@ async function drawTable(
 
     // Page break check
     if (currentY - rowHeight < bottomMargin) {
+      // Close out the current page segment before breaking
+      pageSegments.push({ page: currentPage, topY: currentSegmentTop, bottomY: currentY });
+
       currentPage = addPageFn();
       currentY = pageHeight - 50;
+      currentSegmentTop = currentY; // Start tracking new segment
 
       // Re-draw header on new page
       currentPage.drawRectangle({
@@ -408,6 +480,27 @@ async function drawTable(
         });
         xOffset += colWidths[i];
       }
+
+      // Vertical separators in re-drawn header
+      let newColDivX = margin;
+      for (let ci = 0; ci < headers.length - 1; ci++) {
+        newColDivX += colWidths[ci];
+        currentPage.drawLine({
+          start: { x: newColDivX, y: currentY },
+          end: { x: newColDivX, y: currentY - headerLineHeight },
+          thickness: 0.5,
+          color: rgb(1, 1, 1),
+        });
+      }
+
+      // Header bottom accent line
+      currentPage.drawLine({
+        start: { x: margin, y: currentY - headerLineHeight },
+        end: { x: margin + contentWidth, y: currentY - headerLineHeight },
+        thickness: 1.2,
+        color: rgb(style.headerBg.r, style.headerBg.g, style.headerBg.b),
+      });
+
       currentY -= headerLineHeight;
     }
 
@@ -454,33 +547,72 @@ async function drawTable(
       color: rgb(style.borderColor.r, style.borderColor.g, style.borderColor.b),
     });
 
+    // Vertical column separators for this row
+    let colX = margin;
+    for (let colIdx = 0; colIdx < headers.length - 1; colIdx++) {
+      colX += colWidths[colIdx];
+      currentPage.drawLine({
+        start: { x: colX, y: currentY },
+        end: { x: colX, y: currentY - rowHeight },
+        thickness: style.borderWidth * 0.8,
+        color: rgb(style.borderColor.r, style.borderColor.g, style.borderColor.b),
+      });
+    }
+
     currentY -= rowHeight;
   }
 
-  // Table bottom border (slightly thicker for closure)
-  currentPage.drawLine({
-    start: { x: margin, y: currentY },
-    end: { x: margin + contentWidth, y: currentY },
-    thickness: 0.8,
-    color: rgb(style.headerBg.r, style.headerBg.g, style.headerBg.b),
-  });
+  // ── Table outer frame (drawn per-page to avoid cross-page border artifacts) ──
+  const tableBottom = currentY;
 
-  // Left and right borders for the full table
-  const tableTop = y;
-  currentPage.drawLine({
-    start: { x: margin, y: tableTop },
-    end: { x: margin, y: currentY },
-    thickness: style.borderWidth,
-    color: rgb(style.borderColor.r, style.borderColor.g, style.borderColor.b),
-  });
-  currentPage.drawLine({
-    start: { x: margin + contentWidth, y: tableTop },
-    end: { x: margin + contentWidth, y: currentY },
-    thickness: style.borderWidth,
-    color: rgb(style.borderColor.r, style.borderColor.g, style.borderColor.b),
-  });
+  // Close out the last page segment
+  pageSegments.push({ page: currentPage, topY: currentSegmentTop, bottomY: tableBottom });
 
-  return { page: currentPage, y: currentY - 8 };
+  // Draw borders on each page that this table occupies
+  for (let si = 0; si < pageSegments.length; si++) {
+    const seg = pageSegments[si];
+    const isFirst = si === 0;
+    const isLast = si === pageSegments.length - 1;
+    const borderColor = rgb(style.headerBg.r, style.headerBg.g, style.headerBg.b);
+
+    // Left border
+    seg.page.drawLine({
+      start: { x: margin, y: seg.topY },
+      end: { x: margin, y: seg.bottomY },
+      thickness: 0.6,
+      color: borderColor,
+    });
+
+    // Right border
+    seg.page.drawLine({
+      start: { x: margin + contentWidth, y: seg.topY },
+      end: { x: margin + contentWidth, y: seg.bottomY },
+      thickness: 0.6,
+      color: borderColor,
+    });
+
+    // Top border (only on first page)
+    if (isFirst) {
+      seg.page.drawLine({
+        start: { x: margin, y: seg.topY },
+        end: { x: margin + contentWidth, y: seg.topY },
+        thickness: 1.0,
+        color: borderColor,
+      });
+    }
+
+    // Bottom border (only on last page — accent line)
+    if (isLast) {
+      seg.page.drawLine({
+        start: { x: margin, y: seg.bottomY },
+        end: { x: margin + contentWidth, y: seg.bottomY },
+        thickness: 1.0,
+        color: borderColor,
+      });
+    }
+  }
+
+  return { page: currentPage, y: tableBottom - 8 };
 }
 
 // ── PDF Export (pdf-lib — pure TypeScript) ──────────────────
@@ -515,7 +647,7 @@ async function fetchLogoImage(
   }
 }
 
-async function exportPdf(input: ExportInput, branding: Branding): Promise<Buffer> {
+async function exportPdf(input: ExportInput, branding: Branding, charts: RenderedChart[] = []): Promise<Buffer> {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const boldFont = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -707,6 +839,8 @@ async function exportPdf(input: ExportInput, branding: Branding): Promise<Buffer
   let currentPage = addPage();
   let y = pageH - 50;
   const bottomMargin = 45;
+  let tableCounter = 0; // For "Table N:" captions
+  let chartCounter = 0; // For "Figure N:" captions
 
   const ensureSpace = (needed: number): void => {
     if (y - needed < bottomMargin) {
@@ -716,6 +850,11 @@ async function exportPdf(input: ExportInput, branding: Branding): Promise<Buffer
   };
 
   for (const section of sections) {
+    // Skip References section in main loop — rendered separately with special formatting at the end
+    if (section.heading && /references?/i.test(section.heading)) {
+      continue;
+    }
+
     // Section heading
     if (section.heading) {
       const headingSize = section.level === 2 ? 16 : 13;
@@ -743,10 +882,28 @@ async function exportPdf(input: ExportInput, branding: Branding): Promise<Buffer
       }
     }
 
-    // Check for table
-    const table = extractTable(section.lines);
-    if (table) {
-      ensureSpace(60); // At least header + 2 rows must fit
+    // Extract ALL tables in this section (handles multiple tables per section)
+    const tables = extractTables(section.lines);
+    for (const table of tables) {
+      tableCounter++;
+      // Ensure room for title + header + at least 3 data rows (avoids orphaned table title)
+      const headerH = tableStyle.headerFontSize + tableStyle.cellPaddingY * 2;
+      const minRowsH = 3 * (tableStyle.fontSize + tableStyle.cellPaddingY * 2 + 2);
+      ensureSpace(14 + headerH + minRowsH); // title(14) + header + 3 rows
+
+      // ── Table title (bold, brand color, above the table) ──
+      const tableTitle = section.heading
+        ? `${section.heading}`
+        : `Data Summary`;
+      currentPage.drawText(tableTitle, {
+        x: margin,
+        y,
+        size: 10,
+        font: boldFont,
+        color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+      });
+      y -= 14;
+
       const result = await drawTable(
         doc,
         currentPage,
@@ -762,6 +919,20 @@ async function exportPdf(input: ExportInput, branding: Branding): Promise<Buffer
       );
       currentPage = result.page;
       y = result.y;
+
+      // ── Table caption/subtitle (italic, centered, below the table) ──
+      const captionText = `Table ${tableCounter}: ${tableTitle}`;
+      const captionWidth = italicFont.widthOfTextAtSize(captionText, 8);
+      const captionX = margin + (contentWidth - captionWidth) / 2;
+      ensureSpace(14);
+      currentPage.drawText(captionText, {
+        x: captionX,
+        y,
+        size: 8,
+        font: italicFont,
+        color: rgb(0.5, 0.5, 0.5),
+      });
+      y -= 18; // spacing after caption
     }
 
     // Text content (skip table lines)
@@ -797,6 +968,145 @@ async function exportPdf(input: ExportInput, branding: Branding): Promise<Buffer
     }
 
     y -= 6; // Section spacing
+  }
+
+  // ── Embed chart images with titles, borders, and captions ──
+  if (charts.length > 0) {
+    for (const chart of charts) {
+      chartCounter++;
+
+      // Each chart gets its own space — title + image + caption
+      const maxWidth = contentWidth - 20; // 10px padding on each side
+      const scale = Math.min(maxWidth / chart.width, 1);
+      const drawW = chart.width * scale;
+      const drawH = chart.height * scale;
+      const totalNeeded = drawH + 60; // title + image + caption + spacing
+
+      ensureSpace(totalNeeded);
+
+      // ── Chart title (bold, brand color, above) ──
+      currentPage.drawText(chart.title, {
+        x: margin,
+        y,
+        size: 12,
+        font: boldFont,
+        color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+      });
+      y -= 8;
+
+      // Thin accent line under title
+      currentPage.drawLine({
+        start: { x: margin, y },
+        end: { x: margin + contentWidth, y },
+        thickness: 0.5,
+        color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+      });
+      y -= 10;
+
+      // Embed chart PNG with border frame
+      try {
+        const chartImage = await doc.embedPng(chart.png);
+        const imgX = margin + (contentWidth - drawW) / 2; // Center the image
+
+        // Light border around chart image
+        currentPage.drawRectangle({
+          x: imgX - 4,
+          y: y - drawH - 4,
+          width: drawW + 8,
+          height: drawH + 8,
+          borderColor: rgb(tableStyle.borderColor.r, tableStyle.borderColor.g, tableStyle.borderColor.b),
+          borderWidth: 0.6,
+          color: rgb(1, 1, 1), // White background behind chart
+        });
+
+        currentPage.drawImage(chartImage, {
+          x: imgX,
+          y: y - drawH,
+          width: drawW,
+          height: drawH,
+        });
+        y -= drawH + 10;
+
+        // ── Figure caption (italic, centered, below) ──
+        const figCaption = `Figure ${chartCounter}: ${chart.title}`;
+        const figCaptionW = italicFont.widthOfTextAtSize(figCaption, 8);
+        const figCaptionX = margin + (contentWidth - figCaptionW) / 2;
+        currentPage.drawText(figCaption, {
+          x: figCaptionX,
+          y,
+          size: 8,
+          font: italicFont,
+          color: rgb(0.5, 0.5, 0.5),
+        });
+        y -= 20;
+      } catch (imgErr) {
+        // Chart image embedding failed — skip silently
+        console.error("[pdf-export] Failed to embed chart image:", imgErr);
+      }
+    }
+  }
+
+  // ── References section (if present in content) ──
+  // The LLM includes a ## References section — render it with special formatting
+  const referencesSection = sections.find(
+    (s) => s.heading?.toLowerCase().includes("reference")
+  );
+  if (referencesSection && referencesSection.lines.some((l) => l.trim().length > 0)) {
+    ensureSpace(40);
+
+    // References heading
+    currentPage.drawText("References", {
+      x: margin,
+      y,
+      size: 14,
+      font: boldFont,
+      color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+    });
+    y -= 6;
+    currentPage.drawLine({
+      start: { x: margin, y },
+      end: { x: pageW - margin, y },
+      thickness: 0.5,
+      color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+    });
+    y -= 14;
+
+    let refNum = 1;
+    for (const line of referencesSection.lines) {
+      const clean = stripMd(line).trim();
+      if (!clean) continue;
+
+      ensureSpace(14);
+
+      // Format as numbered references with hanging indent
+      const refPrefix = clean.match(/^\d+[\.\)]/) ? "" : `[${refNum}] `;
+      const refText = `${refPrefix}${clean}`;
+      const wrapped = wrapText(refText, contentWidth - 15, font, 8);
+      for (let li = 0; li < wrapped.length; li++) {
+        ensureSpace(11);
+        currentPage.drawText(wrapped[li], {
+          x: margin + (li === 0 ? 0 : 15), // Hanging indent
+          y,
+          size: 8,
+          font,
+          color: rgb(0.4, 0.4, 0.4),
+        });
+        y -= 10;
+      }
+      refNum++;
+    }
+    y -= 8;
+  }
+
+  // ── Remove trailing empty pages ──
+  // ensureSpace() may have created a new page at the end that has no content.
+  // An empty content page has y near pageH-50 (the starting Y after addPage).
+  // If the last page has y > pageH - 80 (i.e. nothing or almost nothing drawn), remove it.
+  // Never remove title page (index 0), TOC (index 1), or pages with table/chart content.
+  if (allPages.length > 3 && y > pageH - 80) {
+    doc.removePage(doc.getPageCount() - 1);
+    allPages.pop();
+    currentPage = allPages[allPages.length - 1];
   }
 
   // ── Page footers (applied to all pages after generation) ──
@@ -835,7 +1145,7 @@ async function exportPdf(input: ExportInput, branding: Branding): Promise<Buffer
 
 // ── Excel Export ───────────────────────────────────────────
 
-async function exportXlsx(input: ExportInput, branding: Branding): Promise<Buffer> {
+async function exportXlsx(input: ExportInput, branding: Branding, charts: RenderedChart[] = []): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = branding.companyName;
   workbook.created = new Date();
@@ -893,9 +1203,9 @@ async function exportXlsx(input: ExportInput, branding: Branding): Promise<Buffe
       row++;
     }
 
-    // Check for table data in this section
-    const table = extractTable(section.lines);
-    if (table) {
+    // Check for table data in this section (handles multiple tables)
+    const tables = extractTables(section.lines);
+    for (const table of tables) {
       // Header row
       table.headers.forEach((h, col) => {
         const cell = summary.getCell(row, col + 1);
@@ -946,6 +1256,34 @@ async function exportXlsx(input: ExportInput, branding: Branding): Promise<Buffe
     col.width = 25;
   });
 
+  // ── Charts sheet (if chart images available) ──
+  if (charts.length > 0) {
+    const chartSheet = workbook.addWorksheet("Charts", {
+      properties: { tabColor: { argb: color } },
+    });
+    let chartRow = 1;
+    for (const chart of charts) {
+      // Title row
+      chartSheet.mergeCells(`A${chartRow}:H${chartRow}`);
+      const titleCell = chartSheet.getCell(`A${chartRow}`);
+      titleCell.value = chart.title;
+      titleCell.font = { bold: true, size: 13, color: { argb: "FF" + color } };
+      chartRow++;
+
+      // Embed chart image
+      try {
+        const imgId = workbook.addImage({ buffer: Buffer.from(chart.png) as any, extension: "png" });
+        chartSheet.addImage(imgId, {
+          tl: { col: 0, row: chartRow - 1 } as any,
+          ext: { width: Math.min(chart.width, 700), height: Math.min(chart.height, 400) },
+        });
+        chartRow += Math.ceil(Math.min(chart.height, 400) / 20) + 2;
+      } catch {
+        // Chart image failed — skip
+      }
+    }
+  }
+
   // ── Data sheet (if structured data provided) ──
   if (input.tableData && input.tableData.length > 0) {
     const dataSheet = workbook.addWorksheet("Data", {
@@ -986,7 +1324,7 @@ async function exportXlsx(input: ExportInput, branding: Branding): Promise<Buffe
 
 // ── Word Export ────────────────────────────────────────────
 
-async function exportDocx(input: ExportInput, branding: Branding): Promise<Buffer> {
+async function exportDocx(input: ExportInput, branding: Branding, charts: RenderedChart[] = []): Promise<Buffer> {
   const color = branding.primaryColor.replace("#", "");
   const sections = parseMarkdown(input.content);
 
@@ -1158,61 +1496,11 @@ async function exportDocx(input: ExportInput, branding: Branding): Promise<Buffe
       );
     }
 
-    // Table
-    const table = extractTable(section.lines);
-    if (table) {
-      const docTable = new Table({
-        width: { size: 100, type: WidthType.PERCENTAGE },
-        rows: [
-          // Header
-          new TableRow({
-            children: table.headers.map(
-              (h) =>
-                new TableCell({
-                  children: [
-                    new Paragraph({
-                      children: [
-                        new TextRun({
-                          text: h,
-                          bold: true,
-                          color: "FFFFFF",
-                          size: 18,
-                          font: "Calibri",
-                        }),
-                      ],
-                      alignment: AlignmentType.CENTER,
-                    }),
-                  ],
-                  shading: { fill: color, type: "clear", color: color },
-                })
-            ),
-          }),
-          // Data rows
-          ...table.rows.map(
-            (row, rowIdx) =>
-              new TableRow({
-                children: row.map(
-                  (cell) =>
-                    new TableCell({
-                      children: [
-                        new Paragraph({
-                          children: [new TextRun({ text: cell, size: 18 })],
-                        }),
-                      ],
-                      shading:
-                        rowIdx % 2 === 1
-                          ? { fill: "F5F7FA", type: "clear", color: "F5F7FA" }
-                          : undefined,
-                    })
-                ),
-              })
-          ),
-        ],
-      });
+    // Tables (handles multiple tables per section)
+    const sectionTables = extractTables(section.lines);
+    for (const table of sectionTables) {
       children.push(new Paragraph({ spacing: { before: 100 } }));
-      // Tables must be in sections, add via workaround
       children.push(new Paragraph({ spacing: { after: 100 } }));
-      // We'll add the table to the doc directly below
     }
 
     // Text content
@@ -1244,8 +1532,8 @@ async function exportDocx(input: ExportInput, branding: Branding): Promise<Buffe
   // Build tables separately and add to doc sections
   const docTables: Table[] = [];
   for (const section of sections) {
-    const table = extractTable(section.lines);
-    if (table) {
+    const tables = extractTables(section.lines);
+    for (const table of tables) {
       docTables.push(
         new Table({
           width: { size: 100, type: WidthType.PERCENTAGE },
@@ -1288,6 +1576,42 @@ async function exportDocx(input: ExportInput, branding: Branding): Promise<Buffe
           ],
         })
       );
+    }
+  }
+
+  // ── Chart images ──
+  const chartParagraphs: Paragraph[] = [];
+  if (charts.length > 0) {
+    for (const chart of charts) {
+      // Chart title
+      chartParagraphs.push(
+        new Paragraph({
+          children: [
+            new TextRun({ text: chart.title, bold: true, size: 26, color: color }),
+          ],
+          spacing: { before: 400, after: 120 },
+        })
+      );
+      // Chart image
+      try {
+        const drawW = Math.min(chart.width, 600);
+        const scale = drawW / chart.width;
+        const drawH = Math.round(chart.height * scale);
+        chartParagraphs.push(
+          new Paragraph({
+            children: [
+              new ImageRun({
+                data: Buffer.from(chart.png) as any,
+                transformation: { width: drawW, height: drawH },
+                type: "png",
+              } as any),
+            ],
+            spacing: { after: 200 },
+          })
+        );
+      } catch {
+        // Chart image failed — skip
+      }
     }
   }
 
@@ -1335,7 +1659,7 @@ async function exportDocx(input: ExportInput, branding: Branding): Promise<Buffe
             ],
           }),
         },
-        children: [...children, ...docTables],
+        children: [...children, ...chartParagraphs, ...docTables],
       },
     ],
   });
@@ -1346,7 +1670,7 @@ async function exportDocx(input: ExportInput, branding: Branding): Promise<Buffe
 
 // ── PowerPoint Export ──────────────────────────────────────
 
-async function exportPptx(input: ExportInput, branding: Branding): Promise<Buffer> {
+async function exportPptx(input: ExportInput, branding: Branding, charts: RenderedChart[] = [], chartSpecs: ChartSpec[] = []): Promise<Buffer> {
   const pptx = new PptxGenJS();
   pptx.author = branding.companyName;
   pptx.title = input.title;
@@ -1541,12 +1865,17 @@ async function exportPptx(input: ExportInput, branding: Branding): Promise<Buffe
       });
     }
 
-    // Check for table
-    const table = extractTable(section.lines);
-    if (table) {
+    // Check for tables
+    const tables = extractTables(section.lines);
+    const table = tables.length > 0 ? tables[0] : null;
+    let tableYEnd = 1.8; // Track where tables end for text positioning
+
+    for (let ti = 0; ti < tables.length; ti++) {
+      const tbl = tables[ti];
+      const tblY = 1.8 + ti * 2.2; // Stack tables vertically
       const tableRows: PptxGenJS.TableRow[] = [
         // Header
-        table.headers.map((h) => ({
+        tbl.headers.map((h) => ({
           text: h,
           options: {
             bold: true,
@@ -1557,7 +1886,7 @@ async function exportPptx(input: ExportInput, branding: Branding): Promise<Buffe
           },
         })),
         // Data
-        ...table.rows.map((row, rowIdx) =>
+        ...tbl.rows.map((row, rowIdx) =>
           row.map((cell) => ({
             text: cell,
             options: {
@@ -1571,11 +1900,12 @@ async function exportPptx(input: ExportInput, branding: Branding): Promise<Buffe
 
       slide.addTable(tableRows, {
         x: 0.5,
-        y: 1.8,
+        y: tblY,
         w: 9,
         fontSize: 9,
         border: { type: "solid", pt: 0.5, color: "DDDDDD" },
       });
+      tableYEnd = tblY + Math.min(tbl.rows.length * 0.3, 2.0) + 0.5;
     }
 
     // Text content (below heading or table)
@@ -1585,7 +1915,7 @@ async function exportPptx(input: ExportInput, branding: Branding): Promise<Buffe
       .filter(Boolean);
 
     if (textLines.length > 0) {
-      const yPos = table ? 4.0 : 1.8;
+      const yPos = table ? tableYEnd : 1.8;
       const bulletText = textLines.map((line) => ({
         text: line,
         options: {
@@ -1619,6 +1949,88 @@ async function exportPptx(input: ExportInput, branding: Branding): Promise<Buffe
     });
   }
 
+  // ── Chart slides ──
+  if (charts.length > 0 || chartSpecs.length > 0) {
+    // Map of native PptxGenJS chart types
+    const nativeChartTypes: Record<string, string> = {
+      bar: "bar",
+      line: "line",
+      area: "area",
+      pie: "pie",
+      donut: "doughnut",
+      scatter: "scatter",
+      grouped_bar: "bar",
+      stacked_bar: "bar",
+    };
+
+    for (let i = 0; i < Math.max(charts.length, chartSpecs.length); i++) {
+      const chart = charts[i];
+      const spec = chartSpecs[i];
+
+      const chartSlide = pptx.addSlide();
+
+      // Slide title bar
+      chartSlide.addShape("rect" as any, {
+        x: 0, y: 0, w: "100%", h: 0.5,
+        fill: { color: color.replace("#", "") },
+      });
+      chartSlide.addText(chart?.title ?? spec?.title ?? "Chart", {
+        x: 0.5, y: 0.05, w: 9, h: 0.4,
+        fontSize: 16, bold: true, color: "FFFFFF", fontFace: "Calibri",
+      });
+
+      // Try native PPTX chart first (editable in PowerPoint)
+      if (spec && nativeChartTypes[spec.type]) {
+        try {
+          const pptxData = toPptxChartData(spec);
+          if (!pptxData) throw new Error("Unsupported chart type for native PPTX");
+          const pptxChartType = nativeChartTypes[spec.type]?.toUpperCase();
+          chartSlide.addChart(
+            pptxChartType as any,
+            pptxData.data as any,
+            {
+              x: 0.5, y: 0.7, w: 9, h: 4.5,
+              showTitle: false,
+              showValue: (pptxData.options?.showValue as boolean) ?? false,
+              showLegend: (pptxData.options?.showLegend as boolean) ?? true,
+              legendPos: "b",
+              ...(pptxData.options?.barDir ? { barDir: pptxData.options.barDir as string } : {}),
+              ...(pptxData.options?.barGrouping ? { barGrouping: pptxData.options.barGrouping as string } : {}),
+            }
+          );
+          // Footer
+          chartSlide.addText(`${branding.companyName} — Confidential`, {
+            x: 0.3, y: 5.2, w: 5, h: 0.3, fontSize: 8, color: "AAAAAA", fontFace: "Calibri",
+          });
+          continue; // Native chart added successfully
+        } catch {
+          // Fall through to image fallback
+        }
+      }
+
+      // Fallback: embed chart as PNG image
+      if (chart) {
+        try {
+          const b64 = chart.png.toString("base64");
+          chartSlide.addImage({
+            data: `image/png;base64,${b64}`,
+            x: 0.5, y: 0.7, w: 9, h: 4.5,
+            sizing: { type: "contain", w: 9, h: 4.5 },
+          });
+        } catch {
+          chartSlide.addText("Chart could not be rendered", {
+            x: 1, y: 2.5, w: 8, h: 1, fontSize: 14, color: "999999", align: "center",
+          });
+        }
+      }
+
+      // Footer
+      chartSlide.addText(`${branding.companyName} — Confidential`, {
+        x: 0.3, y: 5.2, w: 5, h: 0.3, fontSize: 8, color: "AAAAAA", fontFace: "Calibri",
+      });
+    }
+  }
+
   // Generate as base64 and convert
   const output = await pptx.write({ outputType: "base64" });
   return Buffer.from(output as string, "base64");
@@ -1640,6 +2052,36 @@ const EXTENSIONS: Record<ExportFormat, string> = {
   pptx: "pptx",
 };
 
+// ── Chart block extraction ─────────────────────────────────
+
+/**
+ * Extract ```chart JSON code blocks from markdown content.
+ * Returns cleaned content (blocks removed) and parsed chart specs.
+ *
+ * Expected format in markdown:
+ * ```chart
+ * { "type": "bar", "title": "Revenue by Product", "data": [...], "xField": "product", "yField": "revenue" }
+ * ```
+ */
+function extractChartBlocks(content: string): { content: string; charts: ChartSpec[] } {
+  const charts: ChartSpec[] = [];
+  const cleaned = content.replace(
+    /```chart\s*\n([\s\S]*?)```/gi,
+    (_match, jsonBlock: string) => {
+      try {
+        const spec = JSON.parse(jsonBlock.trim()) as ChartSpec;
+        if (spec.type && spec.data && Array.isArray(spec.data)) {
+          charts.push(spec);
+        }
+      } catch {
+        // Invalid JSON — skip this block
+      }
+      return ""; // Remove the chart block from content
+    }
+  );
+  return { content: cleaned.trim(), charts };
+}
+
 /**
  * Export a report to a binary format, store in S3, and return a download URL.
  *
@@ -1649,20 +2091,39 @@ const EXTENSIONS: Record<ExportFormat, string> = {
 export async function exportReport(input: ExportInput): Promise<ExportResult> {
   const branding = await loadBranding();
 
+  // ── Extract chart specs from markdown ```chart blocks + input.charts ──
+  const { content: cleanContent, charts: extractedCharts } = extractChartBlocks(input.content);
+  const allChartSpecs = [...extractedCharts, ...(input.charts ?? [])];
+
+  // ── Pre-render charts to PNG/SVG ──
+  let renderedCharts: RenderedChart[] = [];
+  if (allChartSpecs.length > 0) {
+    try {
+      renderedCharts = await renderCharts(allChartSpecs, {
+        brandColor: branding.primaryColor,
+      });
+    } catch (err) {
+      console.error("[report-export] Chart rendering failed, continuing without charts:", err);
+    }
+  }
+
+  // Use cleaned content (chart blocks removed) for markdown parsing
+  const exportInput = { ...input, content: cleanContent };
+
   // Generate the binary buffer
   let buffer: Buffer;
   switch (input.format) {
     case "pdf":
-      buffer = await exportPdf(input, branding);
+      buffer = await exportPdf(exportInput, branding, renderedCharts);
       break;
     case "xlsx":
-      buffer = await exportXlsx(input, branding);
+      buffer = await exportXlsx(exportInput, branding, renderedCharts);
       break;
     case "docx":
-      buffer = await exportDocx(input, branding);
+      buffer = await exportDocx(exportInput, branding, renderedCharts);
       break;
     case "pptx":
-      buffer = await exportPptx(input, branding);
+      buffer = await exportPptx(exportInput, branding, renderedCharts, allChartSpecs);
       break;
     default:
       throw new Error(`Unsupported export format: ${input.format}`);

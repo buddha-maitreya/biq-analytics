@@ -117,7 +117,7 @@ export const generateReportTool = tool({
 
 export const searchKnowledgeTool = tool({
   description:
-    "Search the uploaded business documents (knowledge base) for answers about policies, procedures, vendor agreements, or other company documentation.",
+    "Search the uploaded business knowledge base (vector search + RAG). Use this tool when the user's question targets unstructured knowledge — information that lives in uploaded documents rather than in structured database tables. If unsure whether the answer is in the database or the knowledge base, ask the user for clarification.",
   parameters: z.object({
     question: z
       .string()

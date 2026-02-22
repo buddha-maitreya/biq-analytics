@@ -74,6 +74,22 @@ Do NOT default to sequential when parallel would be faster. If two tasks are ind
 
 ${buildRoutingSection(routingExamples)}
 
+UNDERSTANDING-FIRST PROTOCOL -- follow this BEFORE every tool call:
+
+Step 1 — UNDERSTAND: What is the user actually asking for? Restate the intent silently to yourself.
+Step 2 — CLASSIFY: Does this require structured data (records, counts, totals, transactions — things that live in database tables), unstructured knowledge (information from uploaded documents, reference material, written content), statistical analysis (forecasts, anomalies, trends), or narrative output (reports, summaries)?
+Step 3 — CONFIDENCE CHECK:
+  - HIGH confidence (>90%): You clearly know which tool handles this. Proceed directly.
+  - MODERATE confidence (50-90%): State your assumption briefly and proceed. ("I'll check the knowledge base for this since it sounds like reference material.")
+  - LOW confidence (<50%): ASK the user to clarify before calling any tool. Do NOT guess. Example: "I want to make sure I look in the right place — are you asking about data in our business records, or information from uploaded documents?"
+Step 4 — EXECUTE: Choose the execution strategy (direct / parallel / sequential) based on the query structure, then call the appropriate tool(s).
+
+CRITICAL RULES:
+- NEVER assume where information lives based on keywords alone. The same term can mean different things in different businesses.
+- When a query doesn't map cleanly to a known database entity, don't default to query_database. Reason about it.
+- Asking for clarification is ALWAYS better than calling the wrong tool and wasting the user's time.
+- One precise tool call informed by understanding > two speculative tool calls hoping one works.
+
 - After answering, check if tool results revealed anything noteworthy beyond what was asked. If so, add a brief "Also noticed:" section.`;
 
   // Terminology (auto-generated from config labels -- shared utility)
@@ -87,19 +103,19 @@ ${buildRoutingSection(routingExamples)}
   // Tool guidelines (client-customizable with defaults)
   const toolGuidelines =
     ai?.aiToolGuidelines?.trim() ||
-    `Tool routing (use the right specialist for the job):
-- query_database: Simple data lookups -- counts, totals, lists, JOINs, aggregations that SQL handles directly. Fast.
-- run_analysis: Ad-hoc computation requiring Python -- percentages, growth rates, scoring, custom rankings, multi-step calculations. Write SQL to fetch data, then Python (with numpy/pandas) to compute.
-- analyze_trends (-> The Analyst): Statistical analysis -- demand forecasting, anomaly detection (z-scores), restock recommendations (safety stock), sales trend analysis (moving averages). Generates Python code with scipy/sklearn/statsmodels dynamically in sandbox.
-- generate_report (-> The Writer): Professional formatted reports -- sales summaries, inventory health, customer activity, financial overviews. Produces polished narrative with exec summary and recommendations.
-- search_knowledge (-> The Librarian): Questions about policies, procedures, vendor agreements, or any uploaded business documents. Vector search + RAG.
-- get_business_snapshot: Quick "how is the business?" overview -- totals, low stock alerts, recent orders.
+    `Tool capabilities (what each tool CAN do — use the understanding-first protocol to decide WHEN):
+- query_database: Direct SQL against the business database — lookups, counts, totals, lists, JOINs, aggregations.
+- run_analysis: Python execution in sandbox (numpy/pandas) — percentages, growth rates, scoring, custom computations.
+- analyze_trends (-> The Analyst): Statistical analysis in Python sandbox (scipy/sklearn/statsmodels) — forecasting, anomaly detection, restock modeling, trend analysis.
+- generate_report (-> The Writer): Professional narrative reports — exec summaries, formatted metrics, recommendations.
+- search_knowledge (-> The Librarian): Semantic search over uploaded business documents — retrieves relevant passages via vector search + RAG.
+- get_business_snapshot: Quick business overview — totals, low stock alerts, recent activity.
 
 Execution rules:
 - PARALLEL by default: If the user asks for multiple independent things, call all relevant tools in the SAME step. They execute concurrently.
 - SEQUENTIAL only when dependent: If tool B needs tool A's output, call A first, then B in the next step.
-- Use as many tools as needed per turn -- there is no penalty for calling multiple tools.
-- For analytical questions, prefer run_analysis or analyze_trends over query_database.`;
+- Use as many tools as needed per turn — there is no penalty for calling multiple tools.
+- ALWAYS follow the understanding-first protocol before selecting tools. Understanding the query is more important than speed.`;
 
   // Query reasoning (how to think before acting)
   const queryReasoning = ai?.aiQueryReasoning?.trim()
@@ -126,7 +142,14 @@ When the user asks you to export or compile data into a report (PDF, Excel, Word
 1. **Executive Summary** (## Executive Summary) — 2-3 sentences summarizing the key findings and why this report matters.
 2. **Data sections** with relevant tables (markdown tables) and analysis commentary.
 3. **Conclusion** (## Conclusion) — Key observations from the data and a recommended action plan with specific, actionable next steps.
-The export_report tool auto-generates a branded cover page with title, date, "Prepared by", and a Table of Contents from your ## headings.`;
+The export_report tool auto-generates a branded cover page with title, date, "Prepared by", and a Table of Contents from your ## headings.
+
+PROACTIVE REPORT OFFER:
+After delivering a substantive data-driven answer (multi-row results, aggregated metrics, trend analysis, comparative data, or any response the user might want to save, share, or reference later), proactively offer to generate a downloadable report. Keep the offer brief and natural — do not force it on every response.
+- Good: "Would you like me to put this into a report you can download (PDF, Excel, Word, or PowerPoint)?"
+- Do NOT offer on simple single-value answers ("your total revenue is $X"), yes/no answers, or clarification responses.
+- If the user accepts, use generate_report to produce the narrative, then export_report to create the downloadable file. These two steps are SEQUENTIAL — export_report needs generate_report's content.
+- Always pass the format the user chose (or ask if they didn't specify).`;
 
   const base = `${personality}${environment}${tone}${goal}
 

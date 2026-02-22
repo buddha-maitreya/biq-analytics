@@ -179,53 +179,25 @@ export interface RoutingExample {
  * override or extend these via `agent_configs.config.routingExamples`.
  */
 export const DEFAULT_ROUTING_EXAMPLES: RoutingExample[] = [
+  // Strategy demonstrations only — teach HOW to execute, not WHERE to route.
+  // The agent reasons about tool selection independently via the understanding-first protocol.
   {
-    query: `What are my top 5 ${config.labels.productPlural.toLowerCase()}?`,
-    tools: ["query_database"],
-    strategy: "direct",
-    rationale: "Simple SQL lookup",
-  },
-  {
-    query: "Are there any anomalies in sales?",
-    tools: ["analyze_trends"],
-    strategy: "direct",
-    rationale: "Statistical computation in sandbox",
-  },
-  {
-    query: "Give me a sales report",
-    tools: ["generate_report"],
-    strategy: "direct",
-    rationale: "Professional narrative writing",
-  },
-  {
-    query: "What's our return policy?",
-    tools: ["search_knowledge"],
-    strategy: "direct",
-    rationale: "Document retrieval via vector search",
-  },
-  {
-    query: `Calculate growth rate for ${config.labels.product} X`,
-    tools: ["run_analysis"],
-    strategy: "direct",
-    rationale: "Ad-hoc computation in sandbox",
-  },
-  {
-    query: "How is the business doing?",
-    tools: ["get_business_snapshot"],
-    strategy: "direct",
-    rationale: "Quick overview — totals, low stock, recent activity",
-  },
-  {
-    query: "Give me a report AND check for anomalies",
-    tools: ["generate_report", "analyze_trends"],
+    query: "Do X and also do Y",
+    tools: ["<tool-for-X>", "<tool-for-Y>"],
     strategy: "parallel",
-    rationale: "Independent tasks — run concurrently",
+    rationale: "Independent tasks — run concurrently in the same step for speed",
   },
   {
-    query: "Analyze trends, then write a report on the findings",
-    tools: ["analyze_trends", "generate_report"],
+    query: "Do X, then use those results to do Y",
+    tools: ["<tool-for-X>", "<tool-for-Y>"],
     strategy: "sequential",
-    rationale: "Second task depends on first result",
+    rationale: "Y depends on X's output — must run across separate steps",
+  },
+  {
+    query: "Do X",
+    tools: ["<tool-for-X>"],
+    strategy: "direct",
+    rationale: "Single clear intent — one tool call",
   },
 ];
 

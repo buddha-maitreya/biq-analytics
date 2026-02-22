@@ -90,6 +90,197 @@ Every client gets a fully isolated deployment:
 
 ---
 
+### ✅ Phase 6 — Document Intelligence & Chat Enhancements
+- **Document Scanner agent** — GPT-4o multimodal: invoice, stock-sheet, barcode scan modes
+- **Chat file uploads** — multipart upload with S3 storage + in-memory temp cache fallback
+- **Multi-file upload** — select/capture multiple files at once (images, PDFs, CSVs, spreadsheets)
+- **Camera capture** — mobile camera button for barcode/invoice/stock-sheet scanning (multi-photo)
+- **S3 fallback** — temp in-memory cache with serve endpoint when S3 is unavailable (Agentuity deployment)
+- **Chat attachment context** — uploaded files attached to chat messages with download URLs for scanner
+- **Report generation pipeline** — Vega-Lite charts rendered via Sharp, PDF formatting, title page, TOC
+- **Admin report settings** — 10 configurable parameters (title page, TOC, charts, exec summary, max pages/words)
+- **Report export** — PDF download with S3 + temp cache fallback
+
+---
+
+## Phase 6.5 — Document Ingestion Pipeline ★ MOAT FEATURE ★
+
+**The competitive moat:** Uploaded documents (receipts, invoices, sales/stock sheets) are automatically parsed by AI, deduplicated against existing data, and staged for approval. Once approved, they atomically update the relevant database tables (products, inventory, orders, invoices) without creating duplicates.
+
+**No other application does this.** This is the core value proposition that differentiates Business IQ Enterprise.
+
+### 6.5.1 Architecture Overview
+
+```
+┌──────────────┐   Upload    ┌──────────────┐   Parse    ┌──────────────┐
+│  User uploads │ ──────────► │  Chat / API   │ ──────────► │  Document    │
+│  document(s)  │             │  Attachments  │             │  Scanner     │
+└──────────────┘             └──────────────┘             │  (GPT-4o)    │
+                                                           └──────┬───────┘
+                                                                  │ structured JSON
+                                                                  ▼
+┌──────────────┐   Apply     ┌──────────────┐   Dedup    ┌──────────────┐
+│  Database     │ ◄────────── │  Approval     │ ◄──────── │  Ingestion   │
+│  (atomic ops) │  on approve │  Chain        │  & stage  │  Engine      │
+└──────────────┘             └──────────────┘             └──────────────┘
+```
+
+### 6.5.2 Deduplication Engine
+
+The dedup engine prevents duplicate records when the same document is uploaded twice or when scanned items already exist in the database.
+
+**Multi-layer matching strategy:**
+
+| Layer | Signal | Match Type | Confidence |
+|-------|--------|------------|------------|
+| 1 | Document content hash (SHA-256) | Exact duplicate document | 100% — reject |
+| 2 | Invoice number / receipt number | External reference match | 95% — flag |
+| 3 | Product SKU / barcode | Exact product match | 95% — merge |
+| 4 | Product name (fuzzy, Levenshtein ≤ 2) | Probable product match | 80% — suggest |
+| 5 | Amount + date + supplier combo | Transaction match | 85% — flag |
+
+**Dedup outcomes:**
+- `exact_duplicate` — Document already processed → reject with link to original
+- `item_match` — Scanned item matches existing product → update quantities (not create)
+- `probable_match` — Fuzzy match found → present to user for confirmation
+- `new_item` — No match → create new record (pending approval)
+
+### 6.5.3 Database Schema (New Tables)
+
+```sql
+-- Tracks each document ingestion attempt
+CREATE TABLE document_ingestions (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  attachment_id   UUID REFERENCES attachments(id),    -- source file
+  session_id      UUID REFERENCES chat_sessions(id),  -- chat context
+  user_id         UUID REFERENCES users(id),          -- who uploaded
+  document_type   VARCHAR(50) NOT NULL,               -- invoice, stock_sheet, receipt, barcode
+  document_hash   VARCHAR(64) NOT NULL,               -- SHA-256 of file content
+  scanner_output  JSONB NOT NULL,                     -- raw structured JSON from scanner
+  status          VARCHAR(30) DEFAULT 'pending',      -- pending, approved, rejected, applied, error
+  approval_id     UUID REFERENCES approval_requests(id),
+  dedup_results   JSONB,                              -- array of match results
+  applied_at      TIMESTAMP,                          -- when DB changes were committed
+  error_message   TEXT,
+  metadata        JSONB,
+  created_at      TIMESTAMP DEFAULT NOW(),
+  updated_at      TIMESTAMP DEFAULT NOW()
+);
+
+-- Individual items extracted from a document, each with dedup status
+CREATE TABLE document_ingestion_items (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ingestion_id    UUID REFERENCES document_ingestions(id) ON DELETE CASCADE,
+  item_index      INTEGER NOT NULL,                   -- position in scanner output
+  item_type       VARCHAR(30) NOT NULL,               -- product, order_item, invoice_line
+  extracted_data  JSONB NOT NULL,                     -- parsed item data
+  match_status    VARCHAR(30) DEFAULT 'new',          -- new, exact_match, fuzzy_match, duplicate
+  matched_id      UUID,                               -- ID of existing record if matched
+  match_confidence DECIMAL(5,2),                      -- 0-100
+  resolution      VARCHAR(30),                        -- create, update, skip, merge
+  user_confirmed  BOOLEAN DEFAULT FALSE,              -- user reviewed the match
+  metadata        JSONB,
+  created_at      TIMESTAMP DEFAULT NOW()
+);
+```
+
+### 6.5.4 Approval Workflows (New)
+
+Five new approval workflows for document ingestion, integrated with the existing approval system:
+
+| Workflow | Trigger | Auto-Approve | Steps |
+|----------|---------|--------------|-------|
+| `document.invoice_ingestion` | Invoice scanned & staged | admin, super_admin | 1. Review items → 2. Confirm amounts |
+| `document.stock_sheet_ingestion` | Stock sheet scanned & staged | admin, super_admin | 1. Review quantities → 2. Confirm adjustments |
+| `document.receipt_ingestion` | Receipt scanned & staged | manager+ | 1. Review & approve |
+| `document.bulk_import` | Multiple documents in batch | admin, super_admin | 1. Review summary → 2. Approve batch |
+| `document.high_value_ingestion` | Total value > threshold | super_admin only | 1. Manager review → 2. Admin approval |
+
+**Permission cascade model:**
+```
+super_admin → auto-approves everything
+admin       → auto-approves except high_value
+manager     → auto-approves receipts only, reviews up for invoices/stock
+staff       → submits for review, manager/admin approves
+viewer      → cannot upload documents
+```
+
+### 6.5.5 Apply-on-Approval (Atomic Operations)
+
+When an ingestion is approved, the system atomically applies all changes in a single transaction:
+
+**Invoice ingestion → creates/updates:**
+- `orders` — new order record (or updates existing if PO number matches)
+- `order_items` — line items from invoice
+- `invoices` — invoice record with amounts
+- `products` — new products if scanned items don't exist (pending separate approval)
+- `inventory` — quantity adjustments for received stock
+
+**Stock sheet ingestion → creates/updates:**
+- `inventory` — quantity corrections per warehouse/location
+- `products` — new products if scanned items don't exist
+- Generates audit trail entries for each adjustment
+
+**Receipt ingestion → creates/updates:**
+- `orders` — sale record
+- `order_items` — line items
+- `inventory` — quantity deductions
+
+### 6.5.6 Chatbot-Guided Collection
+
+When the AI scanner parses a document with missing or ambiguous information, the chatbot guides the user to fill in gaps:
+
+```
+User: [uploads invoice photo]
+AI:   📷 Scanning invoice...
+      I found 5 line items from "ABC Supplies Ltd":
+      1. Widget A × 100 @ $2.50 — ✅ matches existing SKU-001
+      2. Widget B × 50 @ $3.00 — ⚠️ similar to "Widget Beta" (85% match)
+      3. Gadget C × 25 @ $15.00 — 🆕 new product, not in system
+      4. Part D × 200 @ $0.75 — ✅ matches existing SKU-044
+      5. Material E × 10 @ $45.00 — ✅ matches existing SKU-112
+
+      I need your help with items 2 and 3:
+      • Is "Widget B" the same as "Widget Beta" (SKU-002)?
+      • For "Gadget C" — what category and unit should I use?
+
+User: Yes, Widget B is Widget Beta. Gadget C is in Electronics, unit: piece.
+
+AI:   ✅ Got it! Here's the summary:
+      - 3 existing products will have quantities updated
+      - 1 product matched to "Widget Beta" — quantity +50
+      - 1 new product "Gadget C" will be created in Electronics
+      Total invoice: $1,012.50
+
+      This has been submitted for approval.
+      [Manager approval pending — John will review]
+```
+
+### 6.5.7 Knowledge Base Alignment
+
+Scanned documents are also indexed in the Knowledge Base vector store:
+- Invoice PDFs → searchable by supplier, date, amounts
+- Stock sheets → searchable by item, location, date
+- Receipts → searchable by transaction, customer, items
+- This enables queries like "Show me all invoices from ABC Supplies" or "When did we last receive Widget A?"
+
+### 6.5.8 Implementation Sequence
+
+```
+Phase A: Schema — 2 new tables (document_ingestions, document_ingestion_items)
+Phase B: Dedup engine — hash check, external ref match, SKU/barcode/name matching
+Phase C: Ingestion service — stage, review, apply functions
+Phase D: Scanner → ingestion bridge — wire scanner output into ingestion pipeline
+Phase E: Approval wiring — 5 new workflows, role-based auto-approve rules
+Phase F: Permission cascade — enforce upload/approve hierarchy
+Phase G: Review UI — ingestion review cards in Approvals page
+Phase H: API routes — CRUD for ingestions, manual resolution endpoints
+Phase I: Chat integration — chatbot guides user through ambiguous items
+Phase J: Knowledge base indexing — auto-index processed documents
+```
+
+---
+
 ## Phase 7 — POS Integration (Weeks 1–3)
 
 External hardware Point-of-Sale integration — connecting Business IQ Enterprise to physical POS terminals, receipt printers, barcode scanners, and cash drawers.

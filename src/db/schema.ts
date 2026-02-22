@@ -963,6 +963,8 @@ export const usersRelations = relations(users, ({ many }) => ({
   chatSessions: many(chatSessions),
   assignedAssets: many(assets),
   guidedBookings: many(serviceBookings),
+  uploadedIngestions: many(documentIngestions, { relationName: "ingestionUploader" }),
+  reviewedIngestions: many(documentIngestions, { relationName: "ingestionReviewer" }),
 }));
 
 export const auditLogRelations = relations(auditLog, ({ one }) => ({
@@ -1511,6 +1513,154 @@ export const attachments = pgTable(
     index("idx_attachments_created").on(t.createdAt),
   ]
 );
+
+// ============================================================
+// Document Ingestion System
+// ============================================================
+
+/**
+ * Document Ingestions — tracks each scanned document through the
+ * parse → dedup → stage → approve → commit pipeline.
+ *
+ * A single ingestion corresponds to one scanned document (invoice, stock
+ * sheet, receipt). It holds the raw scanner output and the overall status
+ * while its child rows (document_ingestion_items) hold per-line-item results.
+ */
+export const documentIngestions = pgTable(
+  "document_ingestions",
+  {
+    id: id(),
+    /** Scan mode used: invoice, stock-sheet, barcode */
+    mode: varchar("mode", { length: 30 }).notNull(),
+    /** Overall status: staged → pending_review → approved → committed | rejected */
+    status: varchar("status", { length: 30 }).notNull().default("staged"),
+    /** SHA-256 hash of the original file (first dedup layer) */
+    documentHash: varchar("document_hash", { length: 64 }),
+    /** External reference extracted from document (invoice number, PO number) */
+    externalRef: varchar("external_ref", { length: 255 }),
+    /** Source filename */
+    sourceFilename: varchar("source_filename", { length: 255 }),
+    /** Scanner confidence score (0-1) */
+    confidence: numeric("confidence", { precision: 3, scale: 2 }),
+    /** Raw text extracted by the scanner */
+    rawText: text("raw_text"),
+    /** Full structured JSON output from the scanner agent */
+    scannerOutput: jsonb("scanner_output").$type<Record<string, unknown>>(),
+    /** Number of line items extracted */
+    itemCount: integer("item_count").notNull().default(0),
+    /** User who uploaded / initiated the scan */
+    uploadedBy: uuid("uploaded_by").references(() => users.id),
+    /** User who reviewed (approved/rejected) */
+    reviewedBy: uuid("reviewed_by").references(() => users.id),
+    /** When the review happened */
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    /** Reviewer notes */
+    reviewNotes: text("review_notes"),
+    /** Linked approval request (if approval workflow exists for this action) */
+    approvalRequestId: uuid("approval_request_id"),
+    /** Linked chat attachment ID (traceability) */
+    attachmentId: uuid("attachment_id"),
+    /** Linked chat session ID */
+    sessionId: uuid("session_id"),
+    /** Warehouse context (for stock sheets) */
+    warehouseId: uuid("warehouse_id").references(() => warehouses.id),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_doc_ingestions_mode").on(t.mode),
+    index("idx_doc_ingestions_status").on(t.status),
+    index("idx_doc_ingestions_hash").on(t.documentHash),
+    index("idx_doc_ingestions_extref").on(t.externalRef),
+    index("idx_doc_ingestions_uploader").on(t.uploadedBy),
+    index("idx_doc_ingestions_created").on(t.createdAt),
+  ]
+);
+
+/**
+ * Document Ingestion Items — per-line-item dedup results.
+ *
+ * Each row represents one item extracted from the scanned document,
+ * with dedup resolution (matched product, match type, confidence).
+ * The "action" field defines what happens on commit: create, update, skip.
+ */
+export const documentIngestionItems = pgTable(
+  "document_ingestion_items",
+  {
+    id: id(),
+    /** Parent ingestion */
+    ingestionId: uuid("ingestion_id")
+      .notNull()
+      .references(() => documentIngestions.id, { onDelete: "cascade" }),
+    /** Line order within the document */
+    lineNumber: integer("line_number").notNull(),
+    /** Raw name as extracted from document */
+    rawName: varchar("raw_name", { length: 500 }),
+    /** Raw SKU as extracted */
+    rawSku: varchar("raw_sku", { length: 100 }),
+    /** Raw barcode as extracted */
+    rawBarcode: varchar("raw_barcode", { length: 100 }),
+    /** Quantity from document */
+    quantity: integer("quantity"),
+    /** Unit of measure from document */
+    unit: varchar("unit", { length: 50 }),
+    /** Unit price from document */
+    unitPrice: numeric("unit_price", { precision: 12, scale: 2 }),
+    /** Total price from document */
+    totalPrice: numeric("total_price", { precision: 12, scale: 2 }),
+    /** Resolved action: create_product, update_inventory, update_price, skip, needs_review */
+    action: varchar("action", { length: 30 }).notNull().default("needs_review"),
+    /** Dedup match type: hash, external_ref, sku_exact, barcode_exact, name_fuzzy, none */
+    matchType: varchar("match_type", { length: 30 }),
+    /** Match confidence (0-1, 1 = exact) */
+    matchConfidence: numeric("match_confidence", { precision: 3, scale: 2 }),
+    /** Matched product ID (null if no match or new product) */
+    matchedProductId: uuid("matched_product_id").references(() => products.id),
+    /** Override: user can manually select a different product or action */
+    userOverrideProductId: uuid("user_override_product_id").references(() => products.id),
+    userOverrideAction: varchar("user_override_action", { length: 30 }),
+    /** Full raw data from scanner for this line item */
+    rawData: jsonb("raw_data").$type<Record<string, unknown>>(),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_doc_ingestion_items_parent").on(t.ingestionId),
+    index("idx_doc_ingestion_items_product").on(t.matchedProductId),
+    index("idx_doc_ingestion_items_action").on(t.action),
+  ]
+);
+
+// ── Document Ingestion Relations ──
+
+export const documentIngestionsRelations = relations(documentIngestions, ({ one, many }) => ({
+  uploadedByUser: one(users, {
+    fields: [documentIngestions.uploadedBy],
+    references: [users.id],
+    relationName: "ingestionUploader",
+  }),
+  reviewedByUser: one(users, {
+    fields: [documentIngestions.reviewedBy],
+    references: [users.id],
+    relationName: "ingestionReviewer",
+  }),
+  warehouse: one(warehouses, {
+    fields: [documentIngestions.warehouseId],
+    references: [warehouses.id],
+  }),
+  items: many(documentIngestionItems),
+}));
+
+export const documentIngestionItemsRelations = relations(documentIngestionItems, ({ one }) => ({
+  ingestion: one(documentIngestions, {
+    fields: [documentIngestionItems.ingestionId],
+    references: [documentIngestions.id],
+  }),
+  matchedProduct: one(products, {
+    fields: [documentIngestionItems.matchedProductId],
+    references: [products.id],
+  }),
+}));
 
 // ============================================================
 // Approval Workflow System

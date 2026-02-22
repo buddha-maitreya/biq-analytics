@@ -18,6 +18,7 @@ import { eq, desc, and } from "drizzle-orm";
 import { streamText } from "ai";
 import { getModel } from "@lib/ai";
 import { getAgentConfigWithDefaults } from "@services/agent-configs";
+import * as objectStorage from "@services/object-storage";
 import { getAISettings, type AISettings } from "@services/settings";
 import { getAllTools, buildCustomToolsPromptSection } from "@agent/data-science/tools";
 import { buildSystemPrompt } from "@agent/data-science/prompts/system";
@@ -300,12 +301,18 @@ chat.post("/chat/sessions/:id/send",
       if (matched.length > 0) {
         const descriptions = matched.map((a: any) => {
           const isImage = a.contentType?.startsWith("image/");
-          // Generate presigned S3 URL so the scan_document tool can access the file
+          // Generate download URL — try S3 presign first, fall back to temp download endpoint
           let downloadUrl = "";
           try {
-            downloadUrl = s3.presign(a.s3Key, { expiresIn: 3600 });
+            if (objectStorage.isAvailable()) {
+              downloadUrl = s3.presign(a.s3Key, { expiresIn: 3600 });
+            }
           } catch {
-            // S3 presign failed — tool won't be able to access the file directly
+            // S3 presign failed
+          }
+          // Fall back to temp cache download endpoint
+          if (!downloadUrl) {
+            downloadUrl = `/api/chat/attachments/${a.id}/download`;
           }
           return `[Attached ${isImage ? "image" : "file"}: "${a.filename}" (${a.contentType}, ${Math.round((a.sizeBytes || 0) / 1024)}KB)${downloadUrl ? ` | URL: ${downloadUrl}` : ""}]`;
         });

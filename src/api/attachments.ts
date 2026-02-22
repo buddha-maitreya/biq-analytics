@@ -20,6 +20,7 @@ import { s3 } from "bun";
 import { errorMiddleware } from "@lib/errors";
 import { db, attachments as attachmentsTable } from "@db/index";
 import { eq, and } from "drizzle-orm";
+import * as objectStorage from "@services/object-storage";
 
 const attachments = createRouter();
 attachments.use(errorMiddleware());
@@ -93,9 +94,31 @@ function attachmentS3Key(
   return `${S3_PREFIX}/${sessionId}/${attachmentId}-${sanitizeFilename(filename)}`;
 }
 
-// ── In-memory attachment index ─────────────────────────────
-// Attachment metadata is persisted to the `attachments` DB table.
-// Files are stored in S3 — DB holds the metadata for lookup and listing.
+// ── In-memory attachment cache (fallback when S3 is unavailable) ──
+// When S3 is not configured (common in Agentuity deployments), files
+// are stored in memory with a 2-hour TTL. This allows the scanner
+// agent to access uploaded files via a local download endpoint.
+
+interface TempAttachment {
+  buffer: Uint8Array;
+  contentType: string;
+  filename: string;
+  expiresAt: number;
+}
+
+/** In-memory attachment cache — maps attachmentId → file data */
+export const tempAttachmentCache = new Map<string, TempAttachment>();
+
+/** Clean expired entries from the temp cache */
+function cleanTempAttachmentCache() {
+  const now = Date.now();
+  for (const [key, val] of tempAttachmentCache) {
+    if (val.expiresAt < now) tempAttachmentCache.delete(key);
+  }
+}
+
+/** TTL for temp attachments: 2 hours */
+const TEMP_ATTACHMENT_TTL = 2 * 60 * 60 * 1000;
 
 // ── Routes ─────────────────────────────────────────────────
 
@@ -151,12 +174,40 @@ attachments.post("/chat/sessions/:sessionId/attachments", async (c) => {
   const attachmentId = crypto.randomUUID();
   const filename = file.name || "attachment";
   const s3Key = attachmentS3Key(sessionId, attachmentId, filename);
+  const fileData = new Uint8Array(buffer);
 
-  // Upload to S3
-  await s3.file(s3Key).write(new Uint8Array(buffer), { type: contentType });
+  // Upload to S3 with fallback to temp cache
+  let downloadUrl: string;
+  let storageUsed: "s3" | "temp" = "s3";
 
-  // Generate presigned download URL (1h)
-  const downloadUrl = s3.presign(s3Key, { expiresIn: 3600 });
+  if (objectStorage.isAvailable()) {
+    try {
+      await s3.file(s3Key).write(fileData, { type: contentType });
+      downloadUrl = s3.presign(s3Key, { expiresIn: 3600 });
+    } catch {
+      // S3 configured but write failed — fall back to temp cache
+      storageUsed = "temp";
+      tempAttachmentCache.set(attachmentId, {
+        buffer: fileData,
+        contentType,
+        filename,
+        expiresAt: Date.now() + TEMP_ATTACHMENT_TTL,
+      });
+      cleanTempAttachmentCache();
+      downloadUrl = `/api/chat/attachments/${attachmentId}/download`;
+    }
+  } else {
+    // S3 not configured — use temp cache
+    storageUsed = "temp";
+    tempAttachmentCache.set(attachmentId, {
+      buffer: fileData,
+      contentType,
+      filename,
+      expiresAt: Date.now() + TEMP_ATTACHMENT_TTL,
+    });
+    cleanTempAttachmentCache();
+    downloadUrl = `/api/chat/attachments/${attachmentId}/download`;
+  }
 
   // Persist metadata to DB
   const [saved] = await db
@@ -178,6 +229,7 @@ attachments.post("/chat/sessions/:sessionId/attachments", async (c) => {
     filename,
     contentType,
     sizeBytes,
+    storageUsed,
   });
 
   return c.json({
@@ -197,12 +249,45 @@ attachments.post("/chat/sessions/:sessionId/attachments", async (c) => {
 });
 
 /**
+ * GET /chat/attachments/:attachmentId/download — Serve attachment from temp cache.
+ * Used when S3 is unavailable — the scanner agent and frontend access files via this endpoint.
+ */
+attachments.get("/chat/attachments/:attachmentId/download", async (c) => {
+  const attachmentId = c.req.param("attachmentId");
+  const cached = tempAttachmentCache.get(attachmentId);
+  if (cached && cached.expiresAt > Date.now()) {
+    c.header("Content-Type", cached.contentType);
+    c.header("Content-Disposition", `inline; filename="${cached.filename}"`);
+    c.header("Cache-Control", "private, max-age=3600");
+    c.header("Content-Length", String(cached.buffer.byteLength));
+    return c.body(new Uint8Array(cached.buffer) as any);
+  }
+  return c.json({ error: "Attachment not found or expired" }, 404);
+});
+
+/**
  * GET /chat/attachments/:attachmentId — Get a presigned download URL.
  * Query params: expiresIn? (seconds, default 3600)
  */
 attachments.get("/chat/attachments/:attachmentId", async (c) => {
   const attachmentId = c.req.param("attachmentId");
 
+  // Check temp cache first
+  const cached = tempAttachmentCache.get(attachmentId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return c.json({
+      data: {
+        id: attachmentId,
+        filename: cached.filename,
+        contentType: cached.contentType,
+        sizeBytes: cached.buffer.byteLength,
+        downloadUrl: `/api/chat/attachments/${attachmentId}/download`,
+        downloadUrlExpiresIn: `${Math.round((cached.expiresAt - Date.now()) / 1000)} seconds`,
+      },
+    });
+  }
+
+  // Fall back to DB + S3
   const [row] = await db
     .select()
     .from(attachmentsTable)
@@ -214,24 +299,31 @@ attachments.get("/chat/attachments/:attachmentId", async (c) => {
   }
 
   const expiresIn = Number(c.req.query("expiresIn")) || 3600;
-  const exists = await s3.file(row.s3Key).exists();
-  if (!exists) {
-    return c.json({ error: "Attachment file not found in storage" }, 404);
+
+  // Try S3
+  if (objectStorage.isAvailable()) {
+    try {
+      const exists = await s3.file(row.s3Key).exists();
+      if (exists) {
+        const downloadUrl = s3.presign(row.s3Key, { expiresIn });
+        return c.json({
+          data: {
+            id: row.id,
+            filename: row.filename,
+            contentType: row.contentType,
+            sizeBytes: row.sizeBytes,
+            sessionId: row.sessionId,
+            downloadUrl,
+            downloadUrlExpiresIn: `${expiresIn} seconds`,
+          },
+        });
+      }
+    } catch {
+      // S3 failed — fall through
+    }
   }
 
-  const downloadUrl = s3.presign(row.s3Key, { expiresIn });
-
-  return c.json({
-    data: {
-      id: row.id,
-      filename: row.filename,
-      contentType: row.contentType,
-      sizeBytes: row.sizeBytes,
-      sessionId: row.sessionId,
-      downloadUrl,
-      downloadUrlExpiresIn: `${expiresIn} seconds`,
-    },
-  });
+  return c.json({ error: "Attachment file not found in storage" }, 404);
 });
 
 /**
@@ -264,11 +356,16 @@ attachments.delete("/chat/attachments/:attachmentId", async (c) => {
     return c.json({ error: "Attachment not found" }, 404);
   }
 
+  // Delete from temp cache if present
+  tempAttachmentCache.delete(attachmentId);
+
   // Delete from S3
-  try {
-    await s3.file(row.s3Key).delete();
-  } catch {
-    // Ignore — may already be deleted
+  if (objectStorage.isAvailable()) {
+    try {
+      await s3.file(row.s3Key).delete();
+    } catch {
+      // Ignore — may already be deleted or S3 unavailable
+    }
   }
 
   // Delete from DB

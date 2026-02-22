@@ -95,48 +95,63 @@ export default function AssistantPage({ config }: AssistantPageProps) {
   };
 
   /** Upload a file and add it as a pending attachment */
-  const handleFileUpload = async (file: File) => {
+  const handleFileUpload = async (file: File, sessionIdOverride?: string) => {
     if (!file) return;
+    // Auto-create session if needed (caller can pass one to avoid races)
+    let sessionId = sessionIdOverride ?? activeSessionId;
+    if (!sessionId) {
+      sessionId = await createSession();
+      if (!sessionId) return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch(`/api/chat/sessions/${sessionId}/attachments`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) {
+      let errMsg = `Upload failed (${res.status})`;
+      try { const j = await res.json(); errMsg = j.error || errMsg; } catch {}
+      throw new Error(errMsg);
+    }
+    const json = await res.json();
+    const att = json.data;
+    const isImage = att.contentType?.startsWith("image/");
+    setPendingAttachments((prev) => [...prev, {
+      id: att.id,
+      filename: att.filename,
+      contentType: att.contentType,
+      sizeBytes: att.sizeBytes,
+      previewUrl: isImage ? att.downloadUrl : undefined,
+    }]);
+    return sessionId;
+  };
+
+  const handleFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    e.target.value = ""; // reset so same file can be re-selected
+
     setUploading(true);
     try {
-      // Auto-create session if needed
+      // Ensure session exists once before uploading all files
       let sessionId = activeSessionId;
       if (!sessionId) {
         sessionId = await createSession();
         if (!sessionId) { setUploading(false); return; }
       }
-
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch(`/api/chat/sessions/${sessionId}/attachments`, {
-        method: "POST",
-        body: formData,
-      });
-      if (!res.ok) {
-        let errMsg = `Upload failed (${res.status})`;
-        try { const j = await res.json(); errMsg = j.error || errMsg; } catch {}
-        throw new Error(errMsg);
+      // Upload files sequentially to avoid race conditions
+      for (const file of Array.from(files)) {
+        try {
+          await handleFileUpload(file, sessionId);
+        } catch (err: any) {
+          alert(err?.message || `Upload failed for ${file.name}`);
+        }
       }
-      const json = await res.json();
-      const att = json.data;
-      const isImage = att.contentType?.startsWith("image/");
-      setPendingAttachments((prev) => [...prev, {
-        id: att.id,
-        filename: att.filename,
-        contentType: att.contentType,
-        sizeBytes: att.sizeBytes,
-        previewUrl: isImage ? att.downloadUrl : undefined,
-      }]);
-    } catch (err: any) {
-      alert(err?.message || "File upload failed");
+    } finally {
+      setUploading(false);
     }
-    setUploading(false);
-  };
-
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) handleFileUpload(file);
-    e.target.value = ""; // reset so same file can be re-selected
   };
 
   const removeAttachment = (id: string) => {
@@ -309,8 +324,8 @@ export default function AssistantPage({ config }: AssistantPageProps) {
         {/* Input area */}
         <div className="chat-input">
           {/* Hidden file inputs */}
-          <input ref={fileInputRef} type="file" accept="image/*,.pdf,.csv,.json,.txt,.md,.xlsx,.xls" onChange={handleFileInput} style={{ display: "none" }} />
-          <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleFileInput} style={{ display: "none" }} />
+          <input ref={fileInputRef} type="file" accept="image/*,.pdf,.csv,.json,.txt,.md,.xlsx,.xls" multiple onChange={handleFileInput} style={{ display: "none" }} />
+          <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" multiple onChange={handleFileInput} style={{ display: "none" }} />
 
           {/* Attach button */}
           <button

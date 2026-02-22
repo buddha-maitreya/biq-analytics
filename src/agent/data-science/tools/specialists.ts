@@ -17,6 +17,12 @@ import reportGenerator from "@agent/report-generator";
 import knowledgeBase from "@agent/knowledge-base";
 import documentScanner from "@agent/document-scanner";
 import { exportReport, type ExportFormat } from "@lib/report-export";
+import { tempAttachmentCache } from "@api/attachments";
+import {
+  stageInvoiceIngestion,
+  stageStockSheetIngestion,
+  stageBarcodeIngestion,
+} from "@services/document-ingestion";
 import type {
   AnalyzeTrendsResult,
   GenerateReportResult,
@@ -173,20 +179,87 @@ export const scanDocumentTool = tool({
         errorHint: "Ask the user to upload an image first, then reference the attachment URL provided in the conversation.",
       };
     }
+
+    // Resolve internal/temp-cache URLs to base64 data.
+    // When S3 is unavailable, attachments are stored in an in-memory cache
+    // and the URL is like "/api/chat/attachments/{id}/download". These URLs
+    // are NOT accessible to external services (OpenAI GPT-4o), so we must
+    // read the file content and convert to base64 for the multimodal LLM.
+    let resolvedImageUrl = imageUrl;
+    let resolvedImageData = imageData;
+
+    if (imageUrl && !imageData) {
+      const internalMatch = imageUrl.match(/\/api\/chat\/attachments\/([^/]+)\/download/);
+      if (internalMatch) {
+        const attachmentId = internalMatch[1];
+        const cached = tempAttachmentCache.get(attachmentId);
+        if (cached && cached.expiresAt > Date.now()) {
+          // Convert to base64 data URL for the multimodal LLM
+          const base64 = Buffer.from(cached.buffer).toString("base64");
+          resolvedImageData = `data:${cached.contentType};base64,${base64}`;
+          resolvedImageUrl = undefined; // Use imageData instead
+        } else {
+          return {
+            success: false,
+            mode,
+            error: "The uploaded file has expired from the temporary cache. Please upload the file again.",
+            errorType: "validation",
+            errorHint: "Ask the user to re-upload the document.",
+          };
+        }
+      }
+    }
+
     try {
       const result = await documentScanner.run({
         mode,
-        imageUrl,
-        imageData,
+        imageUrl: resolvedImageUrl,
+        imageData: resolvedImageData,
         context,
       });
       if (result.success) {
+        // Stage ingestion — runs the dedup engine and creates DB records.
+        // This is non-blocking for the user response; the data is staged
+        // for review regardless of whether approval is required.
+        let ingestionResult;
+        try {
+          const stageInput = {
+            scannerOutput: result.data as Record<string, unknown>,
+            confidence: result.confidence ?? null,
+            rawText: result.rawText ?? null,
+          };
+          switch (mode) {
+            case "invoice":
+              ingestionResult = await stageInvoiceIngestion(stageInput);
+              break;
+            case "stock-sheet":
+              ingestionResult = await stageStockSheetIngestion(stageInput);
+              break;
+            case "barcode":
+              ingestionResult = await stageBarcodeIngestion(stageInput);
+              break;
+          }
+        } catch {
+          // Ingestion staging failed — non-fatal, still return scan results.
+          // The user can manually process the data later.
+        }
+
         return {
           success: true,
           mode: result.mode,
           data: result.data,
           rawText: result.rawText,
           confidence: result.confidence,
+          ingestion: ingestionResult
+            ? {
+                ingestionId: ingestionResult.ingestionId,
+                status: ingestionResult.status,
+                itemCount: ingestionResult.itemCount,
+                items: ingestionResult.items,
+                duplicateWarning: ingestionResult.duplicateWarning,
+                requiresApproval: ingestionResult.requiresApproval,
+              }
+            : undefined,
         };
       }
       return {

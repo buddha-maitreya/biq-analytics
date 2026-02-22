@@ -135,6 +135,23 @@ export interface ScanDocumentSuccess {
   data: unknown;
   rawText?: string;
   confidence?: number;
+  /** Ingestion pipeline results (populated when data is staged for import) */
+  ingestion?: {
+    ingestionId: string;
+    status: string;
+    itemCount: number;
+    items: Array<{
+      lineNumber: number;
+      rawName: string | null;
+      rawSku: string | null;
+      action: string;
+      matchType: string | null;
+      matchConfidence: number | null;
+      matchedProductName: string | null;
+    }>;
+    duplicateWarning?: string;
+    requiresApproval: boolean;
+  };
 }
 
 export interface ScanDocumentError extends ToolErrorResult {

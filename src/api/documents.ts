@@ -109,6 +109,13 @@ router.delete("/admin/documents/:filename", async (c) => {
   return c.json({ deleted: true, filename, chunksRemoved: keys.length });
 });
 
+/** Rebuild the KV document index by scanning vector entries */
+router.post("/admin/documents/reindex", async (c) => {
+  const result = await knowledgeBase.run({ action: "reindex" });
+  (c.var as any).logger?.info("Knowledge base reindex triggered", { rebuilt: result.ingested });
+  return c.json({ data: { rebuilt: result.ingested ?? 0 } });
+});
+
 /** Query the knowledge base (proxies to RAG agent) */
 router.post("/admin/documents/query", validator({ input: queryDocumentSchema }), async (c) => {
   const { question } = c.req.valid("json");

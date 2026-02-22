@@ -294,58 +294,52 @@ GUARDRAILS:
 
         await ctx.vector.upsert(VECTOR_NAMESPACE, ...upsertParams);
 
-        // Phase 5.5: Update KV document index for reliable listing
-        ctx.waitUntil(async () => {
-          try {
-            // Group chunks by filename for index entries
-            const byFile = new Map<string, DocIndexEntry>();
-            for (const chunk of allChunks) {
-              const existing = byFile.get(chunk.filename);
-              if (existing) {
-                existing.chunkCount++;
-                existing.keys.push(chunk.key);
-              } else {
-                byFile.set(chunk.filename, {
-                  title: chunk.title,
-                  filename: chunk.filename,
-                  category: chunk.category,
-                  uploadedAt: new Date().toISOString(),
-                  chunkCount: 1,
-                  keys: [chunk.key],
-                });
-              }
+        // Update KV document index synchronously — must complete before returning
+        // so the UI list reflects the upload immediately. Previously in waitUntil
+        // which caused silent failures leaving vector store and KV index out of sync.
+        try {
+          const byFile = new Map<string, DocIndexEntry>();
+          for (const chunk of allChunks) {
+            const existing = byFile.get(chunk.filename);
+            if (existing) {
+              existing.chunkCount++;
+              existing.keys.push(chunk.key);
+            } else {
+              byFile.set(chunk.filename, {
+                title: chunk.title,
+                filename: chunk.filename,
+                category: chunk.category,
+                uploadedAt: new Date().toISOString(),
+                chunkCount: 1,
+                keys: [chunk.key],
+              });
             }
-
-            // Merge with existing index entries
-            for (const [filename, entry] of byFile) {
-              const existingRaw = await ctx.kv.get(DOC_INDEX_NS, filename);
-              if (existingRaw) {
-                try {
-                  const existing = JSON.parse(
-                    typeof existingRaw === "string"
-                      ? existingRaw
-                      : existingRaw.toString()
-                  ) as DocIndexEntry;
-                  // Merge keys, deduplicate
-                  const allKeys = [...new Set([...existing.keys, ...entry.keys])];
-                  entry.chunkCount = allKeys.length;
-                  entry.keys = allKeys;
-                  // Keep earliest uploadedAt
-                  if (existing.uploadedAt < entry.uploadedAt) {
-                    entry.uploadedAt = existing.uploadedAt;
-                  }
-                } catch {
-                  // Corrupted entry — overwrite
-                }
-              }
-              await ctx.kv.set(DOC_INDEX_NS, filename, JSON.stringify(entry));
-            }
-          } catch (err) {
-            ctx.logger.warn("Failed to update document index", {
-              error: String(err),
-            });
           }
-        });
+
+          for (const [filename, entry] of byFile) {
+            const existingRaw = await ctx.kv.get(DOC_INDEX_NS, filename);
+            if (existingRaw) {
+              try {
+                const existing = JSON.parse(
+                  typeof existingRaw === "string"
+                    ? existingRaw
+                    : existingRaw.toString()
+                ) as DocIndexEntry;
+                const allKeys = [...new Set([...existing.keys, ...entry.keys])];
+                entry.chunkCount = allKeys.length;
+                entry.keys = allKeys;
+                if (existing.uploadedAt < entry.uploadedAt) {
+                  entry.uploadedAt = existing.uploadedAt;
+                }
+              } catch {
+                // Corrupted entry — overwrite
+              }
+            }
+            await ctx.kv.set(DOC_INDEX_NS, filename, JSON.stringify(entry));
+          }
+        } catch (err) {
+          ctx.logger.warn("Failed to update document index", { error: String(err) });
+        }
 
         ctx.logger.info("Documents ingested", {
           rawDocuments: input.documents.length,
@@ -457,6 +451,66 @@ GUARDRAILS:
           success: true,
           documents,
         };
+      }
+
+      // ─── Reindex (rebuild KV index from vector store) ─────
+      case "reindex": {
+        // Discover chunks by running broad searches across the vector namespace,
+        // then rebuild the KV document index from the discovered metadata.
+        // This recovers documents uploaded outside the Admin UI (e.g., via chat
+        // or seed scripts) that have vector entries but no KV index record.
+        const discovered = new Map<string, DocIndexEntry>();
+
+        const broadQueries = [
+          "document information content policy",
+          "product order customer invoice service",
+          "procedure guide training FAQ legal",
+          "business company report summary data",
+          "price inventory stock warehouse supply",
+        ];
+
+        for (const q of broadQueries) {
+          try {
+            const results = await ctx.vector.search<DocMetadata>(
+              VECTOR_NAMESPACE,
+              { query: q, limit: 200, similarity: 0.1 } as any
+            );
+            for (const r of results) {
+              const meta = r.metadata;
+              if (!meta?.filename) continue;
+              const existing = discovered.get(meta.filename);
+              if (existing) {
+                if (!existing.keys.includes(r.key)) {
+                  existing.keys.push(r.key);
+                  existing.chunkCount = existing.keys.length;
+                }
+              } else {
+                discovered.set(meta.filename, {
+                  title: meta.title ?? meta.filename,
+                  filename: meta.filename,
+                  category: meta.category ?? "general",
+                  uploadedAt: meta.uploadedAt ?? new Date().toISOString(),
+                  chunkCount: 1,
+                  keys: [r.key],
+                });
+              }
+            }
+          } catch { /* skip failed query */ }
+        }
+
+        // Write all discovered entries to the KV index
+        let rebuilt = 0;
+        for (const [filename, entry] of discovered) {
+          await ctx.kv.set(DOC_INDEX_NS, filename, JSON.stringify(entry));
+          rebuilt++;
+        }
+
+        ctx.logger.info("KV document index rebuilt via reindex", {
+          uniqueFiles: rebuilt,
+          totalChunks: [...discovered.values()].reduce((sum, e) => sum + e.chunkCount, 0),
+        });
+
+        return { success: true, ingested: rebuilt };
       }
     }
   },

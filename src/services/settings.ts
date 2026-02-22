@@ -37,6 +37,7 @@ const DEFAULTS: Record<string, string> = {
    *  platform-managed cron tick still fires (unavoidable) but returns
    *  immediately without checking for due schedules — zero work done. */
   schedulerEnabled: "false",
+  approvalsPolling: "disabled",
 
   // ── AI Configuration ──────────────────────────────────────
   // These control how the AI assistant behaves for this deployment.

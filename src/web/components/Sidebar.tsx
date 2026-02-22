@@ -60,49 +60,32 @@ const PERMISSION_PAGES: Record<string, Page> = {
 export default function Sidebar({ config, currentPage, onNavigate, user, onLogout, mobileOpen, onCloseMobile }: SidebarProps) {
   // ── Pending approval count badge (visibility-aware, adaptive interval) ──
   const [pendingCount, setPendingCount] = useState(0);
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const ACTIVE_INTERVAL = 5 * 60_000;   // 5 min when tab is visible
-    const HIDDEN_INTERVAL = 15 * 60_000;  // 15 min when tab is hidden
 
-    const fetchCount = async () => {
-      // Skip if tab is hidden — we'll fetch on visibility change
-      if (document.visibilityState === "hidden") return;
-      try {
-        const res = await fetch("/api/approvals/pending/count");
-        if (res.ok && !cancelled) {
-          const json = await res.json();
-          setPendingCount(json.data?.count ?? 0);
-        }
-      } catch { /* ignore */ }
-    };
-
-    const scheduleNext = () => {
-      if (cancelled) return;
-      const delay = document.visibilityState === "hidden" ? HIDDEN_INTERVAL : ACTIVE_INTERVAL;
-      timer = setTimeout(() => { fetchCount().then(scheduleNext); }, delay);
-    };
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        // Tab became visible — fetch immediately and reset timer
-        fetchCount();
-        if (timer) clearTimeout(timer);
-        scheduleNext();
+  // Fetch approvals count once when navigating to the Approvals page,
+  // or periodically if polling is enabled in settings (approvalsPolling === "interval").
+  const fetchApprovalsCount = async () => {
+    try {
+      const res = await fetch("/api/approvals/pending/count");
+      if (res.ok) {
+        const json = await res.json();
+        setPendingCount(json.data?.count ?? 0);
       }
-    };
+    } catch { /* ignore */ }
+  };
 
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    fetchCount(); // initial fetch
-    scheduleNext();
+  // Refresh count whenever the user navigates to the Approvals page
+  useEffect(() => {
+    if (currentPage === "approvals") fetchApprovalsCount();
+  }, [currentPage]);
 
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, []);
+  // Background polling — only when enabled in settings
+  useEffect(() => {
+    if (config.approvalsPolling !== "interval") return;
+    const INTERVAL = 30 * 60_000; // 30 min
+    fetchApprovalsCount(); // fetch once on mount
+    const timer = setInterval(fetchApprovalsCount, INTERVAL);
+    return () => clearInterval(timer);
+  }, [config.approvalsPolling]);
 
   // super_admin sees everything; others get role-based pages + permission-granted pages
   let visiblePages: Page[] | null = null; // null = all pages (super_admin)

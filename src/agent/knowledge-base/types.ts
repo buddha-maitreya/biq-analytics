@@ -59,7 +59,7 @@ export const DOC_INDEX_NS = "kb-doc-index";
 
 export const inputSchema = z.object({
   action: z
-    .enum(["query", "ingest", "delete", "list"])
+    .enum(["query", "ingest", "delete", "list", "reindex"])
     .describe("Operation to perform on the knowledge base"),
   question: z
     .string()

@@ -1150,7 +1150,7 @@ function KnowledgeBaseTab() {
       const res = await fetch("/api/admin/documents/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: queryText }),
+        body: JSON.stringify({ question: queryText }),
       });
       const data = await res.json();
       setQueryResult(data.data?.answer ?? "No answer returned.");
@@ -1622,6 +1622,7 @@ function SettingsTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
     businessLogoUrl: "",
     businessTagline: "",
     primaryColor: "#3b82f6",
+    approvalsPolling: "disabled",
     rateLimitChat: "30",
     rateLimitScan: "20",
     rateLimitReport: "10",
@@ -1646,6 +1647,7 @@ function SettingsTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
             businessLogoUrl: json.data.businessLogoUrl || "",
             businessTagline: json.data.businessTagline || "",
             primaryColor: json.data.primaryColor || "#3b82f6",
+            approvalsPolling: json.data.approvalsPolling || "disabled",
             rateLimitChat: json.data.rateLimitChat || "30",
             rateLimitScan: json.data.rateLimitScan || "20",
             rateLimitReport: json.data.rateLimitReport || "10",
@@ -1736,6 +1738,28 @@ function SettingsTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
                   <input type="text" value={settings.primaryColor} onChange={(e) => upd("primaryColor", e.target.value)} style={{ width: 120 }} />
                 </div>
               </label>
+            </div>
+
+            {/* Approvals Badge Polling */}
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
+              <span className="form-label">Approvals Badge Polling</span>
+              <p className="text-muted" style={{ fontSize: "0.75rem", margin: "4px 0 10px" }}>Controls whether the sidebar checks for pending approvals in the background.</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
+                  <input type="radio" name="approvalsPolling" value="disabled" checked={settings.approvalsPolling === "disabled"} onChange={() => upd("approvalsPolling", "disabled")} style={{ marginTop: 3 }} />
+                  <div>
+                    <strong style={{ fontSize: "0.85rem" }}>Off (default)</strong>
+                    <p className="text-muted" style={{ fontSize: "0.75rem", margin: 0 }}>Badge only updates when you open the Approvals page. Zero background API cost.</p>
+                  </div>
+                </label>
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
+                  <input type="radio" name="approvalsPolling" value="interval" checked={settings.approvalsPolling === "interval"} onChange={() => upd("approvalsPolling", "interval")} style={{ marginTop: 3 }} />
+                  <div>
+                    <strong style={{ fontSize: "0.85rem" }}>Every 30 minutes</strong>
+                    <p className="text-muted" style={{ fontSize: "0.75rem", margin: 0 }}>Badge refreshes periodically so you see pending approvals without visiting the page.</p>
+                  </div>
+                </label>
+              </div>
             </div>
 
             {/* Preview */}

@@ -1,17 +1,17 @@
 // Scheduler Cron Route — Phase 5.6
 //
-// The platform-managed cron tick fires every 15 minutes. This is the
-// scheduler engine's heartbeat — it cannot be removed without removing
-// the route file entirely.
+// The automatic cron trigger has been removed to eliminate the base
+// Agentuity session cost ($0.00089) charged on every platform-managed tick
+// regardless of whether any work is done.
 //
-// To avoid wasting resources when no automation is needed, the handler
-// checks the "schedulerEnabled" business setting (DB-driven, toggled
-// from the Admin Console → Automation section). When disabled, the
-// tick returns immediately — no schedule queries, no agent dispatches.
+// The scheduler now runs ONLY when explicitly triggered:
+//   - POST /scheduler/tick       — called by the Admin UI engine toggle
+//   - POST /admin/scheduler/run-all — manual "run now" from Admin Console
 //
-// Manual override: POST /admin/scheduler/run-all (triggers all due schedules now)
+// To re-enable automatic scheduling, restore the cron() wrapper and
+// set the appropriate schedule expression.
 
-import { createRouter, cron } from "@agentuity/runtime";
+import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
 import { sessionMiddleware } from "@lib/auth";
 import { getDueSchedules } from "@services/scheduler";
@@ -21,11 +21,12 @@ import schedulerAgent from "@agent/scheduler";
 const router = createRouter();
 router.use(errorMiddleware());
 
-// ── Cron handler — every 15 minutes ─────────────────────────
+// ── Tick handler — manual trigger only (no automatic cron) ──
 
 router.post(
   "/scheduler/tick",
-  cron("*/15 * * * *", async (c) => {
+  sessionMiddleware(),
+  async (c) => {
     const logger = c.var.logger;
 
     // ── Master switch check (DB-driven, cached 30s) ──
@@ -88,7 +89,7 @@ router.post(
     });
 
     return c.json({ executed: results.length, successCount, failCount, results });
-  })
+  }
 );
 
 // ── Manual trigger — run all due schedules now ──────────────

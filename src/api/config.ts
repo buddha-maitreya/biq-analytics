@@ -32,6 +32,7 @@ router.get("/config", async (c) => {
     currency: dbSettings.currency || config.currency,
     timezone: dbSettings.timezone || config.timezone,
     labels: config.labels,
+    approvalsPolling: (dbSettings.approvalsPolling as "disabled" | "interval") || "disabled",
   };
   cacheTimestamp = now;
 

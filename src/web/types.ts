@@ -31,6 +31,7 @@ export interface AppConfig {
   primaryColor: string;
   currency: string;
   timezone: string;
+  approvalsPolling: "disabled" | "interval";
   labels: {
     product: string;
     productPlural: string;

@@ -195,12 +195,12 @@ The Agentuity CLI generates `src/generated/*.ts` files with **Windows backslash 
 
 **Build from desktop PowerShell (required):**
 ```powershell
-wsl -d Ubuntu-24.04 -- bash -lc "cd ~/business-iq-enterprise && git pull && source ~/.bashrc && agentuity build"
+wsl -d Ubuntu-24.04 -- bash -lc "cd ~/business-iq-enterprise && git pull && source ~/.bashrc && bun install && agentuity build"
 ```
 
 **Deploy from desktop PowerShell (required):**
 ```powershell
-wsl -d Ubuntu-24.04 -- bash -lc "cd ~/business-iq-enterprise && git pull && source ~/.bashrc && agentuity deploy"
+wsl -d Ubuntu-24.04 -- bash -lc "cd ~/business-iq-enterprise && git pull && source ~/.bashrc && bun install && agentuity deploy"
 ```
 
 **WSL environment setup (one-time, already done):**
@@ -222,7 +222,7 @@ This is the **standard deployment process**. All builds and deploys run from WSL
 2. Commit and push to GitHub from Windows PowerShell:
      git add -A && git commit -m "message" && git push
 3. Deploy from desktop PowerShell (WSL one-liner):
-     wsl -d Ubuntu-24.04 -- bash -lc "cd ~/business-iq-enterprise && git pull && source ~/.bashrc && agentuity deploy"
+     wsl -d Ubuntu-24.04 -- bash -lc "cd ~/business-iq-enterprise && git pull && source ~/.bashrc && bun install && agentuity deploy"
 ```
 
 **NOTE:** The `wsl -d Ubuntu-24.04` command is a Windows executable. It must ALWAYS be run from desktop PowerShell. Never run it from inside a WSL/Linux terminal.
@@ -232,6 +232,7 @@ This is the **standard deployment process**. All builds and deploys run from WSL
 cd ~/business-iq-enterprise
 git pull                    # Sync latest code from GitHub
 source ~/.bashrc            # Ensure bun/agentuity are on PATH
+bun install                 # Install/update dependencies (critical after dep changes)
 agentuity deploy            # Build + typecheck + deploy to cloud
 ```
 

@@ -69,9 +69,9 @@ function generateId(): string {
 // ── Main ────────────────────────────────────────────────────
 async function migrate() {
   console.log("╔══════════════════════════════════════════════╗");
-  console.log("║  Auth Data Migration: Legacy → BetterAuth   ║");
+  console.log("║  Auth Data Migration: Legacy → BetterAuth    ║");
   console.log("╚══════════════════════════════════════════════╝");
-  console.log();
+  console.log(); 
 
   if (DRY_RUN) {
     console.log("🔍  DRY RUN — no database changes will be made.\n");

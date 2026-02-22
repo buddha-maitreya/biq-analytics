@@ -111,17 +111,63 @@ router.delete("/admin/documents/:filename", async (c) => {
 
 /** Rebuild the KV document index by scanning vector entries */
 router.post("/admin/documents/reindex", async (c) => {
-  const result = await knowledgeBase.run({ action: "reindex" });
-  (c.var as any).logger?.info("Knowledge base reindex triggered", { rebuilt: result.ingested });
-  return c.json({ data: { rebuilt: result.ingested ?? 0 } });
+  try {
+    const result = await knowledgeBase.run({ action: "reindex" });
+    (c.var as any).logger?.info("Knowledge base reindex complete", {
+      rebuilt: result.ingested,
+      success: result.success,
+      error: result.error,
+      errorStage: result.errorStage,
+    });
+    return c.json({
+      data: {
+        rebuilt: result.ingested ?? 0,
+        success: result.success,
+        error: result.error ?? null,
+        errorStage: result.errorStage ?? null,
+      },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    (c.var as any).logger?.error("Knowledge base reindex threw exception", { error: msg, stack });
+    return c.json({
+      data: {
+        rebuilt: 0,
+        success: false,
+        error: `Route exception: ${msg}`,
+        errorStage: "route-reindex",
+      },
+    });
+  }
 });
 
 /** Query the knowledge base (proxies to RAG agent) */
 router.post("/admin/documents/query", validator({ input: queryDocumentSchema }), async (c) => {
   const { question } = c.req.valid("json");
 
-  const result = await knowledgeBase.run({ action: "query", question });
-  return c.json({ data: result });
+  try {
+    const result = await knowledgeBase.run({ action: "query", question });
+    // Always pass through the full result including error diagnostics
+    return c.json({ data: result });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    (c.var as any).logger?.error("Knowledge base query threw exception", {
+      error: msg,
+      stack,
+      question: question.slice(0, 80),
+    });
+    return c.json({
+      data: {
+        success: false,
+        answer: "Knowledge base query failed — see error details below.",
+        error: `Route exception: ${msg}`,
+        errorStage: "route-invocation",
+        sources: [],
+      },
+    });
+  }
 });
 
 export default router;

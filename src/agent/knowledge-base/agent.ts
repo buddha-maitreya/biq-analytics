@@ -26,7 +26,7 @@ import { maskPII } from "@lib/pii";
 import { validateTextOutput } from "@lib/output-validation";
 import { createTokenTracker, DEFAULT_TOKEN_BUDGETS } from "@lib/tokens";
 import { SpanCollector, traced } from "@lib/tracing";
-import { getAgentConfigWithDefaults } from "@services/agent-configs";
+import { getAgentConfigWithDefaults, type AgentConfigRow } from "@services/agent-configs";
 import {
   DocMetadata,
   DocIndexEntry,
@@ -49,17 +49,47 @@ const agent = createAgent("knowledge-base", {
   schema: { input: inputSchema, output: outputSchema },
 
   setup: async (): Promise<KnowledgeBaseConfig> => {
-    const agentConfig = await getAgentConfigWithDefaults("knowledge-base");
-    const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
+    // Wrap in try/catch — if the DB is unreachable, return safe defaults
+    // so the agent can still handle requests (with degraded config).
+    try {
+      const agentConfig = await getAgentConfigWithDefaults("knowledge-base");
+      const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
 
-    return {
-      agentConfig,
-      topK: (cfg.topK as number) ?? 5,
-      similarityThreshold: (cfg.similarityThreshold as number) ?? 0.7,
-      temperature: agentConfig.temperature
-        ? parseFloat(agentConfig.temperature)
-        : undefined,
-    };
+      return {
+        agentConfig,
+        topK: (cfg.topK as number) ?? 5,
+        similarityThreshold: (cfg.similarityThreshold as number) ?? 0.7,
+        temperature: agentConfig.temperature
+          ? parseFloat(agentConfig.temperature)
+          : undefined,
+      };
+    } catch (err) {
+      // DB likely unreachable — return minimal defaults so the handler
+      // can still run (it will use fallback config values).
+      console.error("[knowledge-base] setup() failed, using defaults:", err);
+      return {
+        agentConfig: {
+          id: "",
+          agentName: "knowledge-base",
+          displayName: "The Librarian",
+          description: "Document retrieval specialist",
+          isActive: true,
+          modelOverride: null,
+          temperature: null,
+          maxSteps: 3,
+          timeoutMs: 15000,
+          customInstructions: null,
+          executionPriority: 3,
+          config: { topK: 5, similarityThreshold: 0.7 },
+          metadata: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        topK: 5,
+        similarityThreshold: 0.7,
+        temperature: undefined,
+      };
+    }
   },
 
   shutdown: async (_app, _config) => {
@@ -78,43 +108,88 @@ const agent = createAgent("knowledge-base", {
       return {
         success: false,
         answer: "Knowledge base unavailable — configuration not loaded. Please retry.",
+        error: "Agent setup() failed — ctx.config is undefined. Check agent_configs table and database connectivity.",
+        errorStage: "setup",
       };
     }
 
-    const { agentConfig, topK, similarityThreshold, temperature } = ctx.config;
+    const { topK, similarityThreshold, temperature } = ctx.config;
+    // Guard: agentConfig may be undefined if ctx.config was set to a partial
+    // object (e.g., runtime serialization issue). Use safe defaults.
+    const agentConfig = ctx.config.agentConfig ?? {
+      id: "",
+      agentName: "knowledge-base",
+      displayName: "The Librarian",
+      description: "Document retrieval specialist",
+      isActive: true,
+      modelOverride: null,
+      temperature: null,
+      maxSteps: 3,
+      timeoutMs: 15000,
+      customInstructions: null,
+      executionPriority: 3,
+      config: { topK: 5, similarityThreshold: 0.7 },
+      metadata: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } satisfies AgentConfigRow;
 
     switch (input.action) {
       // ─── RAG Query ────────────────────────────────────────
       case "query": {
         if (!input.question) {
-          return { success: false, answer: "No question provided." };
+          return { success: false, answer: "No question provided.", error: "Missing 'question' field in input.", errorStage: "validation" };
         }
 
-        // Build search options — include metadata filters if provided
-        const searchOpts: Record<string, unknown> = {
-          query: input.question,
-          limit: topK,
-          similarity: similarityThreshold,
-        };
+        // ── Step 1: Vector search ──
+        let results: Awaited<ReturnType<typeof ctx.vector.search<DocMetadata>>>;
+        try {
+          // Build search options — include metadata filters if provided
+          const searchOpts: Record<string, unknown> = {
+            query: input.question,
+            limit: topK,
+            similarity: similarityThreshold,
+          };
 
-        // Phase 5.5: Metadata-only search via vector SDK metadata filter
-        if (input.filters) {
-          const metadataFilter: Record<string, unknown> = {};
-          if (input.filters.category) {
-            metadataFilter.category = input.filters.category;
+          // Phase 5.5: Metadata-only search via vector SDK metadata filter
+          if (input.filters) {
+            const metadataFilter: Record<string, unknown> = {};
+            if (input.filters.category) {
+              metadataFilter.category = input.filters.category;
+            }
+            if (input.filters.filename) {
+              metadataFilter.filename = input.filters.filename;
+            }
+            if (Object.keys(metadataFilter).length > 0) {
+              searchOpts.metadata = metadataFilter;
+            }
           }
-          if (input.filters.filename) {
-            metadataFilter.filename = input.filters.filename;
-          }
-          if (Object.keys(metadataFilter).length > 0) {
-            searchOpts.metadata = metadataFilter;
-          }
+
+          ctx.logger.info("RAG query: searching vector store", {
+            namespace: VECTOR_NAMESPACE,
+            similarity: similarityThreshold,
+            topK,
+            question: input.question.slice(0, 80),
+          });
+
+          results = await ctx.vector.search<DocMetadata>(
+            VECTOR_NAMESPACE,
+            searchOpts as any
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          ctx.logger.error("RAG query: vector search failed", {
+            error: msg,
+            stack: err instanceof Error ? err.stack : undefined,
+            namespace: VECTOR_NAMESPACE,
+          });
+          return {
+            success: false,
+            answer: "Knowledge base search failed. See error details.",
+            error: `Vector search failed: ${msg}`,
+            errorStage: "vector-search",
+          };
         }
-
-        const results = await ctx.vector.search<DocMetadata>(
-          VECTOR_NAMESPACE,
-          searchOpts as any
-        );
 
         if (results.length === 0) {
           ctx.logger.info("RAG query: no results", {
@@ -129,12 +204,24 @@ const agent = createAgent("knowledge-base", {
           };
         }
 
-        // Fetch full document content for retrieved chunks
-        const keys = results.map((r) => r.key);
-        const fullDocs = await ctx.vector.getMany<DocMetadata>(
-          VECTOR_NAMESPACE,
-          ...keys
-        );
+        // ── Step 2: Fetch full document content ──
+        let fullDocs: Awaited<ReturnType<typeof ctx.vector.getMany<DocMetadata>>>;
+        try {
+          const keys = results.map((r) => r.key);
+          fullDocs = await ctx.vector.getMany<DocMetadata>(
+            VECTOR_NAMESPACE,
+            ...keys
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          ctx.logger.error("RAG query: getMany failed", { error: msg });
+          return {
+            success: false,
+            answer: "Failed to retrieve document content.",
+            error: `Vector getMany failed: ${msg}`,
+            errorStage: "vector-getmany",
+          };
+        }
 
         // Phase 5.5: Rich source citations with similarity scores
         const sources: SourceCitation[] = [];
@@ -154,20 +241,45 @@ const agent = createAgent("knowledge-base", {
         });
         const context = contextChunks.join("\n\n---\n\n");
 
-        // Build custom instructions from agent config
-        const customSuffix = agentConfig.customInstructions?.trim()
-          ? `\n\n${agentConfig.customInstructions.trim()}`
+        // Build custom instructions from agent config (fully guarded)
+        const rawInstructions = agentConfig?.customInstructions ?? "";
+        const customSuffix = rawInstructions.trim()
+          ? `\n\n${rawInstructions.trim()}`
           : "";
 
-        const { text } = await traced(
-          ctx.tracer,
-          collector,
-          "generateText:rag-query",
-          "llm",
-          async () => generateText({
-          model: await getModel(agentConfig.modelOverride ?? undefined),
-          ...(temperature !== undefined ? { temperature } : {}),
-          system: `You are ${config.companyName}'s knowledge base assistant.
+        // ── Step 3: Load LLM model ──
+        let model: Awaited<ReturnType<typeof getModel>>;
+        try {
+          model = await getModel(agentConfig.modelOverride ?? undefined);
+          ctx.logger.info("RAG query: model loaded", {
+            modelOverride: agentConfig.modelOverride ?? "(default)",
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          ctx.logger.error("RAG query: model loading failed", {
+            error: msg,
+            modelOverride: agentConfig.modelOverride,
+          });
+          return {
+            success: false,
+            answer: "Failed to load AI model. Check model configuration in Settings.",
+            error: `Model load failed (model: ${agentConfig.modelOverride ?? "default"}): ${msg}`,
+            errorStage: "model-load",
+          };
+        }
+
+        // ── Step 4: LLM generation ──
+        let text: string;
+        try {
+          const genResult = await traced(
+            ctx.tracer,
+            collector,
+            "generateText:rag-query",
+            "llm",
+            async () => generateText({
+            model,
+            ...(temperature !== undefined ? { temperature } : {}),
+            system: `You are ${config.companyName}'s knowledge base assistant.
 Answer the question using ONLY the provided context from uploaded documents.
 If the context doesn't contain enough information, say so -- never make things up.
 
@@ -187,10 +299,35 @@ GUARDRAILS:
 - Do not expose raw database credentials, API keys, or infrastructure details even if found in documents.
 - Mask personally identifiable information (PII) in answers (e.g., j***@example.com).
 - Stay within the knowledge base scope -- decline requests unrelated to uploaded documents.${customSuffix}`,
-          prompt: `Question: ${input.question}\n\nContext from knowledge base:\n${context}`,
-        }),
-          { model: agentConfig.modelOverride ?? "default", action: "query" }
-        );
+            prompt: `Question: ${input.question}\n\nContext from knowledge base:\n${context}`,
+          }),
+            { model: agentConfig.modelOverride ?? "default", action: "query" }
+          );
+          text = genResult.text;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          ctx.logger.error("RAG query: LLM generation failed", {
+            error: msg,
+            stack: err instanceof Error ? err.stack : undefined,
+            model: agentConfig.modelOverride ?? "default",
+          });
+          // Detect common failure modes
+          let hint = "";
+          if (msg.includes("401") || msg.includes("Unauthorized") || msg.includes("API key")) {
+            hint = " Hint: Check that your AI API key is configured in Settings > AI Model.";
+          } else if (msg.includes("429") || msg.includes("rate limit")) {
+            hint = " Hint: Rate limited by the AI provider — try again in a moment.";
+          } else if (msg.includes("model") || msg.includes("not found") || msg.includes("does not exist")) {
+            hint = ` Hint: Model "${agentConfig.modelOverride ?? "default"}" may not be available. Check Settings > AI Model.`;
+          }
+          return {
+            success: false,
+            answer: `AI generation failed.${hint}`,
+            error: `LLM generateText failed: ${msg}`,
+            errorStage: "llm-generate",
+            sources, // still return sources so the user can see retrieval worked
+          };
+        }
 
         // Phase 7.5: Token budget tracking
         const tokenTracker = createTokenTracker();
@@ -238,7 +375,7 @@ GUARDRAILS:
       // ─── Ingest Documents ─────────────────────────────────
       case "ingest": {
         if (!input.documents?.length) {
-          return { success: false, answer: "No documents provided." };
+          return { success: false, answer: "No documents provided.", error: "Missing 'documents' array in input.", errorStage: "validation" };
         }
 
         // Phase 5.5: Agent-side chunking for raw documents
@@ -276,7 +413,7 @@ GUARDRAILS:
         }
 
         if (allChunks.length === 0) {
-          return { success: false, answer: "No content to ingest after chunking." };
+          return { success: false, answer: "No content to ingest after chunking.", error: "Chunking produced 0 chunks — document may be empty.", errorStage: "chunking" };
         }
 
         const upsertParams = allChunks.map((chunk) => ({
@@ -292,7 +429,25 @@ GUARDRAILS:
           ttl: null as unknown as number, // never expire
         }));
 
-        await ctx.vector.upsert(VECTOR_NAMESPACE, ...upsertParams);
+        // -- Step 1: Vector upsert --
+        try {
+          await ctx.vector.upsert(VECTOR_NAMESPACE, ...upsertParams);
+          ctx.logger.info("Vector upsert complete", { chunks: allChunks.length, namespace: VECTOR_NAMESPACE });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          ctx.logger.error("Vector upsert failed during ingest", {
+            error: msg,
+            stack: err instanceof Error ? err.stack : undefined,
+            namespace: VECTOR_NAMESPACE,
+            chunkCount: allChunks.length,
+          });
+          return {
+            success: false,
+            answer: "Failed to store documents in vector database.",
+            error: `Vector upsert failed: ${msg}`,
+            errorStage: "vector-upsert",
+          };
+        }
 
         // Update KV document index synchronously — must complete before returning
         // so the UI list reflects the upload immediately. Previously in waitUntil
@@ -339,6 +494,24 @@ GUARDRAILS:
           }
         } catch (err) {
           ctx.logger.warn("Failed to update document index", { error: String(err) });
+        }
+
+        // Update filename registry — append new filenames for reindex reliability
+        try {
+          const newFilenames = [...new Set(allChunks.map((c) => c.filename))];
+          let existingFilenames: string[] = [];
+          try {
+            const raw = await ctx.kv.get(DOC_INDEX_NS, "__filenames__");
+            if (raw) {
+              existingFilenames = JSON.parse(
+                typeof raw === "string" ? raw : raw.toString()
+              );
+            }
+          } catch { /* fresh registry */ }
+          const merged = [...new Set([...existingFilenames, ...newFilenames])];
+          await ctx.kv.set(DOC_INDEX_NS, "__filenames__", JSON.stringify(merged));
+        } catch (err) {
+          ctx.logger.warn("Failed to update filename registry", { error: String(err) });
         }
 
         ctx.logger.info("Documents ingested", {
@@ -407,12 +580,19 @@ GUARDRAILS:
       case "list": {
         // Phase 5.5: Use KV document index instead of vector search("*")
         const documents: DocIndexEntry[] = [];
+        let listError: string | undefined;
 
         try {
           const indexEntries = await ctx.kv.search(DOC_INDEX_NS, "*");
+          ctx.logger.info("KV index search result", {
+            namespace: DOC_INDEX_NS,
+            hasEntries: !!indexEntries,
+            entryCount: indexEntries ? Object.keys(indexEntries).length : 0,
+          });
           if (indexEntries) {
             const entryKeys = Object.keys(indexEntries);
             for (const key of entryKeys) {
+              if (key === "__filenames__") continue; // skip registry key
               try {
                 const item = indexEntries[key];
                 const raw = item.value;
@@ -426,30 +606,38 @@ GUARDRAILS:
             }
           }
         } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
           ctx.logger.warn("KV index scan failed, falling back to vector exists check", {
-            error: String(err),
+            error: msg,
           });
+          listError = `KV index scan failed: ${msg}`;
           // Minimal fallback: just check if the namespace has data
-          const hasData = await ctx.vector.exists(VECTOR_NAMESPACE);
-          if (hasData) {
-            documents.push({
-              title: "(index unavailable)",
-              filename: "(unknown)",
-              category: "general",
-              uploadedAt: "",
-              chunkCount: 0,
-              keys: [],
-            });
+          try {
+            const hasData = await ctx.vector.exists(VECTOR_NAMESPACE);
+            if (hasData) {
+              documents.push({
+                title: "(index unavailable — run Re-index)",
+                filename: "(unknown)",
+                category: "general",
+                uploadedAt: "",
+                chunkCount: 0,
+                keys: [],
+              });
+            }
+          } catch (existsErr) {
+            listError += ` | Vector exists check also failed: ${existsErr instanceof Error ? existsErr.message : String(existsErr)}`;
           }
         }
 
         ctx.logger.info("Knowledge base listed", {
           uniqueDocuments: documents.length,
+          error: listError,
         });
 
         return {
           success: true,
           documents,
+          ...(listError ? { error: listError, errorStage: "kv-list" } : {}),
         };
       }
 
@@ -461,19 +649,66 @@ GUARDRAILS:
         // or seed scripts) that have vector entries but no KV index record.
         const discovered = new Map<string, DocIndexEntry>();
 
-        const broadQueries = [
-          "document information content policy",
-          "product order customer invoice service",
-          "procedure guide training FAQ legal",
-          "business company report summary data",
-          "price inventory stock warehouse supply",
+        // Strategy 1: Check filename registry first (populated by ingest)
+        try {
+          const registryRaw = await ctx.kv.get(DOC_INDEX_NS, "__filenames__");
+          if (registryRaw) {
+            const filenames: string[] = JSON.parse(
+              typeof registryRaw === "string" ? registryRaw : registryRaw.toString()
+            );
+            ctx.logger.info("Reindex: found filename registry", { count: filenames.length });
+            // For each known filename, probe chunk keys (filename-0, filename-1, ...)
+            for (const filename of filenames) {
+              const probeKeys: string[] = [];
+              for (let i = 0; i < 500; i++) {
+                probeKeys.push(`${filename}-${i}`);
+              }
+              try {
+                const found = await ctx.vector.getMany<DocMetadata>(VECTOR_NAMESPACE, ...probeKeys);
+                for (const [key, entry] of found) {
+                  if (!entry) continue;
+                  const meta = entry.metadata;
+                  const existing = discovered.get(filename);
+                  if (existing) {
+                    if (!existing.keys.includes(key)) {
+                      existing.keys.push(key);
+                      existing.chunkCount = existing.keys.length;
+                    }
+                  } else {
+                    discovered.set(filename, {
+                      title: meta?.title ?? filename,
+                      filename,
+                      category: meta?.category ?? "general",
+                      uploadedAt: meta?.uploadedAt ?? new Date().toISOString(),
+                      chunkCount: 1,
+                      keys: [key],
+                    });
+                  }
+                }
+              } catch { /* skip failed probe */ }
+            }
+          }
+        } catch {
+          ctx.logger.info("Reindex: no filename registry found, using search fallback");
+        }
+
+        // Strategy 2: Broad vector search with universal queries and zero
+        // similarity threshold to catch documents not in the registry.
+        // Use very common English words — they have non-zero similarity
+        // with virtually any English text embedding.
+        const universalQueries = [
+          "the", "is", "and", "to", "of", "a", "in", "for",
+          "information", "document", "data", "report",
+          "policy", "procedure", "guide", "service",
+          "product", "customer", "order", "inventory",
+          "schedule", "operations", "management", "system",
         ];
 
-        for (const q of broadQueries) {
+        for (const q of universalQueries) {
           try {
             const results = await ctx.vector.search<DocMetadata>(
               VECTOR_NAMESPACE,
-              { query: q, limit: 200, similarity: 0.1 } as any
+              { query: q, limit: 500, similarity: 0 } as any
             );
             for (const r of results) {
               const meta = r.metadata;
@@ -495,7 +730,9 @@ GUARDRAILS:
                 });
               }
             }
-          } catch { /* skip failed query */ }
+          } catch (err) {
+            ctx.logger.debug("Reindex search query failed", { query: q, error: String(err) });
+          }
         }
 
         // Write all discovered entries to the KV index
@@ -505,12 +742,27 @@ GUARDRAILS:
           rebuilt++;
         }
 
+        // Also update the filename registry
+        if (discovered.size > 0) {
+          const allFilenames = [...discovered.keys()];
+          await ctx.kv.set(DOC_INDEX_NS, "__filenames__", JSON.stringify(allFilenames));
+        }
+
         ctx.logger.info("KV document index rebuilt via reindex", {
           uniqueFiles: rebuilt,
           totalChunks: [...discovered.values()].reduce((sum, e) => sum + e.chunkCount, 0),
         });
 
         return { success: true, ingested: rebuilt };
+      }
+
+      default: {
+        return {
+          success: false,
+          answer: `Unknown action: "${(input as any).action}"`,
+          error: `Unrecognized action "${(input as any).action}". Valid actions: query, ingest, delete, list, reindex.`,
+          errorStage: "validation",
+        };
       }
     }
   },

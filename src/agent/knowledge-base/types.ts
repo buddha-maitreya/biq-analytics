@@ -117,4 +117,6 @@ export const outputSchema = z.object({
   ingested: z.number().optional().describe("Number of chunks ingested"),
   deleted: z.number().optional().describe("Number of documents deleted"),
   documents: z.array(z.unknown()).optional().describe("Document metadata for list action"),
+  error: z.string().optional().describe("Diagnostic error message when success=false"),
+  errorStage: z.string().optional().describe("Which pipeline stage failed (setup, vector-search, model-load, llm-generate, kv-write, etc.)"),
 });

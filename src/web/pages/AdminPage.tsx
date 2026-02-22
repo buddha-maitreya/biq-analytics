@@ -1054,12 +1054,17 @@ function KnowledgeBaseTab() {
           content: uploadForm.content,
         }),
       });
-      if (!res.ok) throw new Error("Upload failed");
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null);
+        const errMsg = errData?.error?.message ?? errData?.message ?? `HTTP ${res.status}`;
+        flash("error", `Upload failed: ${errMsg}`);
+        return;
+      }
       flash("success", `"${uploadForm.title}" uploaded and indexed successfully.`);
       resetForm();
       load();
-    } catch {
-      flash("error", "Failed to upload document.");
+    } catch (err) {
+      flash("error", `Upload failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setUploading(false);
     }
@@ -1104,14 +1109,28 @@ function KnowledgeBaseTab() {
   };
 
   const handleReindex = async () => {
-    if (!confirm("Re-index all documents? This may take a moment.")) return;
-    flash("success", "Re-indexing started…");
+    if (!confirm("Re-index all documents? This scans the vector store and may take a moment.")) return;
+    flash("success", "Re-indexing started… scanning vector store for documents.");
     try {
-      await fetch("/api/admin/documents/reindex", { method: "POST" });
-      flash("success", "Re-indexing complete.");
+      const res = await fetch("/api/admin/documents/reindex", { method: "POST" });
+      if (!res.ok) {
+        const text = await res.text();
+        flash("error", `Re-index HTTP ${res.status}: ${text.slice(0, 200)}`);
+        return;
+      }
+      const json = await res.json();
+      const result = json?.data;
+      const rebuilt = result?.rebuilt ?? 0;
+      if (result?.error) {
+        flash("error", `Re-index error [${result.errorStage ?? "unknown"}]: ${result.error}`);
+      } else if (rebuilt > 0) {
+        flash("success", `Re-indexing complete — ${rebuilt} document(s) recovered.`);
+      } else {
+        flash("error", "Re-index found 0 documents in the vector store. Try uploading a document first.");
+      }
       load();
-    } catch {
-      flash("error", "Re-index failed.");
+    } catch (err) {
+      flash("error", `Re-index network error: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -1152,10 +1171,22 @@ function KnowledgeBaseTab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: queryText }),
       });
+      if (!res.ok) {
+        const text = await res.text();
+        setQueryResult(`HTTP ${res.status}: ${text.slice(0, 500)}`);
+        return;
+      }
       const data = await res.json();
-      setQueryResult(data.data?.answer ?? "No answer returned.");
-    } catch {
-      setQueryResult("Error querying knowledge base.");
+      const result = data.data;
+      if (result?.error) {
+        // Show the answer + diagnostic error details
+        const errorInfo = `\n\n── Diagnostic Details ──\nStage: ${result.errorStage ?? "unknown"}\nError: ${result.error}`;
+        setQueryResult((result.answer ?? "Query failed.") + errorInfo);
+      } else {
+        setQueryResult(result?.answer ?? "No answer returned.");
+      }
+    } catch (err) {
+      setQueryResult(`Network error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setQuerying(false);
     }

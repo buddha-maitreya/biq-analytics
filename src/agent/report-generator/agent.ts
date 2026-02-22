@@ -117,24 +117,19 @@ const agent = createAgent("report-generator", {
     const collector = new SpanCollector("report-generator");
 
     // Defensive: ctx.config can be undefined if setup() threw (DB issue, cold start race, etc.)
-    if (!ctx.config) {
-      ctx.logger.error("Report generator config is undefined — setup() likely failed");
-      return {
-        title: "Report Unavailable",
-        reportType: input.reportType,
-        period: {
-          start: input.startDate ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
-          end: input.endDate ?? new Date().toISOString(),
-        },
-        content: "The report generator is temporarily unavailable. The system configuration could not be loaded. Please try again in a moment.",
-        generatedAt: new Date().toISOString(),
-      };
-    }
+    // ────────────────────────────────────────────────────────────
+    // Runtime Config & Fallbacks
+    // ────────────────────────────────────────────────────────────
 
-    const { agentConfig: rawAgentConfig, maxSqlSteps, defaultFormat, temperature } = ctx.config;
-    // Defensive: agentConfig can be undefined if setup() returned a partial object (DB race, cold start)
-    const agentConfig: AgentConfigRow = rawAgentConfig ?? {
-      id: "fallback",
+    // NOTE: Do NOT shadow the `config` import from @lib/config — it provides
+    // labels, companyName, currency used throughout this handler.
+    const runtimeConfig = (ctx.config ?? {}) as Partial<ReportConfig>;
+
+    const { agentConfig: rawAgentConfig, maxSqlSteps, defaultFormat, temperature } = runtimeConfig;
+
+    // Fallback if agentConfig is missing (which can happen even if ctx.config exists)
+    const fallbackAgentConfig: AgentConfigRow = {
+      id: "fallback-generated",
       agentName: "report-generator",
       displayName: "The Writer",
       description: null,
@@ -150,6 +145,8 @@ const agent = createAgent("report-generator", {
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+
+    const agentConfig = rawAgentConfig ?? fallbackAgentConfig;
 
     // Phase 7.5: Token budget tracker
     const tokenTracker = createTokenTracker();

@@ -2,7 +2,13 @@
  * Report Export Library — converts markdown/text reports into binary formats.
  *
  * Supports: PDF, Excel (XLSX), Word (DOCX), PowerPoint (PPTX).
- * All libraries are pure JavaScript — no native dependencies, works in Bun.
+ * All libraries are pure TypeScript — no native dependencies, works in Bun.
+ *
+ * PDF generation uses pdf-lib (pure TypeScript, zero browser globals).
+ * Tables are rendered via a custom PdfTableRenderer with:
+ *   - Branded header rows, alternating row stripes
+ *   - Auto-calculated column widths, right-aligned numbers
+ *   - Word wrap, cell padding, page-break awareness
  *
  * Generated files are stored in S3 (object storage) and returned as
  * presigned download URLs with configurable expiry.
@@ -11,14 +17,8 @@
  * and applied to headers/footers/title slides automatically.
  */
 
-// jsPDF v4 server-side polyfill — jsPDF calls awaitPromise() as a global in non-browser environments (Bun/Node).
-// Without this, PDF export throws "awaitPromise is not defined" at runtime.
-if (typeof (globalThis as any).awaitPromise === "undefined") {
-  (globalThis as any).awaitPromise = <T>(p: Promise<T>): Promise<T> => p;
-}
-
-import { jsPDF } from "jspdf";
-import "jspdf-autotable";
+import { PDFDocument, StandardFonts, rgb, PageSizes } from "pdf-lib";
+import type { PDFPage, PDFFont } from "pdf-lib";
 import ExcelJS from "exceljs";
 import PptxGenJS from "pptxgenjs";
 import {
@@ -176,178 +176,580 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   };
 }
 
-// ── PDF Export ──────────────────────────────────────────────
+// ── PDF Table Renderer ─────────────────────────────────────
+
+interface TableStyle {
+  headerBg: { r: number; g: number; b: number };
+  headerText: { r: number; g: number; b: number };
+  stripeBg: { r: number; g: number; b: number };
+  borderColor: { r: number; g: number; b: number };
+  textColor: { r: number; g: number; b: number };
+  fontSize: number;
+  headerFontSize: number;
+  cellPaddingX: number;
+  cellPaddingY: number;
+  borderWidth: number;
+}
+
+const DEFAULT_TABLE_STYLE: Omit<TableStyle, "headerBg"> = {
+  headerText: { r: 1, g: 1, b: 1 },
+  stripeBg: { r: 0.96, g: 0.97, b: 0.98 },
+  borderColor: { r: 0.85, g: 0.87, b: 0.9 },
+  textColor: { r: 0.24, g: 0.24, b: 0.24 },
+  fontSize: 8.5,
+  headerFontSize: 9,
+  cellPaddingX: 6,
+  cellPaddingY: 4,
+  borderWidth: 0.4,
+};
+
+/**
+ * Detect if a string looks like a number/currency for right-alignment.
+ */
+function isNumericCell(text: string): boolean {
+  const cleaned = text.replace(/[$€£¥,\s%]/g, "").trim();
+  return cleaned.length > 0 && !isNaN(Number(cleaned));
+}
+
+/**
+ * Word-wrap text to fit within a given width.
+ * Returns an array of lines.
+ */
+function wrapText(text: string, maxWidth: number, font: PDFFont, fontSize: number): string[] {
+  if (!text || text.trim().length === 0) return [""];
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let currentLine = "";
+
+  for (const word of words) {
+    const testLine = currentLine ? `${currentLine} ${word}` : word;
+    const testWidth = font.widthOfTextAtSize(testLine, fontSize);
+    if (testWidth > maxWidth && currentLine) {
+      lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = testLine;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  return lines.length > 0 ? lines : [""];
+}
+
+/**
+ * Calculate optimal column widths based on content.
+ * Distributes space proportionally with min/max constraints.
+ */
+function calculateColumnWidths(
+  headers: string[],
+  rows: string[][],
+  totalWidth: number,
+  font: PDFFont,
+  boldFont: PDFFont,
+  style: TableStyle
+): number[] {
+  const colCount = headers.length;
+  const padding = style.cellPaddingX * 2;
+
+  // Measure natural width of each column
+  const naturalWidths = headers.map((h, colIdx) => {
+    let maxW = boldFont.widthOfTextAtSize(h, style.headerFontSize) + padding;
+    for (const row of rows) {
+      const cell = row[colIdx] ?? "";
+      const cellW = font.widthOfTextAtSize(cell, style.fontSize) + padding;
+      maxW = Math.max(maxW, cellW);
+    }
+    return maxW;
+  });
+
+  const totalNatural = naturalWidths.reduce((a, b) => a + b, 0);
+
+  if (totalNatural <= totalWidth) {
+    // Fits — distribute remaining space proportionally
+    const extra = totalWidth - totalNatural;
+    return naturalWidths.map((w) => w + (extra * w) / totalNatural);
+  }
+
+  // Doesn't fit — constrain proportionally, with min width
+  const minColWidth = 40;
+  return naturalWidths.map((w) =>
+    Math.max(minColWidth, (w / totalNatural) * totalWidth)
+  );
+}
+
+/**
+ * Draw an elegant table on PDF pages.
+ * Returns the Y position after the table (or on a new page).
+ */
+async function drawTable(
+  doc: PDFDocument,
+  page: PDFPage,
+  y: number,
+  headers: string[],
+  rows: string[][],
+  font: PDFFont,
+  boldFont: PDFFont,
+  style: TableStyle,
+  margin: number,
+  contentWidth: number,
+  addPageFn: () => PDFPage
+): Promise<{ page: PDFPage; y: number }> {
+  let currentPage = page;
+  let currentY = y;
+  const pageHeight = currentPage.getHeight();
+  const bottomMargin = 40;
+
+  const colWidths = calculateColumnWidths(headers, rows, contentWidth, font, boldFont, style);
+
+  // ── Draw header row ──
+  const headerLineHeight = style.headerFontSize + style.cellPaddingY * 2;
+
+  // Check if we have room for at least header + 2 rows
+  if (currentY - headerLineHeight * 3 < bottomMargin) {
+    currentPage = addPageFn();
+    currentY = pageHeight - 50;
+  }
+
+  // Header background
+  currentPage.drawRectangle({
+    x: margin,
+    y: currentY - headerLineHeight,
+    width: contentWidth,
+    height: headerLineHeight,
+    color: rgb(style.headerBg.r, style.headerBg.g, style.headerBg.b),
+  });
+
+  // Header text
+  let xOffset = margin;
+  for (let i = 0; i < headers.length; i++) {
+    const text = headers[i] ?? "";
+    const textWidth = boldFont.widthOfTextAtSize(text, style.headerFontSize);
+    const cellX = isNumericCell(text)
+      ? xOffset + colWidths[i] - style.cellPaddingX - textWidth
+      : xOffset + style.cellPaddingX;
+
+    currentPage.drawText(text, {
+      x: cellX,
+      y: currentY - headerLineHeight + style.cellPaddingY + 1,
+      size: style.headerFontSize,
+      font: boldFont,
+      color: rgb(style.headerText.r, style.headerText.g, style.headerText.b),
+    });
+    xOffset += colWidths[i];
+  }
+
+  // Header bottom border (accent line)
+  currentPage.drawLine({
+    start: { x: margin, y: currentY - headerLineHeight },
+    end: { x: margin + contentWidth, y: currentY - headerLineHeight },
+    thickness: 1.2,
+    color: rgb(style.headerBg.r, style.headerBg.g, style.headerBg.b),
+  });
+
+  currentY -= headerLineHeight;
+
+  // ── Draw data rows ──
+  for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+    const row = rows[rowIdx];
+
+    // Calculate row height (accounting for word wrap)
+    let maxLines = 1;
+    const cellLines: string[][] = [];
+    for (let colIdx = 0; colIdx < headers.length; colIdx++) {
+      const cellText = row[colIdx] ?? "";
+      const availWidth = colWidths[colIdx] - style.cellPaddingX * 2;
+      const lines = wrapText(cellText, availWidth, font, style.fontSize);
+      cellLines.push(lines);
+      maxLines = Math.max(maxLines, lines.length);
+    }
+
+    const lineHeight = style.fontSize + 2;
+    const rowHeight = maxLines * lineHeight + style.cellPaddingY * 2;
+
+    // Page break check
+    if (currentY - rowHeight < bottomMargin) {
+      currentPage = addPageFn();
+      currentY = pageHeight - 50;
+
+      // Re-draw header on new page
+      currentPage.drawRectangle({
+        x: margin,
+        y: currentY - headerLineHeight,
+        width: contentWidth,
+        height: headerLineHeight,
+        color: rgb(style.headerBg.r, style.headerBg.g, style.headerBg.b),
+      });
+      xOffset = margin;
+      for (let i = 0; i < headers.length; i++) {
+        const text = headers[i] ?? "";
+        currentPage.drawText(text, {
+          x: xOffset + style.cellPaddingX,
+          y: currentY - headerLineHeight + style.cellPaddingY + 1,
+          size: style.headerFontSize,
+          font: boldFont,
+          color: rgb(style.headerText.r, style.headerText.g, style.headerText.b),
+        });
+        xOffset += colWidths[i];
+      }
+      currentY -= headerLineHeight;
+    }
+
+    // Alternating stripe
+    if (rowIdx % 2 === 1) {
+      currentPage.drawRectangle({
+        x: margin,
+        y: currentY - rowHeight,
+        width: contentWidth,
+        height: rowHeight,
+        color: rgb(style.stripeBg.r, style.stripeBg.g, style.stripeBg.b),
+      });
+    }
+
+    // Cell text
+    xOffset = margin;
+    for (let colIdx = 0; colIdx < headers.length; colIdx++) {
+      const lines = cellLines[colIdx];
+      const isNumeric = lines.length === 1 && isNumericCell(lines[0]);
+
+      for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+        const text = lines[lineIdx];
+        const textWidth = font.widthOfTextAtSize(text, style.fontSize);
+        const cellX = isNumeric
+          ? xOffset + colWidths[colIdx] - style.cellPaddingX - textWidth
+          : xOffset + style.cellPaddingX;
+
+        currentPage.drawText(text, {
+          x: cellX,
+          y: currentY - style.cellPaddingY - (lineIdx + 1) * lineHeight + 2,
+          size: style.fontSize,
+          font,
+          color: rgb(style.textColor.r, style.textColor.g, style.textColor.b),
+        });
+      }
+      xOffset += colWidths[colIdx];
+    }
+
+    // Subtle row separator
+    currentPage.drawLine({
+      start: { x: margin, y: currentY - rowHeight },
+      end: { x: margin + contentWidth, y: currentY - rowHeight },
+      thickness: style.borderWidth,
+      color: rgb(style.borderColor.r, style.borderColor.g, style.borderColor.b),
+    });
+
+    currentY -= rowHeight;
+  }
+
+  // Table bottom border (slightly thicker for closure)
+  currentPage.drawLine({
+    start: { x: margin, y: currentY },
+    end: { x: margin + contentWidth, y: currentY },
+    thickness: 0.8,
+    color: rgb(style.headerBg.r, style.headerBg.g, style.headerBg.b),
+  });
+
+  // Left and right borders for the full table
+  const tableTop = y;
+  currentPage.drawLine({
+    start: { x: margin, y: tableTop },
+    end: { x: margin, y: currentY },
+    thickness: style.borderWidth,
+    color: rgb(style.borderColor.r, style.borderColor.g, style.borderColor.b),
+  });
+  currentPage.drawLine({
+    start: { x: margin + contentWidth, y: tableTop },
+    end: { x: margin + contentWidth, y: currentY },
+    thickness: style.borderWidth,
+    color: rgb(style.borderColor.r, style.borderColor.g, style.borderColor.b),
+  });
+
+  return { page: currentPage, y: currentY - 8 };
+}
+
+// ── PDF Export (pdf-lib — pure TypeScript) ──────────────────
 
 async function exportPdf(input: ExportInput, branding: Branding): Promise<Buffer> {
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
-  const margin = 20;
-  const contentWidth = pageWidth - margin * 2;
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const boldFont = await doc.embedFont(StandardFonts.HelveticaBold);
+  const italicFont = await doc.embedFont(StandardFonts.HelveticaOblique);
+
+  const [pageW, pageH] = PageSizes.A4;
+  const margin = 50;
+  const contentWidth = pageW - margin * 2;
   const color = hexToRgb(branding.primaryColor);
+  const brandRgb = { r: color.r / 255, g: color.g / 255, b: color.b / 255 };
 
-  // ── Title page ──
-  // Header bar
-  doc.setFillColor(color.r, color.g, color.b);
-  doc.rect(0, 0, pageWidth, 50, "F");
+  const tableStyle: TableStyle = {
+    ...DEFAULT_TABLE_STYLE,
+    headerBg: brandRgb,
+  };
 
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(28);
-  doc.text(branding.companyName, margin, 30);
+  // Track pages for footer numbering
+  const allPages: PDFPage[] = [];
 
+  const addPage = (): PDFPage => {
+    const page = doc.addPage(PageSizes.A4);
+    allPages.push(page);
+    return page;
+  };
+
+  // ── Title Page ──
+  const titlePage = addPage();
+
+  // Brand header bar
+  titlePage.drawRectangle({
+    x: 0,
+    y: pageH - 130,
+    width: pageW,
+    height: 130,
+    color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+  });
+
+  // Company name
+  titlePage.drawText(branding.companyName, {
+    x: margin,
+    y: pageH - 60,
+    size: 28,
+    font: boldFont,
+    color: rgb(1, 1, 1),
+  });
+
+  // Tagline
   if (branding.tagline) {
-    doc.setFontSize(11);
-    doc.text(branding.tagline, margin, 40);
+    titlePage.drawText(branding.tagline, {
+      x: margin,
+      y: pageH - 85,
+      size: 11,
+      font: italicFont,
+      color: rgb(0.9, 0.9, 0.9),
+    });
   }
 
   // Report title
-  doc.setTextColor(40, 40, 40);
-  doc.setFontSize(22);
-  doc.text(input.title, margin, 75);
+  titlePage.drawText(input.title, {
+    x: margin,
+    y: pageH - 180,
+    size: 24,
+    font: boldFont,
+    color: rgb(0.15, 0.15, 0.15),
+  });
 
+  // Subtitle
   if (input.subtitle) {
-    doc.setFontSize(13);
-    doc.setTextColor(120, 120, 120);
-    doc.text(input.subtitle, margin, 87);
+    titlePage.drawText(input.subtitle, {
+      x: margin,
+      y: pageH - 210,
+      size: 13,
+      font,
+      color: rgb(0.45, 0.45, 0.45),
+    });
   }
 
   // Date
-  doc.setFontSize(10);
-  doc.setTextColor(150, 150, 150);
-  doc.text(`Generated: ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`, margin, 100);
+  const dateStr = new Date().toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  titlePage.drawText(`Generated: ${dateStr}`, {
+    x: margin,
+    y: pageH - 240,
+    size: 10,
+    font,
+    color: rgb(0.6, 0.6, 0.6),
+  });
 
   // Prepared by
   if (input.preparedBy) {
-    doc.text(`Prepared by: ${input.preparedBy}`, margin, 107);
+    titlePage.drawText(`Prepared by: ${input.preparedBy}`, {
+      x: margin,
+      y: pageH - 256,
+      size: 10,
+      font,
+      color: rgb(0.6, 0.6, 0.6),
+    });
   }
 
-  // Footer line
-  doc.setDrawColor(color.r, color.g, color.b);
-  doc.setLineWidth(0.5);
-  doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15);
-  doc.setFontSize(8);
-  doc.setTextColor(150, 150, 150);
-  doc.text(`${branding.companyName} — Confidential`, margin, pageHeight - 10);
+  // Separator line at bottom
+  titlePage.drawLine({
+    start: { x: margin, y: 40 },
+    end: { x: pageW - margin, y: 40 },
+    thickness: 0.8,
+    color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+  });
+  titlePage.drawText(`${branding.companyName} — Confidential`, {
+    x: margin,
+    y: 26,
+    size: 8,
+    font,
+    color: rgb(0.6, 0.6, 0.6),
+  });
 
-  // ── Content pages ──
+  // ── Table of Contents Page ──
   const sections = parseMarkdown(input.content);
+  const tocPage = addPage();
+  let tocY = pageH - 60;
 
-  // ── Table of Contents page ──
-  doc.addPage();
-  doc.setTextColor(color.r, color.g, color.b);
-  doc.setFontSize(18);
-  doc.text("Table of Contents", margin, 25);
-  doc.setDrawColor(color.r, color.g, color.b);
-  doc.setLineWidth(0.3);
-  doc.line(margin, 28, pageWidth - margin, 28);
+  tocPage.drawText("Table of Contents", {
+    x: margin,
+    y: tocY,
+    size: 18,
+    font: boldFont,
+    color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+  });
+  tocY -= 6;
+  tocPage.drawLine({
+    start: { x: margin, y: tocY },
+    end: { x: pageW - margin, y: tocY },
+    thickness: 0.6,
+    color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+  });
+  tocY -= 20;
 
-  let tocY = 38;
-  let tocIndex = 1;
+  let tocNum = 1;
   for (const section of sections) {
     if (section.heading && section.level === 2) {
-      doc.setTextColor(60, 60, 60);
-      doc.setFontSize(11);
-      doc.text(`${tocIndex}. ${section.heading}`, margin + 4, tocY);
-      tocIndex++;
-      tocY += 7;
-      if (tocY > pageHeight - 30) break; // prevent overflow
+      tocPage.drawText(`${tocNum}. ${section.heading}`, {
+        x: margin + 10,
+        y: tocY,
+        size: 11,
+        font,
+        color: rgb(0.25, 0.25, 0.25),
+      });
+      tocNum++;
+      tocY -= 18;
+      if (tocY < 60) break;
     }
   }
 
-  // Page footer on TOC page
-  doc.setDrawColor(color.r, color.g, color.b);
-  doc.setLineWidth(0.3);
-  doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15);
-  doc.setFontSize(8);
-  doc.setTextColor(150, 150, 150);
-  doc.text(`${branding.companyName}`, margin, pageHeight - 10);
-  doc.text(`Page ${doc.getNumberOfPages()}`, pageWidth - margin - 15, pageHeight - 10);
+  // ── Content Pages ──
+  let currentPage = addPage();
+  let y = pageH - 50;
+  const bottomMargin = 45;
 
-  let y = 20; // start position on new page
-
-  const addPage = () => {
-    doc.addPage();
-    y = 20;
-    // Page footer
-    doc.setDrawColor(color.r, color.g, color.b);
-    doc.setLineWidth(0.3);
-    doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15);
-    doc.setFontSize(8);
-    doc.setTextColor(150, 150, 150);
-    doc.text(`${branding.companyName}`, margin, pageHeight - 10);
-    doc.text(`Page ${doc.getNumberOfPages()}`, pageWidth - margin - 15, pageHeight - 10);
+  const ensureSpace = (needed: number): void => {
+    if (y - needed < bottomMargin) {
+      currentPage = addPage();
+      y = pageH - 50;
+    }
   };
 
-  addPage(); // First content page
-
   for (const section of sections) {
-    // Check if we need a new page
-    if (y > pageHeight - 40) addPage();
-
     // Section heading
     if (section.heading) {
-      doc.setTextColor(color.r, color.g, color.b);
-      doc.setFontSize(section.level === 2 ? 16 : 13);
-      doc.text(section.heading, margin, y);
-      y += section.level === 2 ? 10 : 8;
+      const headingSize = section.level === 2 ? 16 : 13;
+      ensureSpace(headingSize + 20);
+
+      currentPage.drawText(section.heading, {
+        x: margin,
+        y,
+        size: headingSize,
+        font: boldFont,
+        color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+      });
+      y -= headingSize + 2;
 
       if (section.level === 2) {
-        doc.setDrawColor(color.r, color.g, color.b);
-        doc.setLineWidth(0.3);
-        doc.line(margin, y - 2, pageWidth - margin, y - 2);
-        y += 4;
+        currentPage.drawLine({
+          start: { x: margin, y },
+          end: { x: pageW - margin, y },
+          thickness: 0.5,
+          color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+        });
+        y -= 10;
+      } else {
+        y -= 6;
       }
     }
 
-    // Check for tables in this section
+    // Check for table
     const table = extractTable(section.lines);
     if (table) {
-      // Render table using autoTable
-      (doc as any).autoTable({
-        startY: y,
-        head: [table.headers],
-        body: table.rows,
-        margin: { left: margin, right: margin },
-        headStyles: {
-          fillColor: [color.r, color.g, color.b],
-          textColor: [255, 255, 255],
-          fontSize: 9,
-          fontStyle: "bold",
-        },
-        bodyStyles: { fontSize: 8, textColor: [60, 60, 60] },
-        alternateRowStyles: { fillColor: [245, 247, 250] },
-        tableWidth: contentWidth,
-      });
-      y = (doc as any).lastAutoTable.finalY + 8;
+      ensureSpace(60); // At least header + 2 rows must fit
+      const result = await drawTable(
+        doc,
+        currentPage,
+        y,
+        table.headers,
+        table.rows,
+        font,
+        boldFont,
+        tableStyle,
+        margin,
+        contentWidth,
+        addPage
+      );
+      currentPage = result.page;
+      y = result.y;
     }
 
-    // Non-table content
+    // Text content (skip table lines)
     const textLines = section.lines.filter(
       (l) => !l.trim().startsWith("|") && l.trim().length > 0
     );
 
     for (const line of textLines) {
-      if (y > pageHeight - 25) addPage();
-
       const clean = stripMd(line);
       if (!clean) continue;
 
-      doc.setTextColor(60, 60, 60);
+      ensureSpace(14);
 
-      // Bold lines (was **bold**)
       const isBold = /\*\*/.test(line);
-      doc.setFontSize(isBold ? 10 : 9);
+      const fontSize = isBold ? 10 : 9;
+      const usedFont = isBold ? boldFont : font;
 
-      // Word wrap
-      const wrapped = doc.splitTextToSize(clean, contentWidth);
-      doc.text(wrapped, margin, y);
-      y += wrapped.length * 5 + 2;
+      // Word wrap the text
+      const wrapped = wrapText(clean, contentWidth, usedFont, fontSize);
+
+      for (const wLine of wrapped) {
+        ensureSpace(fontSize + 4);
+        currentPage.drawText(wLine, {
+          x: margin,
+          y,
+          size: fontSize,
+          font: usedFont,
+          color: rgb(0.24, 0.24, 0.24),
+        });
+        y -= fontSize + 3;
+      }
+      y -= 2;
     }
 
-    y += 4; // Section spacing
+    y -= 6; // Section spacing
   }
 
-  return Buffer.from(doc.output("arraybuffer"));
+  // ── Page footers (applied to all pages after generation) ──
+  for (let i = 0; i < allPages.length; i++) {
+    const pg = allPages[i];
+    // Separator line
+    pg.drawLine({
+      start: { x: margin, y: 30 },
+      end: { x: pageW - margin, y: 30 },
+      thickness: 0.4,
+      color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+    });
+    // Company name
+    pg.drawText(branding.companyName, {
+      x: margin,
+      y: 18,
+      size: 7,
+      font,
+      color: rgb(0.6, 0.6, 0.6),
+    });
+    // Page number
+    const pageLabel = `Page ${i + 1} of ${allPages.length}`;
+    const pageLabelWidth = font.widthOfTextAtSize(pageLabel, 7);
+    pg.drawText(pageLabel, {
+      x: pageW - margin - pageLabelWidth,
+      y: 18,
+      size: 7,
+      font,
+      color: rgb(0.6, 0.6, 0.6),
+    });
+  }
+
+  const pdfBytes = await doc.save();
+  return Buffer.from(pdfBytes);
 }
 
 // ── Excel Export ───────────────────────────────────────────

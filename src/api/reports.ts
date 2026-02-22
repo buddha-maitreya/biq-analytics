@@ -5,7 +5,7 @@ import { errorMiddleware } from "@lib/errors";
 import { sessionMiddleware, getAppUser } from "@lib/auth";
 import { dynamicRateLimit } from "@lib/rate-limit";
 import { listReports, getReportById, deleteReport, getReportDownloadUrl } from "@services/reports";
-import { exportReport, type ExportFormat, EXPORT_FORMATS } from "@lib/report-export";
+import { exportReport, type ExportFormat, EXPORT_FORMATS, tempExportCache } from "@lib/report-export";
 
 // ── Request schema ────────────────────────────────────────
 export const generateReportSchema = s.object({
@@ -21,6 +21,29 @@ export const generateReportSchema = s.object({
 const reports = createRouter();
 reports.use(errorMiddleware());
 reports.use(sessionMiddleware());
+
+// ════════════════════════════════════════════════════════════
+// TEMP EXPORT DOWNLOAD (fallback when S3 is unavailable)
+// ════════════════════════════════════════════════════════════
+
+/**
+ * GET /reports/download-temp/:id — Serve an export from the in-memory temp cache.
+ * Used when S3 storage is unavailable. Entries expire after 1 hour.
+ */
+reports.get("/reports/download-temp/:id", (c) => {
+  const id = c.req.param("id");
+  const entry = tempExportCache.get(id);
+  if (!entry || entry.expiresAt < Date.now()) {
+    if (entry) tempExportCache.delete(id);
+    return c.json({ error: "Download expired or not found. Please re-export the report." }, 404);
+  }
+  // Serve binary with proper headers
+  c.header("Content-Type", entry.contentType);
+  c.header("Content-Disposition", `attachment; filename="${entry.filename}"`);
+  c.header("Content-Length", String(entry.buffer.length));
+  c.header("Cache-Control", "private, max-age=3600");
+  return c.body(new Uint8Array(entry.buffer) as any);
+});
 
 /**
  * POST /reports/generate — Generate an AI-powered business report.

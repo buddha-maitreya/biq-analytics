@@ -200,16 +200,54 @@ function renderInline(text: string): React.ReactNode {
     // Links: [text](url)
     const linkMatch = remaining.match(/^\[([^\]]+)\]\(([^)]+)\)/);
     if (linkMatch) {
-      parts.push(
-        <a
-          key={key++}
-          href={linkMatch[2]}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          {linkMatch[1]}
-        </a>
-      );
+      const href = linkMatch[2];
+      const label = linkMatch[1];
+      if (href.startsWith("data:")) {
+        // Data URLs can't be navigated — trigger blob download on click
+        parts.push(
+          <a
+            key={key++}
+            href="#"
+            onClick={(e) => {
+              e.preventDefault();
+              try {
+                const byteString = atob(href.split(",")[1] || "");
+                const mimeMatch = href.match(/^data:([^;]+)/);
+                const mime = mimeMatch ? mimeMatch[1] : "application/octet-stream";
+                const ab = new Uint8Array(byteString.length);
+                for (let i = 0; i < byteString.length; i++) ab[i] = byteString.charCodeAt(i);
+                const blob = new Blob([ab], { type: mime });
+                const blobUrl = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = blobUrl;
+                // Derive filename from link label
+                const ext = mime.split("/")[1] || "bin";
+                a.download = label.replace(/[^a-zA-Z0-9\s-]/g, "").trim() + "." + ext;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(blobUrl);
+              } catch (err) {
+                console.error("Failed to download data URL:", err);
+              }
+            }}
+            className="data-url-download"
+          >
+            {label}
+          </a>
+        );
+      } else {
+        parts.push(
+          <a
+            key={key++}
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {label}
+          </a>
+        );
+      }
       remaining = remaining.slice(linkMatch[0].length);
       continue;
     }

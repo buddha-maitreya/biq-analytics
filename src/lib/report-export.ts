@@ -86,6 +86,23 @@ interface Branding {
 
 const exportStorage = objectStorage.namespace("report-exports");
 
+// ── Temp export cache (fallback when S3 is unavailable) ────
+/** In-memory cache for exports when S3 isn't available. Entries expire after 1 hour. */
+interface TempExport {
+  buffer: Buffer;
+  contentType: string;
+  filename: string;
+  expiresAt: number;
+}
+export const tempExportCache = new Map<string, TempExport>();
+
+function cleanTempCache() {
+  const now = Date.now();
+  for (const [key, val] of tempExportCache) {
+    if (val.expiresAt < now) tempExportCache.delete(key);
+  }
+}
+
 // ── Branding loader ────────────────────────────────────────
 
 async function loadBranding(): Promise<Branding> {
@@ -1680,14 +1697,20 @@ export async function exportReport(input: ExportInput): Promise<ExportResult> {
       });
       downloadUrl = exportStorage.presign(storageKey, { expiresIn: 3600 });
     } catch (s3Err) {
-      // S3 configured but operation failed — fall back to base64 data URL
-      console.error("[report-export] S3 storage failed, falling back to data URL:", s3Err);
-      downloadUrl = `data:${contentType};base64,${buffer.toString("base64")}`;
+      // S3 configured but operation failed — fall back to temp cache + API URL
+      console.error("[report-export] S3 storage failed, using temp cache:", s3Err);
+      const exportId = crypto.randomUUID();
+      tempExportCache.set(exportId, { buffer, contentType, filename, expiresAt: Date.now() + 3_600_000 });
+      cleanTempCache();
+      downloadUrl = `/api/reports/download-temp/${exportId}`;
       storageKey = "";
     }
   } else {
-    // S3 not configured — return base64 data URL
-    downloadUrl = `data:${contentType};base64,${buffer.toString("base64")}`;
+    // S3 not configured — use temp cache + API URL
+    const exportId = crypto.randomUUID();
+    tempExportCache.set(exportId, { buffer, contentType, filename, expiresAt: Date.now() + 3_600_000 });
+    cleanTempCache();
+    downloadUrl = `/api/reports/download-temp/${exportId}`;
   }
 
   return {

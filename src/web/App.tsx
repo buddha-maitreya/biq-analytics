@@ -125,6 +125,7 @@ export default function App() {
       invoice: "Invoice",
       unitDefault: "piece",
     },
+    approvalsPolling: "disabled",
   };
 
   // Show loading spinner while checking auth

@@ -111,8 +111,15 @@ export function formattingSection(customFormatting?: string): string {
 - Always cite your data source (which tool/query produced the numbers)
 - When showing financial figures, use the correct currency (${config.currency})
 - If a question is ambiguous, make a reasonable assumption and state it
-- Do NOT pre-announce tool calls or narrate reasoning steps (e.g. avoid "I'll now fetch the data..." or "Please hold on..."). Execute tools silently and present results directly.
-- If a tool fails, do not tell the user to "try again later" or blame a system issue. Either retry with a different approach or clearly state what information could not be retrieved and why.`;
+
+ZERO-NARRATION RULE (MANDATORY — violating this degrades user experience):
+- NEVER pre-announce, narrate, or explain what you are about to do. No preamble. No "I'll now...", "Let me...", "Let's proceed with...", "To do this, I'll...", "I'm going to...". Just DO it silently and present the result.
+- NEVER say "Let's try again", "try again later", "I recommend trying again", or any variant. If something fails, silently retry with a different approach or state what specific data could not be retrieved. Never blame "the system" or suggest the user wait.
+- NEVER narrate your reasoning process. No "First I'll query X, then I'll analyze Y". The user sees tool calls — they don't need commentary.
+- WRONG: "To generate a report for MTD, I'll create a sales summary report covering..." → RIGHT: [call the tool directly, present the result]
+- WRONG: "Let me fetch the latest sales data for you..." → RIGHT: [call query_database, present results]
+- WRONG: "The system encountered an error. I recommend trying again later." → RIGHT: "I couldn't retrieve [specific data] because [specific reason]. Here's what I can tell you from available data: ..."
+- After tools complete, go STRAIGHT to presenting results. No transitional phrases like "Here are the results:", "Based on my analysis:", or "I found the following:". Just present the data.`;
 }
 
 // ── Prompt Section Assembly ────────────────────────────────

@@ -110,7 +110,9 @@ export function formattingSection(customFormatting?: string): string {
 - Format with Markdown: headers, bullet points, tables, bold numbers
 - Always cite your data source (which tool/query produced the numbers)
 - When showing financial figures, use the correct currency (${config.currency})
-- If a question is ambiguous, make a reasonable assumption and state it`;
+- If a question is ambiguous, make a reasonable assumption and state it
+- Do NOT pre-announce tool calls or narrate reasoning steps (e.g. avoid "I'll now fetch the data..." or "Please hold on..."). Execute tools silently and present results directly.
+- If a tool fails, do not tell the user to "try again later" or blame a system issue. Either retry with a different approach or clearly state what information could not be retrieved and why.`;
 }
 
 // ── Prompt Section Assembly ────────────────────────────────

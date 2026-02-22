@@ -11,6 +11,12 @@
  * and applied to headers/footers/title slides automatically.
  */
 
+// jsPDF v4 server-side polyfill — jsPDF calls awaitPromise() as a global in non-browser environments (Bun/Node).
+// Without this, PDF export throws "awaitPromise is not defined" at runtime.
+if (typeof (globalThis as any).awaitPromise === "undefined") {
+  (globalThis as any).awaitPromise = <T>(p: Promise<T>): Promise<T> => p;
+}
+
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
 import ExcelJS from "exceljs";

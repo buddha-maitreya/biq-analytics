@@ -38,7 +38,7 @@ import { maskPII } from "@lib/pii";
 import { validateTextOutput } from "@lib/output-validation";
 import { createTokenTracker, DEFAULT_TOKEN_BUDGETS } from "@lib/tokens";
 import { SpanCollector, traced } from "@lib/tracing";
-import { getAgentConfigWithDefaults } from "@services/agent-configs";
+import { getAgentConfigWithDefaults, type AgentConfigRow } from "@services/agent-configs";
 import { getReportPromptForType, getReportTypes } from "@services/type-registry";
 import { saveReport } from "@services/reports";
 import type { AISettings } from "@services/settings";
@@ -131,7 +131,25 @@ const agent = createAgent("report-generator", {
       };
     }
 
-    const { agentConfig, maxSqlSteps, defaultFormat, temperature } = ctx.config;
+    const { agentConfig: rawAgentConfig, maxSqlSteps, defaultFormat, temperature } = ctx.config;
+    // Defensive: agentConfig can be undefined if setup() returned a partial object (DB race, cold start)
+    const agentConfig: AgentConfigRow = rawAgentConfig ?? {
+      id: "fallback",
+      agentName: "report-generator",
+      displayName: "The Writer",
+      description: null,
+      isActive: true,
+      modelOverride: null,
+      temperature: null,
+      maxSteps: 6,
+      timeoutMs: 30000,
+      customInstructions: null,
+      executionPriority: 2,
+      config: { defaultFormat: "markdown", maxSqlSteps: 6 },
+      metadata: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
 
     // Phase 7.5: Token budget tracker
     const tokenTracker = createTokenTracker();

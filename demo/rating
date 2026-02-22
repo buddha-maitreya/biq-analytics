@@ -1,0 +1,25 @@
+let me ask a stupid question, in the attached where is this data (rating) stored and is it used to train the AI model for better responses for the specific organization?
+
+Great question — not stupid at all. Let me trace where those thumbs go.
+
+Here's the full picture:
+
+Where the rating is stored
+Database — in the chat_messages table, inside the metadata JSONB column as feedbackRating: "up" | "down".
+
+The flow:
+
+User clicks 👍 or 👎 on a message
+Frontend calls POST /api/chat/messages/:id/feedback with { rating: "up" | "down" }
+Backend reads the existing message's metadata object, merges in feedbackRating, writes it back to the chat_messages row
+Frontend optimistically updates the UI state via SET_FEEDBACK reducer action
+Is it used to train the AI?
+No. Right now it's purely stored and forgotten. The rating is persisted in the database but nothing reads it back to influence future responses. It's a data collection mechanism with no feedback loop.
+
+To actually improve the AI for a specific organization, there are three practical approaches (no fine-tuning needed):
+
+Approach	How it works	Effort
+1. Few-shot from feedback	At prompt-build time, query recent 👍 messages and inject 2-3 as "Here are examples of responses the user found helpful" in the system prompt	Low — prompt change + DB query
+2. Negative signal routing	When the agent detects a pattern of 👎 on a particular tool's results (e.g., query_database keeps getting downvoted), adjust confidence thresholds in the understanding-first protocol	Medium — needs analytics query
+3. Custom instructions from patterns	Periodic batch job analyzes 👎 messages, extracts common patterns, updates aiBusinessContext or aiToolGuidelines in settings	Medium — scheduled agent task
+None of these require model fine-tuning — they work within the existing prompt engineering architecture. Want me to implement any of these?

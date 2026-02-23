@@ -66,7 +66,7 @@ router.use(sessionMiddleware());
 // Accepts a barcode string from any input device and processes it
 // through the full pipeline: log → lookup → transaction → stock update.
 
-const scanBodySchema = s.object({
+export const scanBodySchema = s.object({
   barcode: s.string(),
   warehouseId: s.string(),
   deviceType: s.optional(s.string()),
@@ -119,7 +119,7 @@ router.post("/scan",
 // sequentially. Each scan is independent — one failure doesn't
 // affect others. Every scan should include an idempotencyKey.
 
-const batchBodySchema = s.object({
+export const batchBodySchema = s.object({
   scans: s.array(s.object({
     barcode: s.string(),
     warehouseId: s.string(),

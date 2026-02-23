@@ -117,14 +117,15 @@ export default function AssistantPage({ config }: AssistantPageProps) {
     const url = `/api/chat/sessions/${sessionId}/attachments`;
     console.log("[UPLOAD:3] Uploading to", url, { fileName: file.name, fileSize: file.size, fileType: file.type });
 
-    const formData = new FormData();
-    formData.append("file", file);
-
     let res: Response;
     try {
       res = await fetch(url, {
         method: "POST",
-        body: formData,
+        body: file,
+        headers: {
+          "Content-Type": file.type || "application/octet-stream",
+          "X-Filename": encodeURIComponent(file.name),
+        },
       });
     } catch (networkErr: any) {
       console.error("[UPLOAD:3] fetch() threw (network error)", { error: networkErr?.message, stack: networkErr?.stack });

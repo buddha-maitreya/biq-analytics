@@ -7,7 +7,7 @@
  * metadata JSONB column.
  *
  * Routes:
- *   POST /chat/sessions/:id/attachments — Upload a file (multipart)
+ *   POST /chat/sessions/:id/attachments — Upload a file (raw binary body)
  *   GET  /chat/attachments/:attachmentId — Get presigned download URL
  *   GET  /chat/sessions/:id/attachments  — List attachments for a session
  *
@@ -140,7 +140,7 @@ const TEMP_ATTACHMENT_TTL = 2 * 60 * 60 * 1000;
 /**
  * POST /chat/sessions/:sessionId/attachments — Upload a file.
  *
- * Expects multipart/form-data with a "file" field.
+ * Expects raw binary body with Content-Type and X-Filename headers.
  * Returns the attachment metadata with a presigned download URL.
  */
 attachments.post("/chat/sessions/:sessionId/attachments", async (c) => {
@@ -169,29 +169,13 @@ attachments.post("/chat/sessions/:sessionId/attachments", async (c) => {
   const userId = appUser.id as string;
   log?.info("[UPLOAD:2] Auth OK", { userId, email: appUser.email });
 
-  // Parse multipart form data
-  let body: Record<string, any>;
-  try {
-    body = await c.req.parseBody();
-    log?.info("[UPLOAD:2] parseBody() succeeded", { bodyKeys: Object.keys(body), bodyTypes: Object.fromEntries(Object.entries(body).map(([k, v]) => [k, typeof v === 'object' && v !== null ? (v as any).constructor?.name ?? typeof v : typeof v])) });
-  } catch (parseErr: any) {
-    log?.error("[UPLOAD:2] parseBody() threw", {
-      error: parseErr?.message?.slice(0, 300),
-      stack: parseErr?.stack?.slice(0, 500),
-      contentType: c.req.header("content-type")?.slice(0, 200),
-    });
-    return c.json({ error: `Failed to parse upload: ${parseErr?.message?.slice(0, 200)}` }, 400);
-  }
-  const file = body["file"];
-
-  if (!file || typeof file === "string") {
-    log?.warn("[UPLOAD:3] No file in body", { bodyKeys: Object.keys(body) });
-    return c.json({ error: "No file uploaded. Send a 'file' field in multipart/form-data." }, 400);
-  }
+  // Read raw binary body (no multipart — aligns with Agentuity documented pattern)
+  const contentType = c.req.header("content-type") || "application/octet-stream";
+  const rawFilename = c.req.header("x-filename");
+  const filename = rawFilename ? decodeURIComponent(rawFilename) : "attachment";
+  log?.info("[UPLOAD:2] Headers parsed", { contentType, filename });
 
   // Validate file type
-  const contentType = file.type || "application/octet-stream";
-  log?.info("[UPLOAD:3] File received", { name: file.name, contentType, size: file.size });
   if (!ALLOWED_TYPES.has(contentType)) {
     return c.json(
       {
@@ -202,8 +186,22 @@ attachments.post("/chat/sessions/:sessionId/attachments", async (c) => {
   }
 
   // Read file content
-  const buffer = await file.arrayBuffer();
+  let buffer: ArrayBuffer;
+  try {
+    buffer = await c.req.arrayBuffer();
+  } catch (readErr: any) {
+    log?.error("[UPLOAD:2] arrayBuffer() threw", {
+      error: readErr?.message?.slice(0, 300),
+      stack: readErr?.stack?.slice(0, 500),
+    });
+    return c.json({ error: `Failed to read upload body: ${readErr?.message?.slice(0, 200)}` }, 400);
+  }
   const sizeBytes = buffer.byteLength;
+  log?.info("[UPLOAD:3] File received", { filename, contentType, sizeBytes });
+
+  if (sizeBytes === 0) {
+    return c.json({ error: "Empty file — no data received" }, 400);
+  }
 
   // Validate file size
   if (sizeBytes > MAX_FILE_SIZE) {
@@ -216,7 +214,6 @@ attachments.post("/chat/sessions/:sessionId/attachments", async (c) => {
   }
 
   const attachmentId = crypto.randomUUID();
-  const filename = file.name || "attachment";
   const s3Key = attachmentS3Key(sessionId, attachmentId, filename);
   const fileData = new Uint8Array(buffer);
 

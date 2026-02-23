@@ -41,6 +41,53 @@ export async function generateInvoice(data: unknown) {
   return invoice;
 }
 
+/**
+ * Create an invoice record from a scanned document.
+ * Unlike generateInvoice(), this does NOT require an orderId —
+ * the invoice is created directly from extracted scanner data.
+ */
+export async function createInvoiceFromScan(data: {
+  externalInvoiceNumber?: string | null;
+  supplierName?: string | null;
+  subtotal?: number | null;
+  taxAmount?: number | null;
+  totalAmount?: number | null;
+  dueDate?: string | null;
+  ingestionId: string;
+  notes?: string | null;
+}) {
+  // Use the external invoice number if available, otherwise generate one
+  const invoiceNumber = data.externalInvoiceNumber || await nextInvoiceNumber();
+
+  // Check if an invoice with this number already exists (idempotency)
+  const existing = await db.query.invoices.findFirst({
+    where: eq(invoices.invoiceNumber, invoiceNumber),
+  });
+  if (existing) return existing;
+
+  const [invoice] = await db
+    .insert(invoices)
+    .values({
+      invoiceNumber,
+      status: "draft",
+      subtotal: data.subtotal != null ? String(data.subtotal) : "0",
+      taxAmount: data.taxAmount != null ? String(data.taxAmount) : "0",
+      discountAmount: "0",
+      totalAmount: data.totalAmount != null ? String(data.totalAmount) : "0",
+      dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
+      notes: data.notes ?? `Created from scanned document (ingestion ${data.ingestionId})`,
+      metadata: {
+        source: "document_scan",
+        ingestionId: data.ingestionId,
+        supplierName: data.supplierName ?? null,
+        externalInvoiceNumber: data.externalInvoiceNumber ?? null,
+      },
+    })
+    .returning();
+
+  return invoice;
+}
+
 export async function recordPayment(data: unknown) {
   const parsed = recordPaymentSchema.parse(data);
   const label = config.labels.invoice;

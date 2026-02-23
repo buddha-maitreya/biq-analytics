@@ -2,6 +2,7 @@ import { createRouter } from "@agentuity/runtime";
 import { errorMiddleware } from "@lib/errors";
 import { sessionMiddleware, type AppUser as AuthUser } from "@lib/auth";
 import * as approvalSvc from "@services/approvals";
+import { commitApprovedScan } from "@services/scan";
 
 const router = createRouter();
 router.use(errorMiddleware());
@@ -96,6 +97,35 @@ router.post("/approvals/requests/:id/decide", async (c) => {
   const auth = c.get("appUser" as any) as AuthUser;
   const body = await c.req.json();
   const result = await approvalSvc.makeDecision(c.req.param("id"), auth.id, body);
+
+  // Post-decision hook: if a scan approval was fully approved, commit the stock change
+  if (
+    result.status === "approved" &&
+    result.actionType === "inventory.scan" &&
+    result.entityType === "scan_event" &&
+    result.entityId
+  ) {
+    try {
+      const scanResult = await commitApprovedScan(result.entityId);
+      return c.json({
+        data: {
+          ...result,
+          scanCommitted: scanResult.success,
+          scanResult,
+        },
+      });
+    } catch (err) {
+      // Approval succeeded but stock commit failed — report both
+      return c.json({
+        data: {
+          ...result,
+          scanCommitted: false,
+          scanError: err instanceof Error ? err.message : String(err),
+        },
+      });
+    }
+  }
+
   return c.json({ data: result });
 });
 

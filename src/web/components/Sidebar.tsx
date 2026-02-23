@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import type { Page, AppConfig, AuthUser } from "../types";
 
 interface SidebarProps {
@@ -62,6 +62,25 @@ export default function Sidebar({ config, currentPage, onNavigate, user, onLogou
   // ── Pending approval count badge (visibility-aware, adaptive interval) ──
   const [pendingCount, setPendingCount] = useState(0);
 
+  // ── Swipe-to-close for mobile sidebar drawer ──
+  const sidebarRef = useRef<HTMLElement>(null);
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }, []);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (!touchStart.current) return;
+    const dx = e.changedTouches[0].clientX - touchStart.current.x;
+    const dy = Math.abs(e.changedTouches[0].clientY - touchStart.current.y);
+    // Swipe left (at least 60px horizontal, mostly horizontal)
+    if (dx < -60 && dy < 100) {
+      onCloseMobile();
+    }
+    touchStart.current = null;
+  }, [onCloseMobile]);
+
   // Fetch approvals count once when navigating to the Approvals page,
   // or periodically if polling is enabled in settings (approvalsPolling === "interval").
   const fetchApprovalsCount = async () => {
@@ -109,7 +128,12 @@ export default function Sidebar({ config, currentPage, onNavigate, user, onLogou
     <>
       {/* Overlay backdrop — visible only when mobile drawer is open */}
       {mobileOpen && <div className="sidebar-overlay" onClick={onCloseMobile} />}
-      <aside className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`}>
+      <aside
+        ref={sidebarRef}
+        className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
         <div className="sidebar-header">
           {config.companyLogoUrl && (
             <img src={config.companyLogoUrl} alt="" className="sidebar-logo" />

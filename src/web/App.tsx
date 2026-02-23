@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useAPI } from "@agentuity/react";
 import Sidebar from "./components/Sidebar";
+import InstallPrompt, { UpdateToast } from "./components/InstallPrompt";
 
 /** Theme hook — persists to localStorage, syncs to data-theme attribute */
 function useTheme() {
@@ -193,6 +194,8 @@ export default function App() {
         onCloseMobile={() => setSidebarOpen(false)}
       />
       <main className="main-content">
+        <InstallPrompt />
+        <UpdateToast />
         {/* Top bar — mobile hamburger + theme toggle (always top-right) */}
         <div className="content-top-bar">
           <div className="mobile-header">

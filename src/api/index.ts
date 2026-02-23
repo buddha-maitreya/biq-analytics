@@ -49,3 +49,4 @@ export { default as telemetryRoutes } from "./telemetry";
 export { default as webhookRoutes } from "./webhooks";
 export { default as attachmentRoutes } from "./attachments";
 export { default as approvalRoutes } from "./approvals";
+export { default as transferRoutes } from "./transfers";

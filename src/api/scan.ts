@@ -72,6 +72,7 @@ export const scanBodySchema = s.object({
   deviceType: s.optional(s.string()),
   quantity: s.optional(s.number()),
   scanType: s.optional(s.string()),
+  toWarehouseId: s.optional(s.string()),
   notes: s.optional(s.string()),
   idempotencyKey: s.optional(s.string()),
 });
@@ -126,6 +127,7 @@ export const batchBodySchema = s.object({
     deviceType: s.optional(s.string()),
     quantity: s.optional(s.number()),
     scanType: s.optional(s.string()),
+    toWarehouseId: s.optional(s.string()),
     notes: s.optional(s.string()),
     idempotencyKey: s.optional(s.string()),
   })),

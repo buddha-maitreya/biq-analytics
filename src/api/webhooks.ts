@@ -29,6 +29,17 @@ import { dynamicRateLimit } from "@lib/rate-limit";
 import { db, webhookSources as webhookSourcesTable, webhookEvents as webhookEventsTable } from "@db/index";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
+import { handlePosSale } from "@services/pos-webhook";
+
+// ── Service Handler Registry ───────────────────────────────
+// Maps handler names to service functions for non-agent webhook processing.
+// Service handlers receive (payload, source, eventId) and return a result.
+// If a handler name matches a registry entry, the service function is called
+// directly instead of dispatching to an Agentuity agent.
+type ServiceHandler = (payload: unknown, source: string, eventId: string) => Promise<unknown>;
+const serviceHandlers: Record<string, ServiceHandler> = {
+  pos: handlePosSale,
+};
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -250,10 +261,18 @@ webhooks.post("/webhooks/:source",
     payload = { raw: rawBody };
   }
 
-  // Dispatch to handler
+  // Dispatch to handler — service registry first, then agent fallback
+  let handlerResult: unknown = undefined;
   const handleWebhook = async () => {
     try {
-      // Dynamic agent dispatch — resolve the handler agent
+      // Check service handler registry first
+      const serviceHandler = serviceHandlers[source.handler];
+      if (serviceHandler) {
+        handlerResult = await serviceHandler(payload, sourceName, eventId);
+        return;
+      }
+
+      // Fallback: dynamic agent dispatch
       const agentModule = await import(`@agent/${source.handler}`);
       const agent = agentModule.default;
 
@@ -276,12 +295,14 @@ webhooks.post("/webhooks/:source",
         durationMs: Date.now() - startTime,
         errorMessage: err?.message,
       });
-      // Don't throw — webhook already accepted
+      // For service handlers (sync), rethrow so the caller gets the error
+      if (serviceHandlers[source.handler]) throw err;
+      // For agent handlers, don't throw — webhook already accepted
     }
   };
 
-  if (source.async) {
-    // Process async — respond immediately
+  if (source.async && !serviceHandlers[source.handler]) {
+    // Process async — respond immediately (agents only, never services)
     c.waitUntil(handleWebhook);
   } else {
     await handleWebhook();
@@ -302,7 +323,11 @@ webhooks.post("/webhooks/:source",
     payloadPreview,
   });
 
-  return c.json({ received: true, eventId });
+  return c.json({
+    received: true,
+    eventId,
+    ...(handlerResult ? { data: handlerResult } : {}),
+  });
 });
 
 /**

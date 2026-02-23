@@ -50,6 +50,13 @@
       "when": 1771842865210,
       "tag": "0006_talented_domino",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1771857734985,
+      "tag": "0007_majestic_squirrel_girl",
+      "breakpoints": true
     }
   ]
 }

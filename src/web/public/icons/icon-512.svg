@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="76.8" fill="#0f172a"/>
+  <rect x="40.96" y="40.96" width="430.08" height="430.08" rx="61.44" fill="#1e293b" stroke="#3b82f6" stroke-width="7.68"/>
+  <text x="256" y="245.76" text-anchor="middle" dominant-baseline="central" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-weight="800" font-size="194.56" fill="#3b82f6">BIQ</text>
+  <text x="256" y="348.16" text-anchor="middle" dominant-baseline="central" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-weight="500" font-size="61.44" fill="#64748b">ENTERPRISE</text>
+</svg>

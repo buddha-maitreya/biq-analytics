@@ -242,6 +242,7 @@ body {
 .app-layout {
   display: flex;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -250,6 +251,8 @@ body {
   padding: 24px 32px;
   overflow-y: auto;
   max-height: 100vh;
+  max-height: 100dvh;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
 }
 
 /* ── Content top bar (theme toggle + mobile hamburger) ── */
@@ -259,15 +262,18 @@ body {
   align-items: center;
   margin-bottom: 8px;
   min-height: 36px;
+  gap: 8px;
 }
 
 .theme-toggle-btn-main {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   cursor: pointer;
-  padding: 7px 12px;
+  padding: 8px 12px;
   border-radius: 8px;
   font-size: 18px;
+  min-width: 44px;
+  min-height: 44px;
   line-height: 1;
   transition: all 0.2s;
   display: flex;
@@ -294,6 +300,7 @@ body {
   flex-direction: column;
   flex-shrink: 0;
   height: 100vh;
+  height: 100dvh;
   position: sticky;
   top: 0;
 }
@@ -320,6 +327,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .nav-item {
@@ -689,6 +698,10 @@ body {
   padding: 10px 12px;
   border-bottom: 1px solid var(--color-border);
   vertical-align: middle;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .data-table tbody tr:hover {
@@ -2367,25 +2380,33 @@ textarea {
   position: sticky;
   top: 0;
   z-index: 90;
+  flex: 1;
+  min-width: 0;
 }
 .mobile-header-title {
   font-weight: 600;
   font-size: 16px;
   color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .hamburger-btn {
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 4px;
-  width: 38px;
-  height: 38px;
-  padding: 8px 7px;
+  width: 44px;
+  height: 44px;
+  padding: 10px 9px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-surface);
   cursor: pointer;
   flex-shrink: 0;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 .hamburger-btn span {
   display: block;
@@ -2423,6 +2444,13 @@ textarea {
   inset: 0;
   background: rgba(0,0,0,0.5);
   z-index: 999;
+  opacity: 0;
+  animation: overlay-fade-in 0.25s ease forwards;
+}
+
+@keyframes overlay-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* ===== RESPONSIVE ===== */
@@ -2440,6 +2468,7 @@ textarea {
     top: 0;
     left: 0;
     height: 100vh;
+    height: 100dvh;
     width: 280px;
     z-index: 1000;
     transform: translateX(-100%);
@@ -2477,8 +2506,14 @@ textarea {
 
   .main-content {
     padding: 16px;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
     max-height: none;
     overflow-y: visible;
+  }
+
+  /* Content top bar — spread hamburger/title and theme toggle */
+  .content-top-bar {
+    justify-content: space-between;
   }
 
   .stat-grid {
@@ -2532,10 +2567,20 @@ textarea {
     white-space: nowrap;
   }
 
-  /* Buttons — larger touch targets */
+  /* Buttons — larger touch targets (44px WCAG minimum) */
   .btn {
-    min-height: 40px;
+    min-height: 44px;
     padding: 10px 16px;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn-sm {
+    min-height: 40px;
+    padding: 8px 14px;
+  }
+  .btn-xs {
+    min-height: 36px;
+    padding: 6px 10px;
   }
 
   /* Inputs/selects — larger for touch */
@@ -9488,4 +9533,219 @@ textarea {
   background: rgba(16, 185, 129, 0.1);
   border-color: rgba(16, 185, 129, 0.25);
   color: #6ee7b7;
+}
+
+/* ===== PWA INSTALL BANNER ===== */
+
+.pwa-install-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  border-radius: 10px;
+  color: #fff;
+  animation: pwa-slide-in 0.3s ease;
+}
+
+@keyframes pwa-slide-in {
+  from { transform: translateY(-10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.pwa-install-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.pwa-install-icon {
+  font-size: 28px;
+  flex-shrink: 0;
+}
+
+.pwa-install-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pwa-install-text strong {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.pwa-install-text span {
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.pwa-install-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.pwa-install-banner .btn {
+  color: #fff;
+  border-color: rgba(255,255,255,0.3);
+  font-size: 13px;
+  min-height: 36px;
+}
+
+.pwa-install-banner .btn-primary {
+  background: rgba(255,255,255,0.2);
+}
+
+.pwa-install-banner .btn-primary:hover {
+  background: rgba(255,255,255,0.3);
+}
+
+.pwa-install-banner .btn-secondary {
+  background: transparent;
+  color: rgba(255,255,255,0.8);
+}
+
+.pwa-install-banner .btn-secondary:hover {
+  color: #fff;
+  background: rgba(255,255,255,0.1);
+}
+
+/* ===== PWA UPDATE TOAST ===== */
+
+.pwa-update-toast {
+  position: fixed;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  background: var(--color-sidebar-bg);
+  color: #fff;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  z-index: 9999;
+  animation: pwa-toast-in 0.3s ease;
+  font-size: 14px;
+}
+
+@keyframes pwa-toast-in {
+  from { transform: translateX(-50%) translateY(20px); opacity: 0; }
+  to { transform: translateX(-50%) translateY(0); opacity: 1; }
+}
+
+.pwa-update-toast .btn {
+  min-height: 32px;
+  font-size: 13px;
+}
+
+.pwa-toast-close {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.5);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px;
+  line-height: 1;
+}
+
+.pwa-toast-close:hover {
+  color: #fff;
+}
+
+/* ===== GLOBAL TOUCH IMPROVEMENTS ===== */
+
+/* Prevent 300ms tap delay on all interactive elements */
+a, button, input, select, textarea, [role="button"], .nav-item, .btn {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Active state feedback for touch devices */
+@media (hover: none) and (pointer: coarse) {
+  .btn:active:not(:disabled) {
+    transform: scale(0.97);
+    opacity: 0.85;
+  }
+
+  .nav-item:active {
+    background: rgba(255, 255, 255, 0.12) !important;
+  }
+
+  .hamburger-btn:active {
+    background: var(--color-border);
+  }
+
+  .theme-toggle-btn-main:active {
+    transform: scale(0.95);
+  }
+
+  /* Larger close button on touch devices */
+  .sidebar-close-btn {
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+  }
+}
+
+/* ===== SAFE AREA HANDLING (notched phones) ===== */
+
+@supports (padding: env(safe-area-inset-bottom)) {
+  .sidebar {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .pwa-install-banner {
+    padding-left: calc(16px + env(safe-area-inset-left, 0px));
+    padding-right: calc(16px + env(safe-area-inset-right, 0px));
+  }
+}
+
+/* ===== MOBILE RESPONSIVE — PWA BANNER ===== */
+
+@media (max-width: 480px) {
+  .pwa-install-banner {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .pwa-install-actions {
+    justify-content: stretch;
+  }
+
+  .pwa-install-actions .btn {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .pwa-update-toast {
+    left: 12px;
+    right: 12px;
+    transform: none;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  @keyframes pwa-toast-in {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+}
+
+/* ===== DARK MODE — PWA ===== */
+
+[data-theme="dark"] .pwa-install-banner {
+  background: linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%);
+}
+
+[data-theme="dark"] .pwa-update-toast {
+  background: #334155;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
 }

@@ -34,6 +34,7 @@ import {
   InsufficientStockError,
   ConflictError,
 } from "@lib/errors";
+import { submitForApproval } from "@services/approvals";
 
 // ── Validation Schemas ──────────────────────────────────────
 
@@ -46,8 +47,10 @@ export const scanRequestSchema = z.object({
   deviceType: z.enum(["web", "mobile", "scanner", "api"]).default("web"),
   /** Quantity to add/remove (defaults to 1) */
   quantity: z.number().int().min(1).default(1),
-  /** Scan type: scan_add = receiving stock, scan_remove = selling/dispatching */
-  scanType: z.enum(["scan_add", "scan_remove"]).default("scan_add"),
+  /** Scan type: scan_add = receiving, scan_remove = selling/dispatching, scan_transfer = inter-branch */
+  scanType: z.enum(["scan_add", "scan_remove", "scan_transfer"]).default("scan_add"),
+  /** Destination warehouse for scan_transfer (required when scanType = scan_transfer) */
+  toWarehouseId: z.string().uuid().optional(),
   /** Optional notes */
   notes: z.string().max(500).optional(),
   /** Client-generated UUID for idempotency (prevents duplicate submissions) */
@@ -74,6 +77,9 @@ export interface ScanResult {
   scanType: string;
   deviceType: string;
   timestamp: string;
+  /** Set when scan requires approval before stock is committed */
+  requiresApproval?: boolean;
+  approvalRequestId?: string;
 }
 
 export interface ScanError {
@@ -115,7 +121,26 @@ export async function processScan(
     scanType,
     notes,
     idempotencyKey,
+    toWarehouseId,
   } = parsed;
+
+  // Validate scan_transfer requires toWarehouseId
+  if (scanType === "scan_transfer" && !toWarehouseId) {
+    return {
+      success: false,
+      scanEventId: null,
+      error: "Destination warehouse (toWarehouseId) is required for transfer scans.",
+      errorCode: "MISSING_DESTINATION",
+    };
+  }
+  if (scanType === "scan_transfer" && toWarehouseId === warehouseId) {
+    return {
+      success: false,
+      scanEventId: null,
+      error: "Source and destination warehouses must be different.",
+      errorCode: "SAME_WAREHOUSE",
+    };
+  }
 
   // ── Step 1: Idempotency check ──
   if (idempotencyKey) {
@@ -152,6 +177,7 @@ export async function processScan(
       rawPayload: {
         barcode,
         warehouseId,
+        toWarehouseId: toWarehouseId ?? null,
         deviceType,
         quantity,
         scanType,
@@ -216,10 +242,11 @@ export async function processScan(
   }
 
   // ── Step 4: Calculate stock change ──
+  // For transfers, source warehouse stock is deducted (like a removal)
   const signedQuantity = scanType === "scan_add" ? quantity : -quantity;
 
-  // Check for sufficient stock on removals
-  if (scanType === "scan_remove") {
+  // Check for sufficient stock on removals and transfers
+  if (scanType === "scan_remove" || scanType === "scan_transfer") {
     const currentStock = await db.query.inventory.findFirst({
       where: and(
         eq(inventory.productId, product.id),
@@ -246,16 +273,120 @@ export async function processScan(
     }
   }
 
+  // ── Step 4b: Approval gate ──
+  // Check if an approval workflow exists for "inventory.scan".
+  // If the user's role isn't high enough, stage the scan instead of committing.
+  const approvalResult = await submitForApproval(userId, {
+    actionType: "inventory.scan",
+    entityType: "scan_event",
+    entityId: scanEvent.id,
+    actionData: {
+      barcode,
+      warehouseId,
+      toWarehouseId: toWarehouseId ?? null,
+      quantity,
+      scanType,
+      productId: product.id,
+      productName: product.name,
+    },
+    warehouseId,
+  });
+
+  if (approvalResult && !approvalResult.autoApproved) {
+    // Scan is staged for approval — do NOT commit stock yet
+    await db
+      .update(scanEvents)
+      .set({
+        status: "pending_approval",
+        productId: product.id,
+      })
+      .where(eq(scanEvents.id, scanEvent.id));
+
+    const existingInventory = await db.query.inventory.findFirst({
+      where: and(
+        eq(inventory.productId, product.id),
+        eq(inventory.warehouseId, warehouseId)
+      ),
+    });
+
+    return {
+      success: true,
+      scanEventId: scanEvent.id,
+      transactionId: null,
+      product: {
+        id: product.id,
+        name: product.name,
+        sku: product.sku,
+        barcode: product.barcode,
+        unit: product.unit,
+      },
+      previousStock: existingInventory?.quantity ?? 0,
+      newStock: existingInventory?.quantity ?? 0, // Unchanged — deferred
+      quantityChanged: 0,
+      warehouseId,
+      scanType,
+      deviceType,
+      timestamp: new Date().toISOString(),
+      requiresApproval: true,
+      approvalRequestId: approvalResult.requestId!,
+    };
+  }
+
+  // ── Step 5+: Commit stock (auto-approved or no workflow) ──
+  return commitScanStock({
+    scanEventId: scanEvent.id,
+    product,
+    warehouseId,
+    toWarehouseId,
+    quantity,
+    signedQuantity,
+    scanType,
+    deviceType,
+    barcode,
+    notes,
+    userId,
+    idempotencyKey,
+    parsed,
+  });
+}
+
+/**
+ * Internal: commit stock changes for a scan.
+ * Called immediately for auto-approved/no-workflow scans,
+ * or later via commitApprovedScan() when an approval is granted.
+ */
+async function commitScanStock(opts: {
+  scanEventId: string;
+  product: { id: string; name: string; sku: string; barcode: string | null; unit: string };
+  warehouseId: string;
+  toWarehouseId?: string;
+  quantity: number;
+  signedQuantity: number;
+  scanType: string;
+  deviceType: string;
+  barcode: string;
+  notes?: string;
+  userId: string;
+  idempotencyKey?: string;
+  parsed?: ScanRequest;
+}): Promise<ScanResult> {
+  const {
+    scanEventId, product, warehouseId, toWarehouseId,
+    quantity, signedQuantity, scanType, deviceType,
+    barcode, notes, userId, idempotencyKey, parsed,
+  } = opts;
+
   // ── Step 5: Insert stock transaction ──
+  const txType = scanType === "scan_transfer" ? "transfer_out" : scanType;
   const [transaction] = await db
     .insert(inventoryTransactions)
     .values({
       productId: product.id,
       warehouseId,
-      type: scanType,
+      type: txType,
       quantity: signedQuantity,
       referenceType: "scan",
-      referenceId: scanEvent.id,
+      referenceId: scanEventId,
       deviceType,
       notes: notes ?? `Scanned barcode: ${barcode}`,
       performedBy: userId,
@@ -263,7 +394,6 @@ export async function processScan(
     .returning();
 
   // ── Step 6: Atomically update inventory ──
-  // Get previous stock level
   const existingInventory = await db.query.inventory.findFirst({
     where: and(
       eq(inventory.productId, product.id),
@@ -275,7 +405,6 @@ export async function processScan(
   let newStock: number;
 
   if (existingInventory) {
-    // Atomic increment/decrement
     await db
       .update(inventory)
       .set({
@@ -284,11 +413,10 @@ export async function processScan(
       .where(eq(inventory.id, existingInventory.id));
     newStock = previousStock + signedQuantity;
   } else {
-    // First time this product is in this warehouse — insert
     await db.insert(inventory).values({
       productId: product.id,
       warehouseId,
-      quantity: Math.max(0, signedQuantity), // Can't start negative
+      quantity: Math.max(0, signedQuantity),
     });
     newStock = Math.max(0, signedQuantity);
   }
@@ -301,12 +429,12 @@ export async function processScan(
       linkedTransactionId: transaction.id,
       productId: product.id,
     })
-    .where(eq(scanEvents.id, scanEvent.id));
+    .where(eq(scanEvents.id, scanEventId));
 
   // ── Build response ──
   const response: ScanResult = {
     success: true,
-    scanEventId: scanEvent.id,
+    scanEventId,
     transactionId: transaction.id,
     product: {
       id: product.id,
@@ -325,7 +453,7 @@ export async function processScan(
   };
 
   // ── Step 8: Cache response for idempotency ──
-  if (idempotencyKey) {
+  if (idempotencyKey && parsed) {
     const requestHash = hashRequest(parsed);
     await db.insert(idempotencyKeys).values({
       key: idempotencyKey,
@@ -510,6 +638,111 @@ export async function cleanupExpiredIdempotencyKeys(): Promise<number> {
     .where(lt(idempotencyKeys.expiresAt, new Date()))
     .returning();
   return result.length;
+}
+
+// ── Approved Scan Commit ────────────────────────────────────
+
+/**
+ * Commit stock changes for a scan that was previously staged
+ * for approval. Called when a supervisor approves the scan.
+ *
+ * Reads the scan_events record, reconstructs the context, and
+ * runs the stock commit pipeline (steps 5–8 from processScan).
+ */
+export async function commitApprovedScan(
+  scanEventId: string
+): Promise<ScanResult | ScanError> {
+  const scanEvent = await db.query.scanEvents.findFirst({
+    where: eq(scanEvents.id, scanEventId),
+  });
+
+  if (!scanEvent) {
+    return {
+      success: false,
+      scanEventId,
+      error: "Scan event not found",
+      errorCode: "NOT_FOUND",
+    };
+  }
+
+  if (scanEvent.status !== "pending_approval") {
+    return {
+      success: false,
+      scanEventId,
+      error: `Scan event status is "${scanEvent.status}", expected "pending_approval"`,
+      errorCode: "INVALID_STATUS",
+    };
+  }
+
+  // Resolve product
+  const product = scanEvent.productId
+    ? await db.query.products.findFirst({
+        where: eq(products.id, scanEvent.productId),
+      })
+    : null;
+
+  if (!product) {
+    return {
+      success: false,
+      scanEventId,
+      error: "Product no longer exists for this scan event",
+      errorCode: "PRODUCT_NOT_FOUND",
+    };
+  }
+
+  const quantity = scanEvent.quantity;
+  const signedQuantity = scanEvent.scanType === "scan_add" ? quantity : -quantity;
+
+  // Re-check stock for removals/transfers
+  if (scanEvent.scanType !== "scan_add") {
+    const currentStock = await db.query.inventory.findFirst({
+      where: and(
+        eq(inventory.productId, product.id),
+        eq(inventory.warehouseId, scanEvent.warehouseId)
+      ),
+    });
+    const available = currentStock?.quantity ?? 0;
+    if (available < quantity) {
+      await db
+        .update(scanEvents)
+        .set({
+          status: "failed",
+          errorMessage: `Insufficient stock at approval time: requested ${quantity}, available ${available}`,
+        })
+        .where(eq(scanEvents.id, scanEventId));
+
+      return {
+        success: false,
+        scanEventId,
+        error: `Insufficient stock. Available: ${available}, requested: ${quantity}`,
+        errorCode: "INSUFFICIENT_STOCK",
+      };
+    }
+  }
+
+  // Extract toWarehouseId from raw payload for transfers
+  const rawPayload = scanEvent.rawPayload as Record<string, unknown> | null;
+  const toWarehouseId = rawPayload?.toWarehouseId as string | undefined;
+
+  return commitScanStock({
+    scanEventId,
+    product: {
+      id: product.id,
+      name: product.name,
+      sku: product.sku,
+      barcode: product.barcode,
+      unit: product.unit,
+    },
+    warehouseId: scanEvent.warehouseId,
+    toWarehouseId,
+    quantity,
+    signedQuantity,
+    scanType: scanEvent.scanType,
+    deviceType: scanEvent.deviceType,
+    barcode: scanEvent.barcode,
+    notes: undefined,
+    userId: scanEvent.userId,
+  });
 }
 
 // ── Utilities ───────────────────────────────────────────────

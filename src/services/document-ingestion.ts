@@ -30,6 +30,7 @@ import {
 } from "@db/index";
 import { eq, and, or, ilike, sql } from "drizzle-orm";
 import { submitForApproval } from "./approvals";
+import { createInvoiceFromScan } from "./invoices";
 import { z } from "zod";
 
 // ─── Types ────────────────────────────────────────────────────
@@ -326,6 +327,11 @@ export async function stageInvoiceIngestion(input: {
   // Document-level dedup
   const dupCheck = await checkDocumentDuplicate(documentHash ?? null, externalRef);
 
+  // If duplicate detected, return the existing ingestion instead of inserting new rows
+  if (dupCheck.isDuplicate && dupCheck.existingId) {
+    return returnExistingIngestion(dupCheck.existingId, dupCheck);
+  }
+
   const lineItems = scannerOutput.lineItems ?? [];
 
   // Run dedup on each line item
@@ -341,7 +347,7 @@ export async function stageInvoiceIngestion(input: {
       .insert(documentIngestions)
       .values({
         mode: "invoice",
-        status: dupCheck.isDuplicate ? "duplicate_warning" : "staged",
+        status: "staged",
         documentHash: documentHash ?? null,
         externalRef,
         sourceFilename: sourceFilename ?? null,
@@ -405,6 +411,11 @@ export async function stageStockSheetIngestion(input: {
   // Document-level dedup (no external ref for stock sheets typically)
   const dupCheck = await checkDocumentDuplicate(documentHash ?? null, null);
 
+  // If duplicate detected, return the existing ingestion instead of inserting new rows
+  if (dupCheck.isDuplicate && dupCheck.existingId) {
+    return returnExistingIngestion(dupCheck.existingId, dupCheck);
+  }
+
   const lineItems = scannerOutput.items ?? [];
 
   // Run dedup on each line item
@@ -419,7 +430,7 @@ export async function stageStockSheetIngestion(input: {
       .insert(documentIngestions)
       .values({
         mode: "stock-sheet",
-        status: dupCheck.isDuplicate ? "duplicate_warning" : "staged",
+        status: "staged",
         documentHash: documentHash ?? null,
         sourceFilename: sourceFilename ?? null,
         confidence: confidence != null ? String(confidence) : null,
@@ -736,6 +747,26 @@ export async function commitIngestion(
       .where(eq(documentIngestions.id, ingestionId));
   });
 
+  // If this was an invoice scan, create a proper invoice record
+  // so it appears on the Invoices page.
+  if (ingestion.mode === "invoice" && committed > 0) {
+    try {
+      const scanData = ingestion.scannerOutput as Record<string, unknown> | null;
+      await createInvoiceFromScan({
+        externalInvoiceNumber: (scanData?.invoiceNumber as string) ?? null,
+        supplierName: (scanData?.supplierName as string) ?? null,
+        subtotal: scanData?.subtotal != null ? Number(scanData.subtotal) : null,
+        taxAmount: scanData?.taxAmount != null ? Number(scanData.taxAmount) : null,
+        totalAmount: scanData?.totalAmount != null ? Number(scanData.totalAmount) : null,
+        dueDate: (scanData?.dueDate as string) ?? null,
+        ingestionId,
+      });
+    } catch {
+      // Non-fatal — inventory was already committed; log but don't fail
+      errors.push("Invoice record creation failed (inventory was committed successfully)");
+    }
+  }
+
   return { committed, skipped, errors };
 }
 
@@ -833,6 +864,40 @@ async function getDefaultWarehouseId(): Promise<string | null> {
     columns: { id: true },
   });
   return anyWh?.id ?? null;
+}
+
+/** Return existing ingestion when duplicate detected (no new rows inserted) */
+async function returnExistingIngestion(
+  existingId: string,
+  dupCheck: { isDuplicate: boolean; existingId?: string; reason?: string }
+): Promise<IngestionResult> {
+  const existing = await db.query.documentIngestions.findFirst({
+    where: eq(documentIngestions.id, existingId),
+    with: { items: true },
+  });
+
+  if (!existing) {
+    throw new Error(`Duplicate ingestion ${existingId} referenced but not found`);
+  }
+
+  return {
+    ingestionId: existing.id,
+    mode: existing.mode,
+    status: existing.status,
+    itemCount: existing.items?.length ?? 0,
+    items: (existing.items ?? []).map((item: any) => ({
+      lineNumber: item.lineNumber ?? 0,
+      rawName: item.rawName ?? null,
+      rawSku: item.rawSku ?? null,
+      action: item.userOverrideAction ?? item.action ?? "needs_review",
+      matchType: item.matchType ?? null,
+      matchConfidence: item.matchConfidence != null ? Number(item.matchConfidence) : null,
+      matchedProductName: null, // not stored on the item row
+    })),
+    duplicateWarning: dupCheck.reason,
+    requiresApproval: false,
+    approvalRequestId: null,
+  };
 }
 
 /** Format ingestion + dedup results into a clean response */

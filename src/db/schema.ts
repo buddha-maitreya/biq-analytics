@@ -286,6 +286,103 @@ export const idempotencyKeys = pgTable(
 );
 
 // ============================================================
+// Inter-Branch Transfer Orders
+// ============================================================
+
+/**
+ * Transfer Orders — scan-based inventory transfers between warehouses.
+ *
+ * Status flow:
+ *   draft → dispatched → in_transit → received | completed_with_discrepancy
+ *
+ * Source stock is deducted on dispatch (transfer_out transactions).
+ * Destination stock is credited only on acceptance (transfer_in transactions).
+ */
+export const transferOrders = pgTable(
+  "transfer_orders",
+  {
+    id: id(),
+    /** Source warehouse (stock leaves here) */
+    fromWarehouseId: uuid("from_warehouse_id")
+      .notNull()
+      .references(() => warehouses.id),
+    /** Destination warehouse (stock arrives here) */
+    toWarehouseId: uuid("to_warehouse_id")
+      .notNull()
+      .references(() => warehouses.id),
+    /** Current status */
+    status: varchar("status", { length: 40 })
+      .notNull()
+      .default("draft"),
+    /** How the destination accepts: scan, manual, or null (any) */
+    acceptanceMode: varchar("acceptance_mode", { length: 20 }),
+    /** User who initiated the transfer */
+    initiatedBy: uuid("initiated_by")
+      .notNull()
+      .references(() => users.id),
+    /** User who accepted/received at destination */
+    receivedBy: uuid("received_by").references(() => users.id),
+    /** When the transfer was dispatched */
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    /** When the transfer was received at destination */
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    /** Free-form notes (driver info, vehicle, ETA, etc.) */
+    notes: text("notes"),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_transfer_orders_from").on(t.fromWarehouseId),
+    index("idx_transfer_orders_to").on(t.toWarehouseId),
+    index("idx_transfer_orders_status").on(t.status),
+    index("idx_transfer_orders_initiated").on(t.initiatedBy),
+    index("idx_transfer_orders_created").on(t.createdAt),
+  ]
+);
+
+/**
+ * Transfer Order Items — individual products within a transfer.
+ *
+ * expectedQuantity = what was dispatched from source.
+ * receivedQuantity = what was counted/scanned at destination (null until accepted).
+ * Discrepancies are flagged when received ≠ expected.
+ */
+export const transferOrderItems = pgTable(
+  "transfer_order_items",
+  {
+    id: id(),
+    /** Parent transfer order */
+    transferOrderId: uuid("transfer_order_id")
+      .notNull()
+      .references(() => transferOrders.id, { onDelete: "cascade" }),
+    /** Product being transferred */
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id),
+    /** Quantity dispatched from source */
+    expectedQuantity: integer("expected_quantity").notNull(),
+    /** Quantity actually dispatched (may differ if partial dispatch) */
+    dispatchedQuantity: integer("dispatched_quantity").notNull(),
+    /** Quantity received at destination (null until acceptance) */
+    receivedQuantity: integer("received_quantity"),
+    /** Reason for discrepancy (if any) */
+    discrepancyReason: varchar("discrepancy_reason", { length: 30 }),
+    /** Free-text note about discrepancy */
+    discrepancyNote: text("discrepancy_note"),
+    /** When this item was accepted at destination */
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    /** Who accepted this item */
+    acceptedBy: uuid("accepted_by").references(() => users.id),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_transfer_items_order").on(t.transferOrderId),
+    index("idx_transfer_items_product").on(t.productId),
+  ]
+);
+
+// ============================================================
 // Sales Tables
 // ============================================================
 
@@ -1017,6 +1114,47 @@ export const scanEventsRelations = relations(scanEvents, ({ one }) => ({
   product: one(products, {
     fields: [scanEvents.productId],
     references: [products.id],
+  }),
+}));
+
+// ── Transfer Order Relations ──
+
+export const transferOrdersRelations = relations(transferOrders, ({ one, many }) => ({
+  fromWarehouse: one(warehouses, {
+    fields: [transferOrders.fromWarehouseId],
+    references: [warehouses.id],
+    relationName: "transfersOut",
+  }),
+  toWarehouse: one(warehouses, {
+    fields: [transferOrders.toWarehouseId],
+    references: [warehouses.id],
+    relationName: "transfersIn",
+  }),
+  initiator: one(users, {
+    fields: [transferOrders.initiatedBy],
+    references: [users.id],
+    relationName: "transferInitiator",
+  }),
+  receiver: one(users, {
+    fields: [transferOrders.receivedBy],
+    references: [users.id],
+    relationName: "transferReceiver",
+  }),
+  items: many(transferOrderItems),
+}));
+
+export const transferOrderItemsRelations = relations(transferOrderItems, ({ one }) => ({
+  transferOrder: one(transferOrders, {
+    fields: [transferOrderItems.transferOrderId],
+    references: [transferOrders.id],
+  }),
+  product: one(products, {
+    fields: [transferOrderItems.productId],
+    references: [products.id],
+  }),
+  acceptedByUser: one(users, {
+    fields: [transferOrderItems.acceptedBy],
+    references: [users.id],
   }),
 }));
 

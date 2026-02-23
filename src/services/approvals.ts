@@ -261,6 +261,23 @@ const DEFAULT_WORKFLOWS = [
     ],
   },
   {
+    actionType: "inventory.scan",
+    name: "Scan Stock Change",
+    description: "Requires manager approval when staff scans inventory changes. Auto-approved for managers and above.",
+    autoApproveAboveRole: "manager",
+    steps: [
+      { stepOrder: 1, approverRole: "manager", label: "Manager Scan Approval" },
+    ],
+  },
+  {
+    actionType: "inventory.transfer",
+    name: "Inventory Transfer",
+    description: "Requires manager approval for inter-branch inventory transfers.",
+    steps: [
+      { stepOrder: 1, approverRole: "manager", label: "Manager Transfer Approval" },
+    ],
+  },
+  {
     actionType: "order.large_order",
     name: "Large Order Approval",
     description: "Orders above the configured threshold require manager and admin approval.",

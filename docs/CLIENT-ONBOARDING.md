@@ -12,10 +12,11 @@ This guide covers the complete process for onboarding a new client, from initial
 2. [Deployment Workflow](#deployment-workflow)
 3. [Database Setup](#database-setup)
 4. [Environment Configuration](#environment-configuration)
-5. [Analytics Sandbox Setup (Python)](#analytics-sandbox-setup-python)
-6. [Post-Deployment Verification](#post-deployment-verification)
-7. [Agent Configuration](#agent-configuration)
-8. [Troubleshooting](#troubleshooting)
+5. [POS Integration](#pos-integration)
+6. [Analytics Sandbox Setup (Python)](#analytics-sandbox-setup-python)
+7. [Post-Deployment Verification](#post-deployment-verification)
+8. [Agent Configuration](#agent-configuration)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -193,6 +194,246 @@ All client-specific values are injected via environment variables:
 | Variable | Purpose |
 |----------|---------|
 | `COMPANY_LOGO_URL` | Client logo URL (displayed in app + reports) |
+
+---
+
+## POS Integration
+
+Business IQ Enterprise picks up sales data **in real time** from the client's existing POS terminal. The POS handles payment collection (cash, card, M-Pesa). BIQ receives completed sale data, creates orders, and deducts stock automatically.
+
+### Architecture
+
+```
+Customer pays at POS terminal
+        │
+        ▼
+ POS Terminal (cash / card / M-Pesa)
+        │
+        ├── Processes payment
+        ├── Prints receipt
+        │
+        ▼
+ POST /api/webhooks/pos   ← POS sends sale data
+        │
+        ├── Verify HMAC signature
+        ├── Deduplicate by receipt ID (idempotent)
+        ├── Resolve products by SKU or barcode
+        ├── Create order + deduct stock
+        │
+        ▼
+ Order appears in BIQ immediately
+ (stock updated, payment recorded)
+```
+
+**Key principle:** BIQ does NOT process payments. The POS terminal handles all payment collection. BIQ only records the sale outcome.
+
+### Step 1: Register the POS Webhook Source
+
+After deployment, register the POS terminal as a webhook source. This is a one-time setup per client.
+
+**Via API (recommended):**
+
+```bash
+curl -X POST https://<deployment-url>/api/webhooks/register \
+  -H "Authorization: Bearer <admin-session-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "pos",
+    "handler": "pos",
+    "async": false,
+    "secret": "<shared-secret>",
+    "signatureHeader": "x-signature"
+  }'
+```
+
+| Field | Value | Notes |
+|-------|-------|-------|
+| `name` | `pos` | Webhook source identifier. Must be `pos` for the POS handler. |
+| `handler` | `pos` | Maps to the built-in POS service handler. |
+| `async` | `false` | **Must be false** — POS needs a synchronous response with the order ID. |
+| `secret` | Client-specific | HMAC-SHA256 shared secret. Generate one per client: `openssl rand -hex 32` |
+| `signatureHeader` | `x-signature` | HTTP header the POS sends the HMAC signature in. |
+
+**Via Admin UI:**
+
+Navigate to Admin → Webhooks → Register Source. Fill in the same values.
+
+### Step 2: Configure the POS Terminal
+
+Configure the client's POS terminal to POST completed sales to:
+
+```
+POST https://<deployment-url>/api/webhooks/pos
+```
+
+**Required headers:**
+
+| Header | Value |
+|--------|-------|
+| `Content-Type` | `application/json` |
+| `x-signature` | HMAC-SHA256 hex digest of the request body, using the shared secret |
+
+**HMAC signature computation (for POS vendor integration):**
+
+```
+signature = HMAC-SHA256(shared_secret, request_body)
+# Send as hex string in x-signature header
+```
+
+### Step 3: Payload Format
+
+The POS terminal must POST JSON in this format:
+
+```json
+{
+  "receiptId": "RCP-001234",
+  "terminalId": "T001",
+  "cashierId": "jane",
+  "timestamp": "2026-02-23T14:30:00Z",
+  "items": [
+    {
+      "sku": "WIDGET-001",
+      "quantity": 2,
+      "unitPrice": 1500,
+      "discount": 0
+    },
+    {
+      "barcode": "6001234567890",
+      "quantity": 1
+    }
+  ],
+  "payment": {
+    "method": "mpesa",
+    "reference": "QKD3F7HXYZ",
+    "status": "paid"
+  },
+  "customer": {
+    "phone": "+254712345678"
+  }
+}
+```
+
+**Payload reference:**
+
+| Field | Required | Type | Notes |
+|-------|----------|------|-------|
+| `receiptId` | **Yes** | string | Unique receipt ID from POS. Used for idempotency — same receipt won't create duplicate orders. |
+| `terminalId` | No | string | POS terminal identifier |
+| `cashierId` | No | string | Cashier/operator ID |
+| `timestamp` | No | ISO 8601 | When the sale occurred. Defaults to now. |
+| `warehouseId` | No | UUID | Source warehouse. Defaults to the deployment's default warehouse. |
+| `items` | **Yes** | array | At least one item required |
+| `items[].sku` | Yes* | string | Product SKU — primary lookup key |
+| `items[].barcode` | Yes* | string | Product barcode — fallback lookup |
+| `items[].productId` | Yes* | UUID | Direct product UUID — if POS knows it |
+| `items[].quantity` | **Yes** | integer | Quantity sold (min 1) |
+| `items[].unitPrice` | No | number | Unit price from POS. Defaults to product price in BIQ. |
+| `items[].discount` | No | number | Line item discount amount |
+| `payment.method` | No | string | `cash`, `card`, `card_pdq`, `mpesa`, `bank_transfer` |
+| `payment.reference` | No | string | External ref: M-Pesa receipt code, card approval number |
+| `payment.status` | No | enum | `paid` (default), `pending`, `partial` |
+| `customer.id` | No | UUID | Customer UUID if POS knows it |
+| `customer.phone` | No | string | Customer phone — used to match existing customers |
+| `customer.name` | No | string | Reference only |
+| `metadata` | No | object | Arbitrary POS-specific data |
+
+*At least one of `sku`, `barcode`, or `productId` is required per item.
+
+### Step 4: Response Format
+
+The POS receives a synchronous response:
+
+```json
+{
+  "received": true,
+  "eventId": "a1b2c3d4-...",
+  "data": {
+    "duplicate": false,
+    "orderId": "f5e6d7c8-...",
+    "orderNumber": "ORD-000047",
+    "totalAmount": "4500.00",
+    "itemsProcessed": 2,
+    "itemsNotFound": [],
+    "paymentStatus": "paid"
+  }
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `data.duplicate` | boolean | `true` if this `receiptId` was already processed (idempotent) |
+| `data.orderId` | UUID | BIQ order ID |
+| `data.orderNumber` | string | Sequential order number (e.g., `ORD-000047`) |
+| `data.totalAmount` | string | Computed total including tax |
+| `data.itemsProcessed` | number | How many items were resolved and ordered |
+| `data.itemsNotFound` | string[] | SKUs/barcodes that didn't match any product in BIQ |
+| `data.paymentStatus` | string | Payment status recorded on the order |
+
+### What Happens Automatically
+
+1. **Stock deduction** — inventory is reduced immediately for each item sold
+2. **Idempotency** — same `receiptId` within 24 hours returns the cached result (no double-counting)
+3. **Product resolution** — items are matched by SKU first, then barcode, then product UUID
+4. **Customer matching** — if a phone number is provided, the sale is linked to the existing customer
+5. **Payment recording** — payment method and reference (e.g., M-Pesa receipt) stored on the order
+6. **Audit trail** — inventory transactions recorded with `type: "sale"`, linked to the order
+7. **Webhook event log** — every POS POST is logged in `webhook_events` for debugging
+
+### Error Handling
+
+| HTTP Status | Error | Cause | POS Action |
+|-------------|-------|-------|------------|
+| `200` | — | Sale processed successfully | Done |
+| `401` | Invalid signature | HMAC verification failed | Check shared secret |
+| `404` | Webhook source not found | POS source not registered | Register via `/api/webhooks/register` |
+| `400` | Validation error | Missing required fields or no products found | Fix payload format |
+| `429` | Rate limit exceeded | Too many requests per minute | Retry after backoff |
+
+### Generating an HMAC Secret
+
+Generate a unique secret for each client deployment:
+
+```bash
+# From PowerShell:
+[System.BitConverter]::ToString((1..32 | ForEach-Object { Get-Random -Max 256 })).Replace('-','').ToLower()
+
+# From bash/WSL:
+openssl rand -hex 32
+```
+
+Store this secret in two places:
+1. **BIQ** — passed in the `secret` field when registering the webhook source
+2. **POS terminal** — configured in the POS integration settings
+
+### Testing the POS Webhook
+
+After registration, test with curl:
+
+```bash
+# Generate HMAC signature
+SECRET="your-shared-secret"
+BODY='{"receiptId":"TEST-001","items":[{"sku":"TEST-SKU","quantity":1}],"payment":{"method":"cash","status":"paid"}}'
+SIG=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')
+
+# Send test webhook
+curl -X POST https://<deployment-url>/api/webhooks/pos \
+  -H "Content-Type: application/json" \
+  -H "x-signature: $SIG" \
+  -d "$BODY"
+```
+
+### POS Vendor Integration Notes
+
+Different POS vendors have different integration methods. Common patterns:
+
+| POS Type | Integration Method | Notes |
+|----------|-------------------|-------|
+| **Modern cloud POS** (e.g., Square, Loyverse) | Webhook/API built-in | Configure webhook URL in POS settings |
+| **Android POS** (common in Kenya) | Custom middleware app | Build a small app that intercepts POS receipts and POSTs to BIQ |
+| **Desktop POS** (e.g., QuickBooks POS) | Integration script | Script runs on POS machine, watches for new sales, POSTs to BIQ |
+| **Receipt printer POS** (basic) | Manual or OCR | Not ideal for real-time — consider upgrading to a POS with API support |
+
+For the first client deployment, work with the POS vendor to configure their webhook/API to POST to the BIQ endpoint. Most modern POS systems support outgoing webhooks.
 
 ---
 
@@ -621,6 +862,9 @@ Use this checklist when deploying for a new client:
 - [ ] **Deploy** — `agentuity deploy` from WSL
 - [ ] **Run migrations** — `bunx drizzle-kit migrate`
 - [ ] **Seed admin user** — `bun demo/seed-auth.ts`
+- [ ] **Register POS webhook** — `POST /api/webhooks/register` with `name: "pos"`, `handler: "pos"`
+- [ ] **Configure POS terminal** — Set webhook URL + HMAC secret on client's POS
+- [ ] **Test POS webhook** — Send test sale, verify order created + stock deducted
 - [ ] **Create analytics snapshot** — `POST /admin/sandbox/snapshot`
 - [ ] **Configure snapshot ID** — Set in insights-analyzer + data-science agent configs
 - [ ] **Verify health** — `GET /api/health`
@@ -651,6 +895,9 @@ wsl -d Ubuntu-24.04 -- bash -lc "source ~/.bashrc && agentuity cloud deployment 
 |----------|--------|---------|
 | `/api/health` | GET | Health check |
 | `/api/config` | GET | App configuration |
+| `/api/webhooks/register` | POST | Register a webhook source (e.g., POS terminal) |
+| `/api/webhooks/pos` | POST | POS sale webhook endpoint (no auth — HMAC verified) |
+| `/api/webhooks` | GET | List webhook sources + recent events |
 | `/api/admin/sandbox/snapshot` | POST | Create Python analytics snapshot |
 | `/api/agent-configs/:agentName` | GET/PUT | Agent configuration |
 | `/api/admin/stats` | GET | Dashboard statistics |

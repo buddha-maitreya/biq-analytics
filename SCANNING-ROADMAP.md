@@ -281,7 +281,7 @@ Frontend (`src/web/pages/ScanPage.tsx`):
 
 ---
 
-## Phase 6 — Scan Approval Workflow 🔲 NOT STARTED
+## Phase 6 — Scan Approval Workflow ✅ BUILT
 
 ### Vision
 Scans by lower-role users (staff) are staged for batch approval by their supervisor/manager before stock is committed. This prevents unauthorized stock changes and creates an auditable approval trail.
@@ -299,32 +299,32 @@ Scans by lower-role users (staff) are staged for batch approval by their supervi
 | ApprovalsPage UI (tabs, pending badge, decide flow) | ✅ Frontend built | `src/web/pages/ApprovalsPage.tsx` |
 | Document ingestion → approval pipeline | ✅ Wired | `src/services/document-ingestion.ts` |
 
-### What Needs Building
-1. **Wire `processScan()` to the approval system:**
-   - After `processScan()` logs the `scan_events` record but BEFORE committing the stock transaction, check if an `inventory.scan` approval workflow exists and is active
-   - If staff scans → create `approval_request` with `entityType: "scan_event"`, `entityId: scanEvent.id`, stage the scan as `pending_approval` instead of immediately updating stock
-   - If manager/admin scans → auto-approve (based on `autoApproveAboveRole`)
-   - Scan response should indicate `{ requiresApproval: true, approvalRequestId: "uuid" }`
+### What Was Built
+1. **`processScan()` wired to approval system:**
+   - ✅ After logging `scan_events` but BEFORE stock commit, checks `inventory.scan` workflow
+   - ✅ Staff scans → `approval_request` with `entityType: "scan_event"`, scan status = `pending_approval`
+   - ✅ Manager/admin scans → auto-approve via `autoApproveAboveRole: "manager"`
+   - ✅ Response includes `{ requiresApproval: true, approvalRequestId: "uuid" }`
 
-2. **Batch scan approval UI:**
-   - ApprovalsPage already has the infrastructure — add a "Scan Approvals" filter/tab
-   - Show staged scans grouped by staff member: barcode, product, quantity, warehouse, timestamp
-   - "Approve All" / "Reject All" batch actions with manager comment
-   - On approve → commit the stock transactions (deferred `adjustStock()`)
-   - On reject → mark scan_event as `rejected`, no stock change
+2. **Deferred stock commit on approval:**
+   - ✅ `commitApprovedScan()` function in `src/services/scan.ts`
+   - ✅ Approval decide endpoint calls `commitApprovedScan()` when `inventory.scan` approval is approved
+   - ✅ Re-validates stock levels at approval time (prevents stale quantity commits)
+   - ✅ Rejected scans leave `scan_events` as `pending_approval` (no stock change)
 
-3. **Approval-gated scan types (configurable per deployment):**
-   - `SCAN_APPROVAL_REQUIRED_FOR=staff` (env var) — only staff need approval
-   - `SCAN_APPROVAL_THRESHOLD=10` — only scans with qty > threshold need approval
-   - `SCAN_AUTO_APPROVE_ROLES=manager,admin` — these roles bypass approval
+3. **Default `inventory.scan` workflow seeded:**
+   - ✅ Auto-approve for managers and above (`autoApproveAboveRole: "manager"`)
+   - ✅ Staff scans require 1-step manager approval
+   - ✅ `inventory.transfer` workflow also added for transfer order approvals
 
-4. **SSE notification to supervisor:**
-   - When staff scan is staged → push SSE event to their supervisor's active sessions
-   - Supervisor sees real-time "3 scans pending your approval" badge
+4. **Future enhancements (not yet built):**
+   - 🔲 Batch "Approve All" / "Reject All" for grouped scan approvals
+   - 🔲 SSE notification to supervisor when staff scans are staged
+   - 🔲 Configurable env vars: `SCAN_APPROVAL_THRESHOLD`, `SCAN_AUTO_APPROVE_ROLES`
 
 ---
 
-## Phase 7 — Inter-Branch Transfer Scanning 🔲 NOT STARTED
+## Phase 7 — Inter-Branch Transfer Scanning ✅ BUILT
 
 ### Vision
 Full scan-based transfer workflow between warehouses/branches. Scanning at the departure warehouse creates a transfer order. Scanning at the destination warehouse accepts the incoming inventory. Goods are tracked as "in transit" between the two events.
@@ -336,67 +336,64 @@ Full scan-based transfer workflow between warehouses/branches. Scanning at the d
 | `inventory_transactions.type` supports `transfer_out` / `transfer_in` | ✅ Schema built | `src/db/schema.ts` |
 | `scan_transfer` option in ScanPage dropdown UI | ✅ UI exists | `src/web/pages/ScanPage.tsx` |
 
-### What Needs Building
+### What Was Built
 
-**⚠️ Known Bug:** `scan_transfer` is in the ScanPage dropdown, but the scan service Zod schema only accepts `scan_add | scan_remove`. Selecting "Transfer" in the UI will fail validation. Must add `scan_transfer` to the enum + build the transfer flow.
+**Bug Fixed:** `scan_transfer` added to Zod enum in `scanRequestSchema` — UI dropdown now works end-to-end.
 
-1. **Transfer Order entity (new schema):**
-   - `transfer_orders` table: `id`, `fromWarehouseId`, `toWarehouseId`, `status` (draft → dispatched → in_transit → received → completed | completed_with_discrepancy), `acceptanceMode` (scan | manual | null=any), `initiatedBy`, `receivedBy`, `dispatchedAt`, `receivedAt`, `notes`, `metadata`
-   - `transfer_order_items` table: `id`, `transferOrderId`, `productId`, `expectedQuantity`, `dispatchedQuantity`, `receivedQuantity`, `discrepancyReason` (damaged | missing | wrong_item | over_delivery | other | null), `discrepancyNote`, `acceptedAt`, `acceptedBy`
-   - **Key constraint:** destination `inventory` is NOT updated until the transfer order item has `receivedQuantity` set and the order status moves past `in_transit`
+1. **Transfer Order schema (new tables):** ✅
+   - `transfer_orders` table: `id`, `fromWarehouseId`, `toWarehouseId`, `status` (draft → in_transit → received | completed_with_discrepancy), `acceptanceMode`, `initiatedBy`, `receivedBy`, `dispatchedAt`, `receivedAt`, `notes`, `metadata`
+   - `transfer_order_items` table: `id`, `transferOrderId`, `productId`, `expectedQuantity`, `dispatchedQuantity`, `receivedQuantity`, `discrepancyReason`, `discrepancyNote`, `acceptedAt`, `acceptedBy`
+   - Relations configured for products, warehouses, users
+   - Migration generated and applied (`0007_majestic_squirrel_girl.sql`)
 
-2. **Departure scanning flow:**
-   - User selects `scan_transfer` + picks destination warehouse
-   - Each barcode scan adds items to a transfer order (draft state)
-   - "Dispatch" button finalizes → status becomes `in_transit`
-   - Source warehouse stock is deducted (`transfer_out` transactions)
-   - Transfer order ID is recorded as `referenceId` on scan_events
+2. **Transfer service (`src/services/transfer.ts`):** ✅
+   - `createTransferOrder()` — create draft with items
+   - `addTransferItem()` / `removeTransferItem()` — modify draft
+   - `dispatchTransferOrder()` — validate stock, deduct source, record `transfer_out` transactions, mark `in_transit`
+   - `receiveTransferItem()` — accept single item (manual entry)
+   - `receiveTransferByBarcode()` — accept by barcode scan (incremental scanning)
+   - `receiveTransferItems()` — batch manual count mode
+   - `completeTransferOrder()` — credit destination stock, detect discrepancies, record `transfer_in` transactions
+   - `cancelTransferOrder()` — cancel draft (no stock deducted)
+   - `getTransferStats()` — dashboard summary stats
 
-3. **In-transit tracking:**
-   - Dashboard shows goods in transit between branches
-   - Transfer order is visible to both source and destination warehouse users
-   - Optional: ETA, vehicle/driver info in metadata
+3. **Transfer API (`src/api/transfers.ts`):** ✅
+   - `POST /api/transfers` — create transfer order
+   - `GET /api/transfers` — list with filters (status, warehouse)
+   - `GET /api/transfers/stats` — summary stats
+   - `GET /api/transfers/:id` — get with items + product details
+   - `POST /api/transfers/:id/items` — add item to draft
+   - `DELETE /api/transfers/:id/items/:itemId` — remove item from draft
+   - `POST /api/transfers/:id/dispatch` — dispatch (deduct source)
+   - `POST /api/transfers/:id/receive` — receive batch (manual count)
+   - `POST /api/transfers/:id/receive/scan` — receive by barcode scan
+   - `POST /api/transfers/:id/complete` — complete transfer (credit dest)
+   - `DELETE /api/transfers/:id` — cancel draft
 
-4. **Destination acceptance (two modes — scan OR manual count):**
+4. **Scan pipeline integration:** ✅
+   - `scanRequestSchema` now accepts `scan_add | scan_remove | scan_transfer`
+   - `toWarehouseId` field added to scan request for transfers
+   - Source warehouse stock validation for transfers (same as removals)
+   - Transfer scan events recorded with `toWarehouseId` in raw payload
 
-   The destination branch has **two equally valid** ways to confirm receipt. The system does NOT prescribe which method to use — each branch picks what works for them. Stock is NEVER credited until acceptance is confirmed.
+5. **Destination acceptance (two modes):** ✅
+   - **Mode A — Scan to Accept:** `POST /api/transfers/:id/receive/scan` — barcode → match → increment `receivedQuantity`
+   - **Mode B — Manual Count:** `POST /api/transfers/:id/receive` — batch update with quantities per item
+   - Both support discrepancy detection, reasons, and notes
+   - Stock NOT credited until `completeTransferOrder()` is called
 
-   **Mode A — Scan to Accept:**
-   - Destination staff opens the pending transfer order
-   - Scans each item barcode → system matches against expected items, updates `receivedQuantity`
-   - Real-time progress: "12/15 items scanned" with visual checklist
-   - Unscanned items highlighted after scan session ends
-   - "Confirm Receipt" button finalizes → destination stock credited (`transfer_in` transactions)
+6. **Discrepancy detection:** ✅
+   - `receivedQuantity ≠ expectedQuantity` → auto-flags reason (missing/over_delivery)
+   - Status: `received` (all match) vs `completed_with_discrepancy` (mismatch)
+   - Per-item discrepancy reasons: damaged, missing, wrong_item, over_delivery, other
 
-   **Mode B — Manual Count & Approve:**
-   - Destination staff opens the pending transfer order
-   - Sees full item list with expected quantities
-   - Enters actual received quantity per item (editable number fields)
-   - Can add per-item notes (e.g., "2 units damaged", "1 missing")
-   - "Approve as Received" button finalizes → destination stock credited
-
-   **Both modes share:**
-   - Discrepancy detection: `receivedQuantity ≠ expectedQuantity` → auto-flags for investigation
-   - Partial acceptance: can accept some items now, leave others pending
-   - Discrepancy reasons: dropdown (damaged, missing, wrong_item, over_delivery, other) + free text
-   - Status flow: `in_transit` → `received` (all items match) OR `completed_with_discrepancy` (mismatch)
-   - Notification: source warehouse gets SSE alert when transfer is accepted (with discrepancy summary if any)
-
-5. **Flexible configuration (env vars — not rigid):**
-   - `TRANSFER_ACCEPTANCE_MODE=any` → branch staff choose scan or manual (default)
-   - `TRANSFER_ACCEPTANCE_MODE=scan_only` → must scan to accept (high-security deployments)
-   - `TRANSFER_ACCEPTANCE_MODE=manual_only` → count-and-approve only (low-tech branches)
-   - `TRANSFER_AUTO_ACCEPT_BELOW=5` → transfers with fewer items auto-accept on arrival (small moves)
-   - `TRANSFER_DISCREPANCY_THRESHOLD=0.1` → flag if received qty differs by >10%
-
-6. **Integration with approval workflow:**
-   - Transfer orders above a threshold value → require manager approval before dispatch
-   - Uses same approval_workflows infrastructure (actionType: `inventory.transfer`)
-
-7. **Transfer history & audit:**
-   - Full transfer history page: source → destination, items, quantities, discrepancies
-   - Linked scan_events for both departure and arrival scans
-   - Transaction audit trail with `referenceType: "transfer"`, `referenceId: transferOrderId`
+7. **Future enhancements (not yet built):**
+   - 🔲 Frontend transfer UI (TransfersPage, dispatch flow, receive flow)
+   - 🔲 SSE notification to destination warehouse on dispatch
+   - 🔲 SSE notification to source warehouse on acceptance (with discrepancy summary)
+   - 🔲 Configurable env vars: `TRANSFER_ACCEPTANCE_MODE`, `TRANSFER_AUTO_ACCEPT_BELOW`
+   - 🔲 Integration with approval workflow for high-value transfers
+   - 🔲 In-transit dashboard widget
 
 ---
 
@@ -407,23 +404,17 @@ Transform scanning from a transactional operation into an intelligent, AI-assist
 
 ### Planned Features
 
-1. **Voice narration capture (Web Speech API):**
-   - Workers dictate notes hands-free while scanning (e.g., "damaged packaging", "received from supplier X")
-   - Browser-native speech recognition — no external service needed
-   - Transcript saved as `notes` on the scan event (backend already accepts `notes` field)
-   - Works on Chrome, Edge, Safari, Android
-
-2. **Post-scan AI insight panel:**
+1. **Post-scan AI insight panel:**
    - After successful scan, optional AI analysis of the product/stock context
    - Powered by insights-analyzer agent or lightweight LLM call
    - Examples: "⚠️ This product is below reorder point — 3 units left", "📈 Scan velocity up 40% this week — demand spike detected", "💡 Last 5 scans were all scan_remove — check for shrinkage"
    - Non-blocking — insight loads async after stock update is confirmed
 
-3. **Smart scan suggestions:**
+2. **Smart scan suggestions:**
    - Based on recent scan history, suggest next likely items to scan (e.g., during stock count, suggest unscanned items in same category)
    - AI-powered barcode prediction from partial input
 
-4. **Scan pattern anomaly detection:**
+3. **Scan pattern anomaly detection:**
    - Flag unusual patterns: scanning outside work hours, abnormal quantities, rapid-fire scans of high-value items
    - Alert supervisor via SSE notification
    - Uses scan_events history + insights-analyzer agent

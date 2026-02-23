@@ -182,12 +182,14 @@ export default function AssistantPage({ config }: AssistantPageProps) {
       console.warn("[UPLOAD:0] No files selected — user may have cancelled picker");
       return;
     }
+    // CRITICAL: Copy files BEFORE clearing the input. `files` is a live reference
+    // to e.target.files — setting value="" empties the FileList immediately.
+    const fileList = Array.from(files);
     e.target.value = ""; // reset so same file can be re-selected
+    console.log("[UPLOAD:0] Files to upload:", fileList.map(f => ({ name: f.name, size: f.size, type: f.type })));
 
     setUploading(true);
     setUploadError(null);
-    const fileList = Array.from(files);
-    console.log("[UPLOAD:0] Files to upload:", fileList.map(f => ({ name: f.name, size: f.size, type: f.type })));
 
     try {
       // Ensure session exists once before uploading all files

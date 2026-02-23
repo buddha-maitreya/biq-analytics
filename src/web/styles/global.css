@@ -8763,3 +8763,729 @@ textarea {
 [data-theme="dark"] .scan-invoice-value.amount-total {
   color: #34d399;
 }
+
+/* ════════════════════════════════════════════════════════════
+   Barcode Scanner Page
+   ════════════════════════════════════════════════════════════ */
+
+.scan-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  padding-bottom: 0;
+}
+
+.scan-tab {
+  padding: 10px 20px;
+  border: none;
+  background: none;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-muted, #94a3b8);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.scan-tab:hover {
+  color: var(--text-color, #1e293b);
+}
+
+.scan-tab-active {
+  color: var(--primary-color, #3b82f6);
+  border-bottom-color: var(--primary-color, #3b82f6);
+  font-weight: 600;
+}
+
+/* Status Flash */
+.scan-flash {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  animation: scanFlashIn 0.25s ease-out;
+  position: relative;
+}
+
+@keyframes scanFlashIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.scan-flash-success {
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  color: #166534;
+}
+
+.scan-flash-error {
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  color: #991b1b;
+}
+
+.scan-flash-warning {
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+}
+
+.scan-flash-info {
+  background: #e0e7ff;
+  border: 1px solid #a5b4fc;
+  color: #3730a3;
+}
+
+.scan-flash-message {
+  font-weight: 600;
+  font-size: 14px;
+  flex: 1;
+}
+
+.scan-flash-detail {
+  font-size: 12px;
+  opacity: 0.85;
+  margin-top: 2px;
+}
+
+.scan-flash-dismiss {
+  background: none;
+  border: none;
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0.5;
+  padding: 0 4px;
+  color: inherit;
+}
+
+.scan-flash-dismiss:hover {
+  opacity: 1;
+}
+
+/* Scanner Main */
+.scan-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Config row (warehouse, action, qty) */
+.scan-config-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.scan-config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 160px;
+}
+
+.scan-config-field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.scan-select {
+  padding: 8px 12px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 6px;
+  font-size: 14px;
+  background: var(--card-bg, #fff);
+  color: var(--text-color, #1e293b);
+  cursor: pointer;
+}
+
+.scan-qty-field {
+  max-width: 80px;
+  flex: 0 0 80px;
+}
+
+.scan-qty-input {
+  padding: 8px 12px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 6px;
+  font-size: 14px;
+  width: 100%;
+  text-align: center;
+  background: var(--card-bg, #fff);
+  color: var(--text-color, #1e293b);
+}
+
+/* Camera area */
+.scan-camera-area {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 2px dashed var(--border-color, #e2e8f0);
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.scan-camera-container {
+  position: relative;
+  width: 100%;
+  max-height: 400px;
+  background: #000;
+}
+
+.scan-video {
+  width: 100%;
+  max-height: 400px;
+  object-fit: cover;
+  display: block;
+}
+
+.scan-crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 220px;
+  height: 100px;
+  border: 2px solid rgba(59, 130, 246, 0.7);
+  border-radius: 8px;
+  pointer-events: none;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.25);
+}
+
+.scan-camera-stop {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 6px 14px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.scan-camera-start {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 32px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-color, #1e293b);
+  width: 100%;
+}
+
+.scan-camera-start:hover {
+  background: var(--hover-bg, rgba(59, 130, 246, 0.04));
+}
+
+.scan-camera-icon {
+  font-size: 32px;
+}
+
+/* Barcode input row */
+.scan-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.scan-input-group {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.scan-input-icon {
+  position: absolute;
+  left: 12px;
+  font-size: 16px;
+  pointer-events: none;
+}
+
+.scan-input {
+  width: 100%;
+  padding: 12px 14px 12px 40px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 8px;
+  font-size: 16px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  letter-spacing: 0.05em;
+  background: var(--card-bg, #fff);
+  color: var(--text-color, #1e293b);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.scan-input:focus {
+  outline: none;
+  border-color: var(--primary-color, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.scan-input-clear {
+  position: absolute;
+  right: 10px;
+  background: none;
+  border: none;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--text-muted, #94a3b8);
+  padding: 4px;
+}
+
+.scan-submit-btn {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  background: var(--primary-color, #3b82f6);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 80px;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.scan-submit-btn:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.scan-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.scan-tip {
+  font-size: 12px;
+  color: var(--text-muted, #94a3b8);
+  text-align: center;
+  padding: 4px 0;
+}
+
+/* Recent scans */
+.scan-recent {
+  margin-top: 8px;
+}
+
+.scan-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 10px 0;
+}
+
+.scan-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scan-recent-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border-left: 3px solid transparent;
+}
+
+.scan-recent-success {
+  background: rgba(34, 197, 94, 0.05);
+  border-left-color: #22c55e;
+}
+
+.scan-recent-warning {
+  background: rgba(251, 191, 36, 0.05);
+  border-left-color: #fbbf24;
+}
+
+.scan-recent-error {
+  background: rgba(239, 68, 68, 0.05);
+  border-left-color: #ef4444;
+}
+
+.scan-recent-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.scan-recent-icon {
+  font-size: 16px;
+  width: 24px;
+  text-align: center;
+}
+
+.scan-recent-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-color, #1e293b);
+}
+
+.scan-recent-detail {
+  font-size: 12px;
+  color: var(--text-muted, #94a3b8);
+  margin-top: 2px;
+}
+
+.scan-recent-price {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted, #94a3b8);
+  white-space: nowrap;
+}
+
+/* Lookup result */
+.scan-lookup-result {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.scan-product-card {
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.scan-product-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.scan-product-name {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+  color: var(--text-color, #1e293b);
+}
+
+.scan-product-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.scan-product-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scan-product-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.scan-stock-table {
+  margin-top: 8px;
+}
+
+.scan-not-found {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-muted, #94a3b8);
+}
+
+.scan-not-found-icon {
+  font-size: 40px;
+  display: block;
+  margin-bottom: 12px;
+}
+
+.scan-not-found h4 {
+  font-size: 16px;
+  margin: 0 0 4px 0;
+  color: var(--text-color, #1e293b);
+}
+
+/* Device badge in history */
+.scan-device-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--hover-bg, #f1f5f9);
+  color: var(--text-muted, #64748b);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Pagination */
+.scan-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 16px 0;
+}
+
+.scan-page-btn {
+  padding: 8px 16px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 6px;
+  background: var(--card-bg, #fff);
+  color: var(--text-color, #1e293b);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.scan-page-btn:hover:not(:disabled) {
+  background: var(--hover-bg, #f1f5f9);
+}
+
+.scan-page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Dark mode overrides */
+[data-theme="dark"] .scan-tab {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .scan-tab:hover {
+  color: #e2e8f0;
+}
+
+[data-theme="dark"] .scan-tab-active {
+  color: #60a5fa;
+  border-bottom-color: #60a5fa;
+}
+
+[data-theme="dark"] .scan-flash-success {
+  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(34, 197, 94, 0.3);
+  color: #86efac;
+}
+
+[data-theme="dark"] .scan-flash-error {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+}
+
+[data-theme="dark"] .scan-flash-warning {
+  background: rgba(251, 191, 36, 0.1);
+  border-color: rgba(251, 191, 36, 0.3);
+  color: #fcd34d;
+}
+
+[data-theme="dark"] .scan-flash-info {
+  background: rgba(99, 102, 241, 0.1);
+  border-color: rgba(99, 102, 241, 0.3);
+  color: #a5b4fc;
+}
+
+[data-theme="dark"] .scan-select,
+[data-theme="dark"] .scan-qty-input,
+[data-theme="dark"] .scan-input {
+  background: var(--card-bg, #1e293b);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+}
+
+[data-theme="dark"] .scan-camera-area {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .scan-camera-start:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+[data-theme="dark"] .scan-recent-success {
+  background: rgba(34, 197, 94, 0.06);
+}
+
+[data-theme="dark"] .scan-recent-warning {
+  background: rgba(251, 191, 36, 0.06);
+}
+
+[data-theme="dark"] .scan-recent-error {
+  background: rgba(239, 68, 68, 0.06);
+}
+
+[data-theme="dark"] .scan-product-card {
+  background: var(--card-bg, #1e293b);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .scan-device-badge {
+  background: rgba(255, 255, 255, 0.06);
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .scan-page-btn {
+  background: var(--card-bg, #1e293b);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+}
+
+[data-theme="dark"] .scan-page-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Mobile responsive */
+@media (max-width: 640px) {
+  .scan-config-row {
+    flex-direction: column;
+  }
+  .scan-config-field {
+    min-width: 100%;
+  }
+  .scan-qty-field {
+    max-width: 100%;
+    flex: 1;
+  }
+  .scan-input-row {
+    flex-direction: column;
+  }
+  .scan-submit-btn {
+    width: 100%;
+  }
+  .scan-product-details {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===== SCAN — CONNECTIVITY BAR, OFFLINE QUEUE, HARDWARE SCANNER ===== */
+
+.scan-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.scan-status-bar-offline {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.scan-status-bar-pending {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+}
+
+.scan-status-bar-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.scan-status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scan-status-queue {
+  font-weight: 600;
+}
+
+.scan-sync-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid #d97706;
+  background: #fbbf24;
+  color: #78350f;
+  font-weight: 600;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.scan-sync-btn:hover:not(:disabled) {
+  background: #f59e0b;
+}
+
+.scan-sync-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.scan-hardware-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border-radius: 8px;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+  animation: scan-hardware-pulse 1.5s ease-in-out;
+}
+
+@keyframes scan-hardware-pulse {
+  0%   { transform: scale(1); opacity: 0; }
+  20%  { transform: scale(1.02); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Dark mode overrides */
+[data-theme="dark"] .scan-status-bar-offline {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.25);
+  color: #fca5a5;
+}
+
+[data-theme="dark"] .scan-status-bar-pending {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.25);
+  color: #fcd34d;
+}
+
+[data-theme="dark"] .scan-sync-btn {
+  background: rgba(251, 191, 36, 0.2);
+  border-color: rgba(251, 191, 36, 0.4);
+  color: #fcd34d;
+}
+
+[data-theme="dark"] .scan-sync-btn:hover:not(:disabled) {
+  background: rgba(251, 191, 36, 0.3);
+}
+
+[data-theme="dark"] .scan-hardware-badge {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.25);
+  color: #6ee7b7;
+}

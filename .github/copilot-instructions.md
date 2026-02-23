@@ -114,6 +114,7 @@ This application follows a **single-tenant architecture**. Every client deployme
 - Use `createPostgresDrizzle()` from `@agentuity/drizzle`
 - Always use parameterized queries (template literals for raw SQL)
 - Migrations via `bunx drizzle-kit generate && bunx drizzle-kit migrate`
+- **Run migrations from desktop PowerShell** (never from VS Code terminal). See "Database Migration Workflow" section below.
 - **No tenant_id columns** — single-tenant, whole DB belongs to one client
 - **Industry-neutral schema** — use generic column names (`name`, `unit`, `price`). Store industry-specific attributes in `metadata` JSONB columns.
 - **No hardcoded enums for statuses/types** — use `varchar` or reference tables so each deployment can define its own workflows.
@@ -265,6 +266,100 @@ When a deployment fails:
 4. **Fourth**: Check cloud logs: `agentuity cloud deployment logs <deploy_id> --limit=100`
 5. **Never speculate** — always capture the full error output before attempting fixes.
 
+### Database Migration Workflow (Desktop PowerShell — Standard)
+**All database operations (generate, migrate, push, check) MUST be run from desktop Windows PowerShell**, not from the VS Code integrated terminal. This ensures consistent environment and avoids terminal quirks.
+
+**Standard migration workflow (from desktop PowerShell):**
+```powershell
+# 1. Navigate to project
+cd "C:\Users\Admin\Documents\Business IQ Enterprise"
+
+# 2. Generate migration SQL from schema changes
+bunx drizzle-kit generate
+
+# 3. Review the generated SQL file in src/db/migrations/
+
+# 4. Apply migration to the database
+bunx drizzle-kit migrate
+```
+
+**Check for pending schema changes (no-op if schema matches):**
+```powershell
+bunx drizzle-kit generate
+# Output: "No schema changes, nothing to migrate" if clean
+```
+
+**Full workflow including commit + deploy:**
+```powershell
+# From desktop PowerShell:
+cd "C:\Users\Admin\Documents\Business IQ Enterprise"
+
+# 1. Generate migration
+bunx drizzle-kit generate
+
+# 2. Apply migration
+bunx drizzle-kit migrate
+
+# 3. Commit everything (schema + migration + service + routes)
+git add -A; git commit -m "feat: add scan pipeline schema + service"; git push
+
+# 4. Deploy via WSL
+wsl -d Ubuntu-24.04 -- bash -lc "cd ~/business-iq-enterprise && git pull && source ~/.bashrc && bun install && agentuity deploy"
+```
+
+**Why desktop PowerShell?**
+- DATABASE_URL is in `.env` which Drizzle reads automatically
+- Bun is installed system-wide on Windows
+- Avoids VS Code terminal session issues (multiple shells, wrong cwd, env not loaded)
+- Consistent environment every time
+
+**When Copilot needs to run migrations:** Always use the `run_in_terminal` tool with desktop PowerShell commands. Never suggest running `drizzle-kit` from inside WSL (the `.env` file with DATABASE_URL is on Windows).
+
+### Drizzle Migration Internals — How `drizzle-kit migrate` Actually Works
+
+**This section exists because the database was originally created with `drizzle-kit push` (which applies schema changes directly, without recording migrations). When switching to `drizzle-kit migrate`, the migration journal must be backfilled so the migrator doesn't try to re-create existing tables. This is the documented, tested procedure.**
+
+#### How the Migrator Decides What to Run
+1. The migrations table lives at **`drizzle.__drizzle_migrations`** — schema `drizzle`, NOT `public`. Drizzle auto-creates both the schema and table on first `migrate`.
+2. The table has 3 columns: `id SERIAL`, `hash TEXT`, `created_at BIGINT`.
+3. On each `migrate`, drizzle reads **only the last row** (`ORDER BY created_at DESC LIMIT 1`).
+4. It then iterates every entry in `src/db/migrations/meta/_journal.json`. For each entry, if `journal.when > lastRow.created_at`, it runs that `.sql` file.
+5. After executing a migration, it inserts a row with `hash` = SHA-256 of the `.sql` file content, and `created_at` = the journal entry's `when` value.
+6. **Hash** = `crypto.createHash("sha256").update(sqlFileContent).digest("hex")`. It's stored for reference but the decision to run is based solely on `created_at` vs `when`.
+
+#### First-Time Migration After `push` — Backfill Procedure
+If the database was created with `push` and has no `drizzle.__drizzle_migrations` table, running `migrate` will try to execute ALL migrations from idx 0, failing on `CREATE TABLE` for tables that already exist. **Fix with `scripts/fix-migrations-v3.ts`:**
+
+```powershell
+# From desktop PowerShell:
+cd "C:\Users\Admin\Documents\Business IQ Enterprise"
+
+# 1. Run the backfill script (creates drizzle schema + table, inserts entries for all old migrations)
+bun scripts/fix-migrations-v3.ts
+
+# 2. Now migrate — only NEW migrations will apply
+bunx drizzle-kit migrate
+```
+
+**What `fix-migrations-v3.ts` does:**
+1. Creates `drizzle` schema and `drizzle.__drizzle_migrations` table (IF NOT EXISTS).
+2. For each old migration in `_journal.json` (those whose tables already exist in DB):
+   - Reads the `.sql` file content
+   - Computes SHA-256 hash (same algorithm as drizzle-kit)
+   - Inserts a row with that hash and the journal's `when` timestamp as `created_at`
+3. The next `bunx drizzle-kit migrate` sees the last `created_at` is >= all old entries, and only runs new migrations with a higher `when`.
+
+#### When to Use This Procedure
+- **First time switching from `push` to `migrate`** on an existing database
+- **After provisioning a new client database** that was seeded with `push` or raw SQL
+- **If `migrate` fails with `relation already exists`** — the migration journal is out of sync
+
+#### Key Rules
+- **NEVER use `drizzle-kit push` in production** — always use `generate` + `migrate` for auditable, repeatable migrations.
+- **NEVER create `__drizzle_migrations` in the `public` schema** — it must be in the `drizzle` schema.
+- The `fix-migrations-v3.ts` script is idempotent — safe to re-run.
+- After backfill, all future migrations work normally with just `bunx drizzle-kit generate` + `bunx drizzle-kit migrate`.
+
 ## Operational Notes
 
 ### Agentuity CLI Login (Windows / Copilot Agent)
@@ -290,6 +385,86 @@ Per `.copilot/skills/agentuity-cli-reference.md` and `.copilot/skills/agentuity-
 
 ### Agent File Convention
 Each agent must be at `src/agent/<name>/index.ts` (not `agent.ts`). The SDK discovers agents by scanning for `index.ts` files in subdirectories of `src/agent/`. See `.copilot/skills/agentuity-creating-agents.md`.
+
+### Sandbox Workflow (Data Science / Code Execution)
+Sandboxes provide isolated Python/Node environments for agent code execution (e.g., data-science agent running analytics scripts). They are managed via the Agentuity CLI **from inside WSL** (not Windows).
+
+**Key concepts:**
+- **Sandbox** — A running container with a specific runtime (e.g., `python:3.13`)
+- **Snapshot** — A frozen image of a sandbox with pre-installed packages. Agents boot from snapshots for fast startup.
+- **Runtime** — Base environment (list with `agentuity cloud sandbox runtime list`)
+
+**Create a sandbox (from WSL terminal):**
+```bash
+# List available runtimes
+agentuity cloud sandbox runtime list
+
+# Create a sandbox with Python 3.13, network enabled, 45min idle timeout
+agentuity cloud sandbox create --runtime python:3.13 --name data-science --network --idle-timeout 45m
+# Returns: sbx_<id>
+```
+
+**`sandbox create` flags reference:**
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--runtime <name>` | Runtime name | `python:3.13`, `bun:1`, `node:lts` |
+| `--name <name>` | Sandbox name | `data-science` |
+| `--network` | Enable outbound network (required for `pip install`) | — |
+| `--idle-timeout <dur>` | Idle timeout before sandbox is reaped | `10m`, `30m`, `1h` |
+| `--memory <limit>` | Memory limit | `500Mi`, `1Gi` |
+| `--cpu <limit>` | CPU limit in millicores | `500m`, `1000m` |
+| `--disk <limit>` | Disk limit | `500Mi`, `1Gi` |
+| `--env <KEY=VAL>` | Environment variable | `DATABASE_URL=postgres://...` |
+| `--snapshot <id>` | Restore from snapshot | `snapshot_<id>` |
+| `--dependency <pkg>` | Apt packages to install (repeatable) | `libpq-dev` |
+| `--port <port>` | Expose port to internet (1024-65535) | `8080` |
+| `--project-id <id>` | Associate with project | `proj_123` |
+
+**Install packages in a sandbox:**
+```bash
+# Step 1: Create a venv (uv venvs don't include pip, so use uv for installs)
+agentuity cloud sandbox exec <sbx_id> -- uv venv /home/agentuity/venv
+
+# Step 2: Install packages using uv with VIRTUAL_ENV set
+agentuity cloud sandbox exec <sbx_id> -- bash -c "VIRTUAL_ENV=/home/agentuity/venv uv pip install pandas numpy scipy scikit-learn matplotlib seaborn statsmodels"
+```
+
+**Why this pattern (lessons learned):**
+1. `uv pip install --system` fails → Python is "externally managed" (PEP 668)
+2. `uv pip install --system --break-system-packages` fails → permission denied on system Python dir
+3. `venv/bin/python -m pip install` fails → uv venvs don't include pip by default
+4. **Correct:** Create venv with `uv venv`, then `VIRTUAL_ENV=<path> uv pip install` ✓
+
+**Create a snapshot from a configured sandbox:**
+```bash
+agentuity cloud sandbox snapshot create <sbx_id> --name data-science-snapshot
+# Returns: snapshot_<id>
+```
+
+**Other useful commands:**
+```bash
+agentuity cloud sandbox list                    # List all sandboxes
+agentuity cloud sandbox get <sbx_id>            # Get sandbox details
+agentuity cloud sandbox delete <sbx_id>         # Clean up sandbox after snapshot
+agentuity cloud sandbox snapshot list           # List all snapshots
+agentuity cloud sandbox cp <local> <sbx_id>:<remote>  # Copy files to sandbox
+agentuity cloud sandbox pause <sbx_id>          # Pause a running sandbox
+agentuity cloud sandbox resume <sbx_id>         # Resume a paused sandbox
+```
+
+**Current sandbox:**
+- **ID:** *(created on demand — old sandboxes terminate after idle timeout)*
+- **Runtime:** `python:3.13`
+- **Region:** `use` (US East)
+- **Purpose:** Data science agent — analytics, forecasting, statistical analysis
+
+**CRITICAL gotchas:**
+1. **Package installation requires a venv** — system Python is read-only and externally managed. Always create a venv first with `uv venv /home/agentuity/venv`, then install with `VIRTUAL_ENV=/home/agentuity/venv uv pip install <packages>`.
+2. **uv venvs don't include pip** — don't try `venv/bin/python -m pip install`. Use `uv pip install` with `VIRTUAL_ENV` env var instead.
+3. **Always enable `--network`** when creating a sandbox that needs to install packages or make outbound API calls.
+4. Sandboxes terminate after `--idle-timeout` (default is short). Use `--idle-timeout 45m` or longer for interactive setup sessions.
+5. After installing packages, **always create a snapshot** so agents boot instantly without reinstalling.
+6. **Sandbox names must be unique** — can't reuse a name from a terminated sandbox. Use a version suffix (e.g., `data-science-v2`).
 
 ### GitHub Repository
 - **Repo:** https://github.com/buddha-maitreya/business-iq-enterprise

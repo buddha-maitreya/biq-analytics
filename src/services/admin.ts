@@ -196,6 +196,7 @@ export const userSchema = z.object({
   name: z.string().min(1).max(255),
   role: z.enum(ROLES).default("staff"),
   permissions: z.array(z.string()).optional(),
+  primaryWarehouseId: z.string().uuid().optional().nullable(),
   assignedWarehouses: z.array(z.string().uuid()).optional().nullable(),
   reportsTo: z.string().uuid().optional().nullable(),
   isActive: z.boolean().optional(),
@@ -225,6 +226,7 @@ export async function listUsersWithWarehouses() {
   return allUsers.map((u: typeof allUsers[number]) => ({
     ...u,
     permissions: (u.permissions as string[] | null) ?? DEFAULT_PERMS[(u.role as Role) ?? "staff"],
+    primaryWarehouseName: u.primaryWarehouseId ? warehouseMap.get(u.primaryWarehouseId)?.name ?? null : null,
     warehouseDetails: ((u.assignedWarehouses as string[] | null) ?? [])
       .map((wid) => warehouseMap.get(wid))
       .filter(Boolean),
@@ -243,6 +245,7 @@ export async function createUser(data: unknown) {
       name: parsed.name,
       role: parsed.role,
       permissions: perms,
+      primaryWarehouseId: parsed.primaryWarehouseId ?? null,
       assignedWarehouses: parsed.assignedWarehouses ?? null,
       reportsTo: parsed.reportsTo ?? null,
     })
@@ -253,6 +256,7 @@ export async function createUser(data: unknown) {
       role: users.role,
       isActive: users.isActive,
       permissions: users.permissions,
+      primaryWarehouseId: users.primaryWarehouseId,
       assignedWarehouses: users.assignedWarehouses,
       reportsTo: users.reportsTo,
       createdAt: users.createdAt,
@@ -269,6 +273,7 @@ export async function updateUser(id: string, data: unknown) {
   if (parsed.name != null) vals.name = parsed.name;
   if (parsed.role != null) vals.role = parsed.role;
   if (parsed.permissions !== undefined) vals.permissions = parsed.permissions;
+  if (parsed.primaryWarehouseId !== undefined) vals.primaryWarehouseId = parsed.primaryWarehouseId;
   if (parsed.assignedWarehouses !== undefined) vals.assignedWarehouses = parsed.assignedWarehouses;
   if (parsed.reportsTo !== undefined) vals.reportsTo = parsed.reportsTo;
   if (parsed.isActive !== undefined) vals.isActive = parsed.isActive;
@@ -284,6 +289,7 @@ export async function updateUser(id: string, data: unknown) {
       role: users.role,
       isActive: users.isActive,
       permissions: users.permissions,
+      primaryWarehouseId: users.primaryWarehouseId,
       assignedWarehouses: users.assignedWarehouses,
       reportsTo: users.reportsTo,
     });

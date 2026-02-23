@@ -197,9 +197,10 @@ const agent = createAgent("document-scanner", {
 
   handler: async (ctx, input) => {
     ctx.state.set("startedAt", Date.now());
+    ctx.logger.info("[SCANNER:1] Handler invoked", { mode: input.mode, hasImageUrl: !!input.imageUrl, hasImageData: !!input.imageData, imageDataLen: input.imageData?.length, imageUrlPrefix: input.imageUrl?.slice(0, 80) });
 
     if (!ctx.config) {
-      ctx.logger.warn("ctx.config undefined — app setup may have failed");
+      ctx.logger.warn("[SCANNER:1] ctx.config undefined — app setup may have failed");
       return {
         success: false,
         mode: input.mode,
@@ -208,6 +209,7 @@ const agent = createAgent("document-scanner", {
     }
 
     const { agentConfig, temperature } = ctx.config;
+    ctx.logger.info("[SCANNER:2] Config loaded", { modelOverride: agentConfig.modelOverride, temperature, hasCustomInstructions: !!agentConfig.customInstructions });
 
     // Validate input: need either imageData or imageUrl
     if (!input.imageData && !input.imageUrl) {
@@ -246,11 +248,13 @@ const agent = createAgent("document-scanner", {
     const messageContent: Array<{ type: string; text?: string; image?: any }> = [];
 
     if (input.imageData) {
+      ctx.logger.info("[SCANNER:3] Using imageData", { len: input.imageData.length });
       messageContent.push({
         type: "image",
         image: input.imageData, // Vercel AI SDK accepts base64 directly
       } as any);
     } else if (input.imageUrl) {
+      ctx.logger.info("[SCANNER:3] Using imageUrl", { url: input.imageUrl.slice(0, 80) });
       messageContent.push({
         type: "image",
         image: new URL(input.imageUrl),
@@ -265,6 +269,7 @@ const agent = createAgent("document-scanner", {
     try {
       // Use multimodal model (GPT-4o supports vision)
       const modelId = agentConfig.modelOverride ?? "gpt-4o";
+      ctx.logger.info("[SCANNER:4] Calling generateText", { modelId, temperature, contentParts: messageContent.length });
       const result = await generateText({
         model: await getModel(modelId),
         ...(temperature !== undefined ? { temperature } : {}),
@@ -281,6 +286,7 @@ const agent = createAgent("document-scanner", {
       if (result.usage) {
         tokenTracker.add(result.usage.promptTokens, result.usage.completionTokens);
       }
+      ctx.logger.info("[SCANNER:5] generateText returned", { textLen: result.text?.length, promptTokens: result.usage?.promptTokens, completionTokens: result.usage?.completionTokens });
 
       // Parse the JSON response
       const validation = validateTextOutput(result.text, { minLength: 5 });
@@ -336,9 +342,10 @@ const agent = createAgent("document-scanner", {
       };
     } catch (err: any) {
       const startedAt = ctx.state.get("startedAt") as number | undefined;
-      ctx.logger.warn("Document scan failed", {
+      ctx.logger.warn("[SCANNER:ERR] Document scan failed", {
         mode: input.mode,
-        error: err.message?.slice(0, 200),
+        error: err.message?.slice(0, 300),
+        stack: err.stack?.slice(0, 500),
         durationMs: startedAt ? Date.now() - startedAt : undefined,
       });
 

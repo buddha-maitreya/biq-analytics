@@ -31,6 +31,7 @@ import AdminPage from "./pages/AdminPage";
 import ApprovalsPage from "./pages/ApprovalsPage";
 import AboutPage from "./pages/AboutPage";
 import EmailPage from "./pages/EmailPage";
+import ScanPage from "./pages/ScanPage";
 import LoginPage from "./pages/LoginPage";
 import "./styles/global.css";
 import type { Page, AppConfig, AuthUser } from "./types";
@@ -44,6 +45,7 @@ const PAGE_TITLES: Record<Page, string> = {
   orders: "Orders",
   customers: "Customers",
   inventory: "Inventory",
+  scan: "Scanner",
   invoices: "Invoices",
   assistant: "Executive AI Assistant",
   reports: "Reports",
@@ -158,6 +160,8 @@ export default function App() {
         return <CustomersPage config={cfg} />;
       case "inventory":
         return <InventoryPage config={cfg} />;
+      case "scan":
+        return <ScanPage config={cfg} />;
       case "invoices":
         return <InvoicesPage config={cfg} />;
       case "assistant":

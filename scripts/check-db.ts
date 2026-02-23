@@ -1,6 +1,20 @@
 import { db, closeDb } from "../src/db/index";
 import { sql } from "drizzle-orm";
 
+// 0. Show all tables in the database
+const tables = await db.execute(sql`
+  SELECT table_name,
+         (SELECT count(*)::int FROM information_schema.columns c
+          WHERE c.table_name = t.table_name AND c.table_schema = 'public') as columns
+  FROM information_schema.tables t
+  WHERE t.table_schema = 'public'
+  ORDER BY table_name
+`);
+const tableRows: any[] = (tables as any).rows ?? tables;
+console.log("=== All tables in database ===");
+console.log(`Total: ${tableRows.length} tables\n`);
+console.table(tableRows);
+
 // 1. Check legacy users
 const legacy = await db.execute(sql`SELECT id, email, name, role, is_active FROM users ORDER BY role`);
 const legacyRows: any[] = (legacy as any).rows ?? legacy;

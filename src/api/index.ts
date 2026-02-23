@@ -42,6 +42,7 @@ export { default as evalRoutes } from "./evals";
 export { default as evalCronRoutes } from "./eval-cron";
 export { default as analyticsRoutes } from "./analytics";
 export { default as scanningRoutes } from "./scanning";
+export { default as scanRoutes } from "./scan";
 export { default as schedulerRoutes } from "./scheduler";
 export { default as schedulerCronRoutes } from "./scheduler-cron";
 export { default as telemetryRoutes } from "./telemetry";

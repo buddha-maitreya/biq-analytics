@@ -88,12 +88,14 @@ export const updateOrderStatusSchema = z.object({
   notes: z.string().optional(),
 });
 
-// --- Warehouses ---
+// --- Warehouses / Locations ---
 export const createWarehouseSchema = z.object({
   name: z.string().min(1).max(255),
   code: z.string().min(1).max(50),
+  locationType: z.string().min(1).max(100).default("warehouse"),
   address: z.string().optional(),
   isDefault: z.boolean().optional(),
+  sortOrder: z.number().int().min(0).optional(),
   metadata: metadataSchema,
 });
 

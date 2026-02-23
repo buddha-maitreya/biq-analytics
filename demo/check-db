@@ -1,0 +1,2 @@
+cd "C:\Users\Admin\Documents\Business IQ Enterprise"
+bun scripts/check-db.ts

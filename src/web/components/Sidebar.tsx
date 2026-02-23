@@ -36,6 +36,7 @@ const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"]
   { page: "orders", icon: "🛒", labelKey: "orderPlural", fallback: "Orders" },
   { page: "customers", icon: "👥", labelKey: "customerPlural", fallback: "Customers" },
   { page: "inventory", icon: "🏭", labelKey: "warehouse", fallback: "Inventory" },
+  { page: "scan", icon: "📷", labelKey: null, fallback: "Scanner" },
   { page: "invoices", icon: "📄", labelKey: "invoice", fallback: "Invoices" },
   { page: "approvals", icon: "✅", labelKey: null, fallback: "Approvals" },
   { page: "reports", icon: "📈", labelKey: null, fallback: "Reports" },
@@ -47,9 +48,9 @@ const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"]
 /** Pages restricted by role (base access — can be extended via permissions) */
 const ROLE_VISIBLE: Record<string, Page[]> = {
   viewer: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "approvals", "reports", "about"],
-  staff: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "approvals", "reports", "about"],
-  manager: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "approvals", "reports", "about"],
-  admin: ["dashboard", "products", "orders", "customers", "inventory", "invoices", "approvals", "reports", "admin", "about"],
+  staff: ["dashboard", "products", "orders", "customers", "inventory", "scan", "invoices", "approvals", "reports", "about"],
+  manager: ["dashboard", "products", "orders", "customers", "inventory", "scan", "invoices", "approvals", "reports", "about"],
+  admin: ["dashboard", "products", "orders", "customers", "inventory", "scan", "invoices", "approvals", "reports", "admin", "about"],
 };
 
 /** Pages that can be unlocked via the permissions array (regardless of role) */

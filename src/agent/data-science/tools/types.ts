@@ -157,6 +157,7 @@ export interface ScanDocumentSuccess {
 export interface ScanDocumentError extends ToolErrorResult {
   success: false;
   mode: "barcode" | "stock-sheet" | "invoice";
+  rawText?: string;
 }
 
 export type ScanDocumentResult = ScanDocumentSuccess | ScanDocumentError;

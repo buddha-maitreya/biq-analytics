@@ -6,6 +6,7 @@ export type Page =
   | "orders"
   | "customers"
   | "inventory"
+  | "scan"
   | "invoices"
   | "assistant"
   | "reports"

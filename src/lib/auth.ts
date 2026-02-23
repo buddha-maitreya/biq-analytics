@@ -57,6 +57,7 @@ export interface AppUser {
   name: string;
   role: string;
   permissions: string[];
+  primaryWarehouseId?: string | null;
   assignedWarehouses?: string[] | null;
   isActive?: boolean;
 }
@@ -146,6 +147,7 @@ async function enrichUserFromLegacyTable(
       name: row.name,
       role: row.role,
       permissions: (row.permissions as string[]) ?? [],
+      primaryWarehouseId: row.primaryWarehouseId ?? null,
       assignedWarehouses: row.assignedWarehouses as string[] | null,
       isActive: row.isActive,
     };

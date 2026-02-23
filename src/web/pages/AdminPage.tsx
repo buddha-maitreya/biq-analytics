@@ -6,7 +6,7 @@ interface AdminPageProps {
   onSaved?: () => void;
 }
 
-type AdminTab = "users" | "approvals" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools" | "model" | "agents" | "prompts" | "evals" | "examples" | "scheduler" | "observability" | "reports";
+type AdminTab = "users" | "approvals" | "locations" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools" | "model" | "agents" | "prompts" | "evals" | "examples" | "scheduler" | "observability" | "reports";
 
 /* ---------- Sub-types ---------- */
 interface RBACConfig {
@@ -29,6 +29,8 @@ interface User {
   role: string;
   isActive: boolean;
   permissions: string[];
+  primaryWarehouseId: string | null;
+  primaryWarehouseName: string | null;
   assignedWarehouses: string[] | null;
   reportsTo: string | null;
   warehouseDetails: Warehouse[];
@@ -153,6 +155,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Operations",
     items: [
       { key: "users", label: "Users & Access", icon: "🔐" },
+      { key: "locations", label: "Locations", icon: "📍" },
       { key: "approvals", label: "Approval Workflows", icon: "✅" },
       { key: "reports", label: "Reports", icon: "📄" },
     ],
@@ -185,6 +188,7 @@ const TAB_TITLES: Record<AdminTab, string> = {
   scheduler: "Task Scheduler",
   observability: "Observability & Logs",
   users: "Users & Access Control",
+  locations: "Locations & Supply Chain",
   approvals: "Approval Workflows",
   reports: "Report Settings",
   statuses: "Order Statuses",
@@ -204,6 +208,7 @@ const TAB_DESCRIPTIONS: Record<AdminTab, string> = {
   scheduler: "Schedule automated tasks, reports, and maintenance jobs",
   observability: "Monitor system health, logs, and performance metrics",
   users: "Manage users, roles, permissions, and warehouse assignments",
+  locations: "Configure warehouses, branches, production sites, kitchens, and any point in your supply chain",
   approvals: "Configure multi-step approval chains for business actions",
   reports: "Configure report layout, content limits, charts, and formatting options",
   statuses: "Define order lifecycle statuses and transitions",
@@ -307,6 +312,7 @@ export default function AdminPage({ config, onSaved }: AdminPageProps) {
         {/* Content Body */}
         <div className="admin-content-body">
           {tab === "users" && <UsersAccessTab />}
+          {tab === "locations" && <LocationsTab config={config} />}
           {tab === "approvals" && <ApprovalWorkflowsTab />}
           {tab === "knowledge" && <KnowledgeBaseTab />}
           {tab === "model" && <AIModelTab onSaved={onSaved} />}
@@ -343,6 +349,7 @@ function UsersAccessTab() {
     name: "",
     role: "staff" as string,
     permissions: [] as string[],
+    primaryWarehouseId: null as string | null,
     assignedWarehouses: null as string[] | null,
     reportsTo: null as string | null,
   });
@@ -382,13 +389,13 @@ function UsersAccessTab() {
   }, [users, roleFilter, search]);
 
   const resetForm = () => {
-    setForm({ email: "", name: "", role: "staff", permissions: [], assignedWarehouses: null, reportsTo: null });
+    setForm({ email: "", name: "", role: "staff", permissions: [], primaryWarehouseId: null, assignedWarehouses: null, reportsTo: null });
     setEditUser(null);
     setShowForm(false);
   };
 
   const openEdit = (u: User) => {
-    setForm({ email: u.email, name: u.name, role: u.role, permissions: u.permissions ?? [], assignedWarehouses: u.assignedWarehouses, reportsTo: u.reportsTo });
+    setForm({ email: u.email, name: u.name, role: u.role, permissions: u.permissions ?? [], primaryWarehouseId: u.primaryWarehouseId, assignedWarehouses: u.assignedWarehouses, reportsTo: u.reportsTo });
     setEditUser(u);
     setShowForm(true);
   };
@@ -565,6 +572,21 @@ function UsersAccessTab() {
               </select>
             </label>
             <label>
+              <span className="form-label">Home Location</span>
+              <select
+                value={form.primaryWarehouseId ?? ""}
+                onChange={(e) => setForm({ ...form, primaryWarehouseId: e.target.value || null })}
+              >
+                <option value="">— No home location —</option>
+                {warehouses.map((wh) => (
+                  <option key={wh.id} value={wh.id}>{wh.name} ({wh.code})</option>
+                ))}
+              </select>
+              <span className="form-hint">Where this person physically works</span>
+            </label>
+          </div>
+          <div className="form-grid cols-4" style={{ marginTop: 8 }}>
+            <label>
               <span className="form-label">Reports To</span>
               <select
                 value={form.reportsTo ?? ""}
@@ -581,8 +603,6 @@ function UsersAccessTab() {
               </select>
               <span className="form-hint">Direct supervisor in the approval chain</span>
             </label>
-          </div>
-          <div className="form-grid cols-4" style={{ marginTop: 8 }}>
             <div className="form-actions" style={{ alignSelf: "end" }}>
               <button className="btn btn-primary" onClick={save}>{editUser ? "Update" : "Create"}</button>
               <button className="btn btn-secondary" onClick={resetForm}>Cancel</button>
@@ -601,9 +621,10 @@ function UsersAccessTab() {
             <tr>
               <th>User</th>
               <th>Role</th>
+              <th>Home Location</th>
               <th>Reports To</th>
               <th>Permissions</th>
-              <th>Warehouses</th>
+              <th>Access</th>
               <th>Status</th>
               <th style={{ textAlign: "right" }}>Actions</th>
             </tr>
@@ -617,6 +638,13 @@ function UsersAccessTab() {
                 </td>
                 <td>
                   <span className="role-pill" style={{ background: ROLE_COLORS[u.role] }}>{ROLE_LABELS[u.role] ?? u.role}</span>
+                </td>
+                <td>
+                  {u.primaryWarehouseName ? (
+                    <span className="wh-badge">{u.primaryWarehouseName}</span>
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
                 </td>
                 <td>
                   {u.reportsTo ? (() => {
@@ -670,7 +698,7 @@ function UsersAccessTab() {
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={7} className="text-center text-muted">No users match</td></tr>
+              <tr><td colSpan={8} className="text-center text-muted">No users match</td></tr>
             )}
           </tbody>
         </table>
@@ -5778,4 +5806,433 @@ function formatBytes(chars: number): string {
   if (chars < 1000) return `${chars}`;
   if (chars < 1000000) return `${(chars / 1000).toFixed(1)}k`;
   return `${(chars / 1000000).toFixed(1)}M`;
+}
+
+/* ===== LOCATIONS & SUPPLY CHAIN TAB ===== */
+
+/** Common location type presets — user can type anything */
+const LOCATION_TYPE_PRESETS = [
+  "warehouse",
+  "branch",
+  "shop",
+  "production",
+  "manufacturing",
+  "kitchen",
+  "dispatch",
+  "cold_storage",
+  "distribution_center",
+  "office",
+];
+
+interface Location {
+  id: string;
+  name: string;
+  code: string;
+  locationType: string;
+  address: string | null;
+  isActive: boolean;
+  isDefault: boolean;
+  sortOrder: number;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+function LocationsTab({ config }: { config: AppConfig }) {
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editLoc, setEditLoc] = useState<Location | null>(null);
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  // Form state
+  const [form, setForm] = useState({
+    name: "",
+    code: "",
+    locationType: "warehouse",
+    address: "",
+    isDefault: false,
+    sortOrder: 0,
+    phone: "",
+    email: "",
+    contactPerson: "",
+  });
+
+  const fetchLocations = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/warehouses");
+      const json = await res.json();
+      setLocations(json.data ?? []);
+    } catch {
+      setLocations([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchLocations(); }, [fetchLocations]);
+
+  const resetForm = useCallback(() => {
+    setForm({ name: "", code: "", locationType: "warehouse", address: "", isDefault: false, sortOrder: 0, phone: "", email: "", contactPerson: "" });
+    setEditLoc(null);
+    setShowForm(false);
+    setError("");
+  }, []);
+
+  const openEdit = useCallback((loc: Location) => {
+    setEditLoc(loc);
+    setForm({
+      name: loc.name,
+      code: loc.code,
+      locationType: loc.locationType ?? "warehouse",
+      address: loc.address ?? "",
+      isDefault: loc.isDefault,
+      sortOrder: loc.sortOrder ?? 0,
+      phone: (loc.metadata as any)?.phone ?? "",
+      email: (loc.metadata as any)?.email ?? "",
+      contactPerson: (loc.metadata as any)?.contactPerson ?? "",
+    });
+    setShowForm(true);
+    setError("");
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    if (!form.name.trim() || !form.code.trim()) {
+      setError("Name and code are required.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const body: any = {
+        name: form.name.trim(),
+        code: form.code.trim().toUpperCase(),
+        locationType: form.locationType || "warehouse",
+        address: form.address.trim() || undefined,
+        isDefault: form.isDefault,
+        sortOrder: form.sortOrder,
+        metadata: {
+          phone: form.phone.trim() || undefined,
+          email: form.email.trim() || undefined,
+          contactPerson: form.contactPerson.trim() || undefined,
+        },
+      };
+
+      const url = editLoc ? `/api/warehouses/${editLoc.id}` : "/api/warehouses";
+      const method = editLoc ? "PUT" : "POST";
+
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? `Failed to ${editLoc ? "update" : "create"} location`);
+      }
+
+      resetForm();
+      fetchLocations();
+    } catch (e: any) {
+      setError(e.message ?? "Something went wrong");
+    } finally {
+      setSaving(false);
+    }
+  }, [form, editLoc, resetForm, fetchLocations]);
+
+  const handleDeactivate = useCallback(async (id: string) => {
+    if (!confirm("Deactivate this location? It will be hidden but inventory data is preserved.")) return;
+    try {
+      await fetch(`/api/warehouses/${id}`, { method: "DELETE" });
+      fetchLocations();
+    } catch {
+      // ignore
+    }
+  }, [fetchLocations]);
+
+  // Unique types for filter
+  const allTypes = useMemo(() => {
+    const s = new Set(locations.map((l) => l.locationType ?? "warehouse"));
+    return Array.from(s).sort();
+  }, [locations]);
+
+  // Filtered and sorted list
+  const filtered = useMemo(() => {
+    let list = locations.filter((l) => l.isActive !== false);
+    if (typeFilter !== "all") {
+      list = list.filter((l) => (l.locationType ?? "warehouse") === typeFilter);
+    }
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter(
+        (l) =>
+          l.name.toLowerCase().includes(q) ||
+          l.code.toLowerCase().includes(q) ||
+          (l.address ?? "").toLowerCase().includes(q)
+      );
+    }
+    return list.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name));
+  }, [locations, typeFilter, search]);
+
+  // Stats
+  const stats = useMemo(() => {
+    const active = locations.filter((l) => l.isActive !== false);
+    const types = new Set(active.map((l) => l.locationType ?? "warehouse"));
+    const defaultLoc = active.find((l) => l.isDefault);
+    return { total: active.length, types: types.size, defaultName: defaultLoc?.name ?? "None" };
+  }, [locations]);
+
+  const typeLabel = (t: string) => t.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  return (
+    <div>
+      {/* Stats Row */}
+      <div className="summary-cards" style={{ marginBottom: 16 }}>
+        <div className="summary-card">
+          <span className="summary-card-value">{stats.total}</span>
+          <span className="summary-card-label">Active Locations</span>
+        </div>
+        <div className="summary-card">
+          <span className="summary-card-value">{stats.types}</span>
+          <span className="summary-card-label">Location Types</span>
+        </div>
+        <div className="summary-card">
+          <span className="summary-card-value" style={{ fontSize: "0.95rem" }}>{stats.defaultName}</span>
+          <span className="summary-card-label">Default Location</span>
+        </div>
+      </div>
+
+      {/* Toolbar */}
+      <div className="toolbar" style={{ marginBottom: 12 }}>
+        <div className="search-box" style={{ flex: 1 }}>
+          <span className="search-icon">🔍</span>
+          <input
+            placeholder="Search locations..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {search && <button className="search-clear" onClick={() => setSearch("")}>✕</button>}
+        </div>
+        <select
+          className="form-select"
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value)}
+          style={{ minWidth: 140 }}
+        >
+          <option value="all">All Types</option>
+          {allTypes.map((t) => (
+            <option key={t} value={t}>{typeLabel(t)}</option>
+          ))}
+        </select>
+        <button className="btn btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>
+          + Add Location
+        </button>
+      </div>
+
+      {/* Create / Edit Form */}
+      {showForm && (
+        <div className="card form-card inline-form" style={{ marginBottom: 16 }}>
+          <h3>{editLoc ? "Edit Location" : "Add Location"}</h3>
+          {error && <div className="form-error" style={{ color: "#ef4444", marginBottom: 8, fontSize: "0.85rem" }}>{error}</div>}
+          <div className="form-grid cols-2">
+            <label>
+              Name *
+              <input
+                placeholder="e.g. Main Warehouse, Downtown Branch"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+            </label>
+            <label>
+              Code *
+              <input
+                placeholder="e.g. WH-MAIN, BR-DT"
+                value={form.code}
+                onChange={(e) => setForm({ ...form, code: e.target.value })}
+                style={{ textTransform: "uppercase" }}
+              />
+            </label>
+            <label>
+              Location Type
+              <div style={{ display: "flex", gap: 4 }}>
+                <select
+                  className="form-select"
+                  value={LOCATION_TYPE_PRESETS.includes(form.locationType) ? form.locationType : "__custom"}
+                  onChange={(e) => {
+                    if (e.target.value !== "__custom") {
+                      setForm({ ...form, locationType: e.target.value });
+                    }
+                  }}
+                  style={{ flex: 1 }}
+                >
+                  {LOCATION_TYPE_PRESETS.map((t) => (
+                    <option key={t} value={t}>{typeLabel(t)}</option>
+                  ))}
+                  <option value="__custom">Custom...</option>
+                </select>
+                {!LOCATION_TYPE_PRESETS.includes(form.locationType) && (
+                  <input
+                    placeholder="Custom type"
+                    value={form.locationType}
+                    onChange={(e) => setForm({ ...form, locationType: e.target.value })}
+                    style={{ flex: 1 }}
+                  />
+                )}
+              </div>
+            </label>
+            <label>
+              Sort Order
+              <input
+                type="number"
+                min={0}
+                value={form.sortOrder}
+                onChange={(e) => setForm({ ...form, sortOrder: Number(e.target.value) || 0 })}
+              />
+            </label>
+            <label>
+              Contact Person
+              <input
+                placeholder="Manager name"
+                value={form.contactPerson}
+                onChange={(e) => setForm({ ...form, contactPerson: e.target.value })}
+              />
+            </label>
+            <label>
+              Phone
+              <input
+                placeholder="+1 555 0100"
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+              />
+            </label>
+            <label>
+              Email
+              <input
+                placeholder="location@company.com"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+              />
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
+              <input
+                type="checkbox"
+                checked={form.isDefault}
+                onChange={(e) => setForm({ ...form, isDefault: e.target.checked })}
+              />
+              Set as default location
+            </label>
+          </div>
+          <label style={{ marginTop: 8 }}>
+            Address
+            <textarea
+              placeholder="Physical address"
+              rows={2}
+              value={form.address}
+              onChange={(e) => setForm({ ...form, address: e.target.value })}
+            />
+          </label>
+          <div className="form-actions">
+            <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+              {saving ? "Saving..." : editLoc ? "Update" : "Create"}
+            </button>
+            <button className="btn btn-secondary" onClick={resetForm}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Locations Table */}
+      {loading ? (
+        <div className="loading-state">
+          <div className="spinner" />
+          <p>Loading locations...</p>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="card text-center text-muted" style={{ padding: 32 }}>
+          {search || typeFilter !== "all"
+            ? "No locations match your filters"
+            : "No locations configured yet. Add your first location above."}
+        </div>
+      ) : (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Code</th>
+              <th>Type</th>
+              <th>Address</th>
+              <th>Contact</th>
+              <th>Order</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((loc) => {
+              const meta = (loc.metadata ?? {}) as any;
+              return (
+                <tr key={loc.id}>
+                  <td>
+                    <div className="cell-main">
+                      {loc.name}
+                      {loc.isDefault && <span className="badge badge-default" style={{ marginLeft: 6 }}>Default</span>}
+                    </div>
+                  </td>
+                  <td><code className="sku-code">{loc.code}</code></td>
+                  <td>
+                    <span className="status-pill" style={{
+                      backgroundColor: "var(--color-bg-secondary)",
+                      color: "var(--color-text)",
+                      fontSize: "0.75rem",
+                    }}>
+                      {typeLabel(loc.locationType ?? "warehouse")}
+                    </span>
+                  </td>
+                  <td className="text-muted" style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {loc.address || "—"}
+                  </td>
+                  <td>
+                    {meta.contactPerson && <div style={{ fontSize: "0.82rem" }}>{meta.contactPerson}</div>}
+                    {meta.phone && <div className="text-muted" style={{ fontSize: "0.75rem" }}>📞 {meta.phone}</div>}
+                    {meta.email && <div className="text-muted" style={{ fontSize: "0.75rem" }}>✉ {meta.email}</div>}
+                    {!meta.contactPerson && !meta.phone && !meta.email && <span className="text-muted">—</span>}
+                  </td>
+                  <td className="text-center">{loc.sortOrder ?? 0}</td>
+                  <td>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button
+                        className="btn btn-sm btn-secondary"
+                        onClick={() => openEdit(loc)}
+                        title="Edit"
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        className="btn btn-sm btn-secondary"
+                        onClick={() => handleDeactivate(loc.id)}
+                        title="Deactivate"
+                        style={{ color: "#ef4444" }}
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      {/* Help text */}
+      <div className="text-muted" style={{ fontSize: "0.78rem", marginTop: 16, lineHeight: 1.5 }}>
+        <strong>Tip:</strong> Locations represent any point in your supply chain — warehouses, branches, shops,
+        production facilities, kitchens, dispatch centers, etc. Use location types to categorize them and
+        sort order to control display priority. All inventory movement is tracked per-location for AI analytics
+        and demand forecasting.
+      </div>
+    </div>
+  );
 }

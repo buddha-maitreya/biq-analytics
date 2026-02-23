@@ -274,6 +274,8 @@ chat.post("/chat/sessions/:id/send",
   const user = getUser(c);
   const sessionId = c.req.param("id");
   const { message, attachmentIds } = c.req.valid("json");
+  const logger = (c as any).var?.logger;
+  logger?.info("[SEND:1] /send hit", { sessionId, userId: user.id, messageLen: message?.length, attachmentCount: attachmentIds?.length ?? 0 });
 
   if (typeof message !== "string") {
     throw new ValidationError("message must be a string");
@@ -291,12 +293,14 @@ chat.post("/chat/sessions/:id/send",
   // Resolve attachment metadata for image/document context
   let attachmentContext = "";
   if (attachmentIds?.length) {
+    logger?.info("[SEND:2] Resolving attachment metadata", { attachmentIds, sessionId });
     try {
       const rows = await db.query.attachments.findMany({
         where: and(
           eq(attachmentsTable.sessionId, sessionId),
         ),
       });
+      logger?.info("[SEND:2] Attachment DB rows found", { count: rows.length, ids: rows.map((r: any) => r.id) });
       const matched = rows.filter((r: any) => attachmentIds.includes(r.id));
       if (matched.length > 0) {
         const descriptions = matched.map((a: any) => {
@@ -322,7 +326,8 @@ chat.post("/chat/sessions/:id/send",
           "pass the attachment URL shown above as the imageUrl parameter. " +
           "For other file types, describe what you know about the file and take the requested action.";
       }
-    } catch {
+    } catch (attErr: any) {
+      logger?.warn("[SEND:2] Attachment resolution FAILED", { error: attErr?.message?.slice(0, 300), stack: attErr?.stack?.slice(0, 500) });
       // Non-critical — continue without attachment context
     }
   }
@@ -346,11 +351,12 @@ chat.post("/chat/sessions/:id/send",
   // replacing the unsafe fire-and-forget .catch() pattern.
   const sandboxApi = (c as any).var?.sandbox;
   const kvStore = (c as any).var?.kv;
-  const logger = (c as any).var?.logger;
+  logger?.info("[SEND:3] Launching processStream", { sessionId, messageLen: message.length, historyLen: recentMessages.length, hasAttachmentCtx: !!attachmentContext });
   c.waitUntil(async () => {
     try {
       await processStream(sessionId, message, recentMessages, summary, session.title, sandboxApi, kvStore, logger, user.name);
     } catch (err: any) {
+      logger?.error("[SEND:3] processStream threw", { error: err?.message?.slice(0, 500), stack: err?.stack?.slice(0, 800) });
       broadcast(sessionId, "error", {
         message: err?.message || "Stream processing failed",
       });
@@ -409,6 +415,7 @@ async function processStream(
   userName?: string
 ) {
   const streamStart = Date.now();
+  logger?.info("[STREAM:1] processStream entered", { sessionId, model: "pending", messageLen: message.length, historyLen: history.length });
 
   // ── Abort controller for cancel/interrupt support ──
   const abortController = new AbortController();
@@ -424,15 +431,17 @@ async function processStream(
     ? parseFloat(agentConfig.temperature)
     : undefined;
   const routingExamples = cfg.routingExamples as any[] | undefined;
+  logger?.info("[STREAM:2] Config loaded", { modelId, maxSteps, sandboxTimeoutMs, hasRoutingExamples: !!routingExamples });
 
   let ai: AISettings | undefined;
   try {
     ai = await getAISettings();
-  } catch {
-    // Non-critical — system prompt will use defaults
+  } catch (aiErr: any) {
+    logger?.warn("[STREAM:2] getAISettings failed", { error: aiErr?.message?.slice(0, 200) });
   }
 
   // ── Build per-request tool set ──
+  logger?.info("[STREAM:3] Building tool set");
   const allTools = await getAllTools(
     {
       sandboxApi,
@@ -445,6 +454,7 @@ async function processStream(
     kv
   );
   const customToolsSection = await buildCustomToolsPromptSection();
+  logger?.info("[STREAM:3] Tools ready", { toolCount: Object.keys(allTools).length, tools: Object.keys(allTools) });
 
   // ── Build message array ──
   const messages: Array<{
@@ -461,6 +471,7 @@ async function processStream(
   const collector = new SpanCollector("data-science", sessionId);
 
   // ── Stream the response ──
+  logger?.info("[STREAM:4] Starting streamText", { modelId, messageCount: messages.length, maxSteps });
   const result = streamText({
     model: await getModel(modelId),
     ...(temperature !== undefined ? { temperature } : {}),
@@ -561,6 +572,7 @@ async function processStream(
 
         case "tool-call":
           // Tool call started
+          logger?.info("[STREAM:5] Tool call started", { toolCallId: chunk.toolCallId, toolName: chunk.toolName, argsKeys: Object.keys(chunk.args || {}) });
           broadcast(sessionId, "tool.start", {
             toolId: chunk.toolCallId,
             name: chunk.toolName,
@@ -576,6 +588,7 @@ async function processStream(
 
         case "tool-result":
           // Tool call completed
+          logger?.info("[STREAM:5] Tool result received", { toolCallId: chunk.toolCallId, toolName: chunk.toolName, resultType: typeof chunk.result, success: (chunk.result as any)?.success });
           broadcast(sessionId, "tool.result", {
             toolId: chunk.toolCallId,
             name: chunk.toolName,
@@ -590,6 +603,7 @@ async function processStream(
           break;
 
         case "error":
+          logger?.error("[STREAM:ERR] Stream error chunk", { error: String((chunk as any).error ?? "Unknown"), durationMs: Date.now() - streamStart });
           broadcast(sessionId, "error", {
             message: String((chunk as any).error ?? "Unknown error"),
           });

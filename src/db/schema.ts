@@ -118,14 +118,22 @@ export const products = pgTable(
   ]
 );
 
-/** Warehouses — storage locations */
+/** Warehouses / Locations — any physical or logical storage point in the supply chain */
 export const warehouses = pgTable("warehouses", {
   id: id(),
   name: varchar("name", { length: 255 }).notNull(),
   code: varchar("code", { length: 50 }).notNull(),
+  /**
+   * Business-configurable location type. NOT an enum — free-text so each
+   * deployment defines its own terminology (warehouse, branch, kitchen,
+   * production, manufacturing, dispatch, shop, cold_storage, etc.).
+   */
+  locationType: varchar("location_type", { length: 100 }).notNull().default("warehouse"),
   address: text("address"),
   isActive: boolean("is_active").notNull().default(true),
   isDefault: boolean("is_default").notNull().default(false),
+  /** Sort order for UI display */
+  sortOrder: integer("sort_order").notNull().default(0),
   metadata: metadata(),
   ...timestamps(),
 });
@@ -165,10 +173,12 @@ export const inventoryTransactions = pgTable(
     warehouseId: uuid("warehouse_id")
       .notNull()
       .references(() => warehouses.id),
-    type: varchar("type", { length: 50 }).notNull(), // e.g. "receipt", "sale", "adjustment", "transfer"
+    type: varchar("type", { length: 50 }).notNull(), // e.g. "receipt", "sale", "adjustment", "transfer", "scan_add", "scan_remove"
     quantity: integer("quantity").notNull(),
-    referenceType: varchar("reference_type", { length: 50 }), // e.g. "order", "manual", "transfer"
+    referenceType: varchar("reference_type", { length: 50 }), // e.g. "order", "manual", "transfer", "scan"
     referenceId: uuid("reference_id"),
+    /** Device source: web, mobile, scanner, api */
+    deviceType: varchar("device_type", { length: 30 }),
     notes: text("notes"),
     performedBy: uuid("performed_by"),
     metadata: metadata(),
@@ -180,6 +190,98 @@ export const inventoryTransactions = pgTable(
     index("idx_inv_tx_type").on(t.type),
     index("idx_inv_tx_reference").on(t.referenceType, t.referenceId),
     index("idx_inv_tx_created").on(t.createdAt),
+  ]
+);
+
+// ============================================================
+// Scan Pipeline Tables
+// ============================================================
+
+/**
+ * Scan Events — raw log of every barcode scan attempt.
+ * Tracks scans even if the product doesn't exist, the scan fails, or
+ * the user is offline. Enables audit trails, fraud detection, and
+ * offline sync reconciliation.
+ *
+ * Every successful scan links to a stock transaction via linkedTransactionId.
+ */
+export const scanEvents = pgTable(
+  "scan_events",
+  {
+    id: id(),
+    /** Warehouse/branch where the scan occurred */
+    warehouseId: uuid("warehouse_id")
+      .notNull()
+      .references(() => warehouses.id),
+    /** User who performed the scan */
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    /** Raw barcode/QR value scanned */
+    barcode: varchar("barcode", { length: 255 }).notNull(),
+    /** Device source: web, mobile, scanner, api */
+    deviceType: varchar("device_type", { length: 30 }).notNull().default("web"),
+    /** Scan outcome: success, failed (product not found), pending_sync (offline) */
+    status: varchar("status", { length: 30 }).notNull().default("pending_sync"),
+    /** FK to the stock transaction created by this scan (null if failed/pending) */
+    linkedTransactionId: uuid("linked_transaction_id"),
+    /** Resolved product ID (null if product lookup failed) */
+    productId: uuid("product_id").references(() => products.id),
+    /** Quantity scanned (defaults to 1) */
+    quantity: integer("quantity").notNull().default(1),
+    /** Scan type: scan_add (receiving) or scan_remove (selling/dispatching) */
+    scanType: varchar("scan_type", { length: 30 }).notNull().default("scan_add"),
+    /** Error message if scan failed */
+    errorMessage: text("error_message"),
+    /** Client-generated UUID to prevent duplicate sync (for offline mode) */
+    idempotencyKey: varchar("idempotency_key", { length: 100 }),
+    /** Raw request payload for debugging */
+    rawPayload: jsonb("raw_payload").$type<Record<string, unknown>>(),
+    metadata: metadata(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("idx_scan_events_warehouse").on(t.warehouseId),
+    index("idx_scan_events_user").on(t.userId),
+    index("idx_scan_events_barcode").on(t.barcode),
+    index("idx_scan_events_status").on(t.status),
+    index("idx_scan_events_product").on(t.productId),
+    index("idx_scan_events_created").on(t.createdAt),
+    uniqueIndex("idx_scan_events_idempotency").on(t.idempotencyKey),
+  ]
+);
+
+/**
+ * Idempotency Keys — prevents duplicate stock changes from retries,
+ * network drops, double-taps, or offline sync replays.
+ *
+ * Each scan request includes a client-generated UUID. If a request with the
+ * same key arrives again, we return the cached response instead of
+ * re-processing the stock movement.
+ *
+ * Records are auto-cleaned after 24 hours (safe window for retries).
+ */
+export const idempotencyKeys = pgTable(
+  "idempotency_keys",
+  {
+    id: id(),
+    /** Client-generated unique key per scan request */
+    key: varchar("key", { length: 255 }).notNull(),
+    /** Hash of the request body (to detect payload mismatches on same key) */
+    requestHash: varchar("request_hash", { length: 64 }).notNull(),
+    /** Cached response JSON to return for duplicate requests */
+    responseSnapshot: jsonb("response_snapshot").$type<Record<string, unknown>>().notNull(),
+    /** TTL — after this timestamp the key can be reused */
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("idx_idempotency_key").on(t.key),
+    index("idx_idempotency_expires").on(t.expiresAt),
   ]
 );
 
@@ -395,6 +497,8 @@ export const users = pgTable(
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     /** Granular permissions: ["dashboard","products","orders","customers","inventory","invoices","reports","pos","admin","settings"] */
     permissions: jsonb("permissions").$type<string[]>().default([]),
+    /** The user's home location — where they physically work. null for org-wide roles. */
+    primaryWarehouseId: uuid("primary_warehouse_id").references(() => warehouses.id),
     /** Warehouse/branch IDs this user can access. null = all warehouses. */
     assignedWarehouses: jsonb("assigned_warehouses").$type<string[]>(),
     /** UUID of the user who created/invited this user (for hierarchy enforcement) */
@@ -408,6 +512,7 @@ export const users = pgTable(
     uniqueIndex("idx_users_email").on(t.email),
     index("idx_users_role").on(t.role),
     index("idx_users_active").on(t.isActive),
+    index("idx_users_primary_warehouse").on(t.primaryWarehouseId),
     index("idx_users_reports_to").on(t.reportsTo),
   ]
 );
@@ -900,6 +1005,21 @@ export const inventoryTransactionsRelations = relations(
   })
 );
 
+export const scanEventsRelations = relations(scanEvents, ({ one }) => ({
+  warehouse: one(warehouses, {
+    fields: [scanEvents.warehouseId],
+    references: [warehouses.id],
+  }),
+  user: one(users, {
+    fields: [scanEvents.userId],
+    references: [users.id],
+  }),
+  product: one(products, {
+    fields: [scanEvents.productId],
+    references: [products.id],
+  }),
+}));
+
 export const customersRelations = relations(customers, ({ many }) => ({
   orders: many(orders),
   invoices: many(invoices),
@@ -957,7 +1077,11 @@ export const paymentsRelations = relations(payments, ({ one }) => ({
   }),
 }));
 
-export const usersRelations = relations(users, ({ many }) => ({
+export const usersRelations = relations(users, ({ one, many }) => ({
+  primaryWarehouse: one(warehouses, {
+    fields: [users.primaryWarehouseId],
+    references: [warehouses.id],
+  }),
   auditLogs: many(auditLog),
   notifications: many(notifications),
   chatSessions: many(chatSessions),
@@ -1812,3 +1936,148 @@ export const approvalDecisions = pgTable(
     index("idx_approval_decisions_decided").on(t.decidedAt),
   ]
 );
+
+// ============================================================
+// Product Search Analytics
+// ============================================================
+
+/**
+ * Product Search Log — captures every product search event for AI analytics.
+ * Enables demand forecasting, cross-branch hoarding detection, and
+ * inventory movement intelligence.
+ */
+export const productSearchLog = pgTable(
+  "product_search_log",
+  {
+    id: id(),
+    /** Who searched (null for unauthenticated / system searches) */
+    userId: uuid("user_id").references(() => users.id),
+    /** The raw search term entered */
+    searchTerm: varchar("search_term", { length: 500 }).notNull(),
+    /** Which warehouse/branch context the search was scoped to (null = all) */
+    warehouseId: uuid("warehouse_id").references(() => warehouses.id),
+    /** Category filter active during search (null = all categories) */
+    categoryFilter: varchar("category_filter", { length: 255 }),
+    /** Number of results returned */
+    resultCount: integer("result_count").notNull().default(0),
+    /** Product clicked/selected from results (null if none clicked) */
+    productIdClicked: uuid("product_id_clicked").references(() => products.id),
+    /** Time taken to complete the search (ms) */
+    searchDurationMs: integer("search_duration_ms"),
+    /** Search source: products_page, scan_lookup, pos, api, agent */
+    source: varchar("source", { length: 50 }).notNull().default("products_page"),
+    /** Device/client info */
+    deviceType: varchar("device_type", { length: 30 }),
+    ipAddress: varchar("ip_address", { length: 45 }),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_search_log_user").on(t.userId),
+    index("idx_search_log_warehouse").on(t.warehouseId),
+    index("idx_search_log_term").on(t.searchTerm),
+    index("idx_search_log_product").on(t.productIdClicked),
+    index("idx_search_log_source").on(t.source),
+    index("idx_search_log_created").on(t.createdAt),
+  ]
+);
+
+export const productSearchLogRelations = relations(productSearchLog, ({ one }) => ({
+  user: one(users, {
+    fields: [productSearchLog.userId],
+    references: [users.id],
+  }),
+  warehouse: one(warehouses, {
+    fields: [productSearchLog.warehouseId],
+    references: [warehouses.id],
+  }),
+  productClicked: one(products, {
+    fields: [productSearchLog.productIdClicked],
+    references: [products.id],
+  }),
+}));
+
+// ============================================================
+// Cross-Branch Product Requests (Borrow / Request)
+// ============================================================
+
+/**
+ * Product Requests — tracks when staff request or borrow inventory
+ * from another location. "borrow" = from another branch,
+ * "request" = from a warehouse. AI agents use this data for
+ * demand forecasting, hoarding detection, and redistribution insights.
+ */
+export const productRequests = pgTable(
+  "product_requests",
+  {
+    id: id(),
+    /** Staff member who made the request */
+    requesterId: uuid("requester_id")
+      .notNull()
+      .references(() => users.id),
+    /** Product being requested */
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id),
+    /** Branch/location of the requester (where they need the stock) */
+    fromWarehouseId: uuid("from_warehouse_id")
+      .notNull()
+      .references(() => warehouses.id),
+    /** Location that has the stock (source of the borrow/request) */
+    toWarehouseId: uuid("to_warehouse_id")
+      .notNull()
+      .references(() => warehouses.id),
+    /** "borrow" (branch→branch) or "request" (branch→warehouse) */
+    requestType: varchar("request_type", { length: 20 }).notNull(),
+    /** Quantity requested */
+    quantity: integer("quantity").notNull().default(1),
+    /** Urgency: low, normal, high, critical */
+    urgency: varchar("urgency", { length: 20 }).notNull().default("normal"),
+    /** Free-text reason/notes from staff */
+    reason: text("reason"),
+    /** Status: pending, approved, rejected, fulfilled, cancelled */
+    status: varchar("status", { length: 20 }).notNull().default("pending"),
+    /** Who approved/rejected (null while pending) */
+    deciderId: uuid("decider_id").references(() => users.id),
+    /** When the decision was made */
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /** Decider's comment */
+    deciderComment: text("decider_comment"),
+    /** Search term that led to this request (links to search analytics) */
+    originSearchTerm: varchar("origin_search_term", { length: 500 }),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_product_requests_requester").on(t.requesterId),
+    index("idx_product_requests_product").on(t.productId),
+    index("idx_product_requests_from").on(t.fromWarehouseId),
+    index("idx_product_requests_to").on(t.toWarehouseId),
+    index("idx_product_requests_type").on(t.requestType),
+    index("idx_product_requests_status").on(t.status),
+    index("idx_product_requests_created").on(t.createdAt),
+  ]
+);
+
+export const productRequestsRelations = relations(productRequests, ({ one }) => ({
+  requester: one(users, {
+    fields: [productRequests.requesterId],
+    references: [users.id],
+  }),
+  product: one(products, {
+    fields: [productRequests.productId],
+    references: [products.id],
+  }),
+  fromWarehouse: one(warehouses, {
+    fields: [productRequests.fromWarehouseId],
+    references: [warehouses.id],
+  }),
+  toWarehouse: one(warehouses, {
+    fields: [productRequests.toWarehouseId],
+    references: [warehouses.id],
+  }),
+  decider: one(users, {
+    fields: [productRequests.deciderId],
+    references: [users.id],
+  }),
+}));

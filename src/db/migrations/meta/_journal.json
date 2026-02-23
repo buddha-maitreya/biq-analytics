@@ -29,6 +29,27 @@
       "when": 1771654050963,
       "tag": "0003_useful_mathemanic",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1771787075433,
+      "tag": "0004_melted_medusa",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1771836809987,
+      "tag": "0005_flaky_ultragirl",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1771842865210,
+      "tag": "0006_talented_domino",
+      "breakpoints": true
     }
   ]
 }

@@ -190,7 +190,7 @@ The Agentuity CLI generates `src/generated/*.ts` files with **Windows backslash 
 
 **Solution:** All builds and deploys must run on Linux via WSL. The project has WSL (Ubuntu 24.04) configured with Bun and the Agentuity CLI installed.
 
-**CRITICAL: All `wsl -d Ubuntu-24.04 -- bash -lc "..."` commands MUST be run from desktop Windows PowerShell, NEVER from inside WSL itself.** The `wsl` command is a Windows executable that calls into WSL — it does not exist inside Linux. If Copilot needs to run a WSL command, it must use the `run_in_terminal` tool targeting a PowerShell terminal.
+**CRITICAL: All `wsl -d Ubuntu-24.04 -- bash -lc "..."` commands MUST be run from desktop Windows PowerShell, NEVER from the VS Code integrated terminal or Copilot agent.** The `wsl` command is a Windows executable that calls into WSL — it does not exist inside Linux. Copilot must NEVER attempt to run `wsl` commands via `run_in_terminal`. Instead, Copilot should **print the command for the user to run manually** from desktop PowerShell.
 
 **Generated files are gitignored** — `src/generated/*.ts` is in `.gitignore` to prevent Windows-generated files from being committed. The cloud build (Linux) regenerates them with correct paths.
 
@@ -226,7 +226,7 @@ This is the **standard deployment process**. All builds and deploys run from WSL
      wsl -d Ubuntu-24.04 -- bash -lc "cd ~/business-iq-enterprise && git pull && source ~/.bashrc && bun install && agentuity deploy"
 ```
 
-**NOTE:** The `wsl -d Ubuntu-24.04` command is a Windows executable. It must ALWAYS be run from desktop PowerShell. Never run it from inside a WSL/Linux terminal.
+**NOTE:** The `wsl -d Ubuntu-24.04` command is a Windows executable. It must ALWAYS be run from desktop PowerShell by the user manually. **Copilot must NEVER run `wsl` commands** — always provide them as copy-paste instructions for the user.
 
 **Or from inside the WSL terminal directly (if the user opens one manually):**
 ```bash
@@ -314,6 +314,8 @@ wsl -d Ubuntu-24.04 -- bash -lc "cd ~/business-iq-enterprise && git pull && sour
 - Consistent environment every time
 
 **When Copilot needs to run migrations:** Always use the `run_in_terminal` tool with desktop PowerShell commands. Never suggest running `drizzle-kit` from inside WSL (the `.env` file with DATABASE_URL is on Windows).
+
+**When Copilot needs to run WSL/deploy commands:** NEVER use `run_in_terminal` with `wsl` commands. Instead, print the full command for the user to copy-paste and run from their desktop PowerShell manually. The VS Code integrated terminal does not reliably execute `wsl` commands.
 
 ### Drizzle Migration Internals — How `drizzle-kit migrate` Actually Works
 

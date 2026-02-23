@@ -2435,6 +2435,50 @@ textarea {
   }
 }
 
+/* ===== PAYMENT BADGES (Sales page) ===== */
+
+.payment-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.payment-m-pesa {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+[data-theme="dark"] .payment-m-pesa {
+  background: rgba(46, 125, 50, 0.18);
+  color: #81c784;
+}
+.payment-cash {
+  background: #fff8e1;
+  color: #f57f17;
+}
+[data-theme="dark"] .payment-cash {
+  background: rgba(245, 127, 23, 0.18);
+  color: #ffd54f;
+}
+.payment-card {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+[data-theme="dark"] .payment-card {
+  background: rgba(21, 101, 192, 0.18);
+  color: #64b5f6;
+}
+.payment-bank-transfer {
+  background: #f3e5f5;
+  color: #7b1fa2;
+}
+[data-theme="dark"] .payment-bank-transfer {
+  background: rgba(123, 31, 162, 0.18);
+  color: #ce93d8;
+}
+
 /* ===== FILTER BAR ===== */
 
 .filter-bar {

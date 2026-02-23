@@ -1,10 +1,11 @@
 import React, { useState } from "react";
+import SalesPage from "./SalesPage";
 import OrdersPage from "./OrdersPage";
 import CustomersPage from "./CustomersPage";
 import InvoicesPage from "./InvoicesPage";
 import type { AppConfig } from "../types";
 
-type OperationsTab = "orders" | "customers" | "invoices";
+type OperationsTab = "sales" | "orders" | "customers" | "invoices";
 
 interface OperationsPageProps {
   config: AppConfig;
@@ -12,13 +13,14 @@ interface OperationsPageProps {
 }
 
 const TABS: { key: OperationsTab; icon: string; labelKey?: keyof AppConfig["labels"]; fallback: string }[] = [
+  { key: "sales", icon: "💰", fallback: "Sales" },
   { key: "orders", icon: "🛒", labelKey: "orderPlural", fallback: "Orders" },
   { key: "customers", icon: "👥", labelKey: "customerPlural", fallback: "Customers" },
   { key: "invoices", icon: "📄", labelKey: "invoice", fallback: "Invoices" },
 ];
 
 export default function OperationsPage({ config, initialTab }: OperationsPageProps) {
-  const [tab, setTab] = useState<OperationsTab>(initialTab ?? "orders");
+  const [tab, setTab] = useState<OperationsTab>(initialTab ?? "sales");
 
   return (
     <div className="operations-page">
@@ -40,6 +42,7 @@ export default function OperationsPage({ config, initialTab }: OperationsPagePro
       </div>
 
       <div className="operations-content">
+        {tab === "sales" && <SalesPage config={config} />}
         {tab === "orders" && <OrdersPage config={config} />}
         {tab === "customers" && <CustomersPage config={config} />}
         {tab === "invoices" && <InvoicesPage config={config} />}

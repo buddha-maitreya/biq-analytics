@@ -57,6 +57,13 @@
       "when": 1771857734985,
       "tag": "0007_majestic_squirrel_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1771875175976,
+      "tag": "0008_clammy_ogun",
+      "breakpoints": true
     }
   ]
 }

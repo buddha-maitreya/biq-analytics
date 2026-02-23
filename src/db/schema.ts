@@ -386,6 +386,47 @@ export const transferOrderItems = pgTable(
 // Sales Tables
 // ============================================================
 
+/** Sales — individual product-level sale transactions (distinct from grouped orders) */
+export const sales = pgTable(
+  "sales",
+  {
+    id: id(),
+    saleNumber: varchar("sale_number", { length: 50 }).notNull(),
+    /** FK to the product sold */
+    productId: uuid("product_id").references(() => products.id),
+    /** Denormalized for fast display */
+    sku: varchar("sku", { length: 100 }).notNull(),
+    productName: varchar("product_name", { length: 255 }).notNull(),
+    category: varchar("category", { length: 255 }),
+    /** Branch / location where sale occurred */
+    warehouseId: uuid("warehouse_id").references(() => warehouses.id),
+    warehouseName: varchar("warehouse_name", { length: 255 }),
+    /** Customer who purchased (optional — walk-ins have null) */
+    customerId: uuid("customer_id").references(() => customers.id),
+    customerName: varchar("customer_name", { length: 255 }),
+    quantity: integer("quantity").notNull().default(1),
+    unitPrice: numeric("unit_price", { precision: 12, scale: 2 }).notNull(),
+    /** Total = quantity × unitPrice */
+    totalAmount: numeric("total_amount", { precision: 12, scale: 2 }).notNull(),
+    currency: varchar("currency", { length: 10 }).notNull().default("KES"),
+    /** Payment method: cash, mpesa, card, etc. */
+    paymentMethod: varchar("payment_method", { length: 50 }),
+    /** Sales person / cashier name */
+    soldBy: varchar("sold_by", { length: 255 }),
+    /** Date/time of sale */
+    saleDate: timestamp("sale_date", { withTimezone: true }).notNull().defaultNow(),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    uniqueIndex("idx_sales_number").on(t.saleNumber),
+    index("idx_sales_product").on(t.productId),
+    index("idx_sales_warehouse").on(t.warehouseId),
+    index("idx_sales_date").on(t.saleDate),
+    index("idx_sales_sku").on(t.sku),
+  ]
+);
+
 /** Customers */
 export const customers = pgTable(
   "customers",

@@ -24,6 +24,21 @@ import * as objectStorage from "@services/object-storage";
 
 const attachments = createRouter();
 attachments.use(errorMiddleware());
+
+// ── Global error handler — ensures no errors are silently lost ──
+attachments.onError((err, c) => {
+  const log = c.var.logger;
+  log?.error("[ATTACHMENTS:ERROR] Unhandled route error", {
+    error: err?.message?.slice(0, 500),
+    stack: err?.stack?.slice(0, 1000),
+    method: c.req.method,
+    url: c.req.url,
+  });
+  return c.json({
+    error: `Attachment error: ${err?.message?.slice(0, 200) || "Unknown error"}`,
+  }, 500);
+});
+
 // NOTE: sessionMiddleware is already applied by chat.ts (which mounts this
 // router) via chat.use("/chat/*", sessionMiddleware()). Adding it again here
 // would double-execute auth checks. We rely on the parent middleware.
@@ -131,25 +146,41 @@ const TEMP_ATTACHMENT_TTL = 2 * 60 * 60 * 1000;
 attachments.post("/chat/sessions/:sessionId/attachments", async (c) => {
   const sessionId = c.req.param("sessionId");
   const log = c.var.logger;
-  log?.info("[UPLOAD:1] Attachment upload started", { sessionId });
+  log?.info("[UPLOAD:1] Attachment upload started", {
+    sessionId,
+    method: c.req.method,
+    url: c.req.url,
+    contentType: c.req.header("content-type")?.slice(0, 100),
+    contentLength: c.req.header("content-length"),
+  });
+
+  try {
 
   // sessionMiddleware sets c.var.appUser (AppUser object), not c.var.userId.
   // Extract .id from the appUser object for the DB insert.
   const appUser = (c as any).get("appUser");
   if (!appUser?.id) {
-    log?.warn("[UPLOAD:1] No appUser — auth missing");
-    return c.json({ error: "Authentication required" }, 401);
+    log?.warn("[UPLOAD:1] No appUser — auth missing", {
+      hasVarUser: !!c.var.user,
+      cookies: c.req.header("cookie")?.slice(0, 100),
+    });
+    return c.json({ error: "Authentication required — no session found" }, 401);
   }
   const userId = appUser.id as string;
-  log?.info("[UPLOAD:2] Auth OK", { userId });
+  log?.info("[UPLOAD:2] Auth OK", { userId, email: appUser.email });
 
   // Parse multipart form data
   let body: Record<string, any>;
   try {
     body = await c.req.parseBody();
+    log?.info("[UPLOAD:2] parseBody() succeeded", { bodyKeys: Object.keys(body), bodyTypes: Object.fromEntries(Object.entries(body).map(([k, v]) => [k, typeof v === 'object' && v !== null ? (v as any).constructor?.name ?? typeof v : typeof v])) });
   } catch (parseErr: any) {
-    log?.error("[UPLOAD:2] parseBody() threw", { error: parseErr?.message?.slice(0, 300) });
-    return c.json({ error: `Failed to parse upload: ${parseErr?.message?.slice(0, 100)}` }, 400);
+    log?.error("[UPLOAD:2] parseBody() threw", {
+      error: parseErr?.message?.slice(0, 300),
+      stack: parseErr?.stack?.slice(0, 500),
+      contentType: c.req.header("content-type")?.slice(0, 200),
+    });
+    return c.json({ error: `Failed to parse upload: ${parseErr?.message?.slice(0, 200)}` }, 400);
   }
   const file = body["file"];
 
@@ -277,6 +308,18 @@ attachments.post("/chat/sessions/:sessionId/attachments", async (c) => {
       downloadUrlExpiresIn: "1 hour",
     },
   });
+
+  } catch (unhandledErr: any) {
+    // Global catch — ensures NO error is silently swallowed
+    log?.error("[UPLOAD:FATAL] Unhandled error in attachment upload handler", {
+      error: unhandledErr?.message?.slice(0, 500),
+      stack: unhandledErr?.stack?.slice(0, 1000),
+      sessionId,
+    });
+    return c.json({
+      error: `Internal upload error: ${unhandledErr?.message?.slice(0, 200) || "Unknown error"}`,
+    }, 500);
+  }
 });
 
 /**

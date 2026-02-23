@@ -264,7 +264,16 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, isConnected: true, error: null };
 
     case "DISCONNECTED":
-      return { ...state, isConnected: false, error: action.error ?? null };
+      return {
+        ...state,
+        isConnected: false,
+        error: action.error ?? null,
+        // Reset session status to idle on disconnect so buttons aren't stuck disabled.
+        // If the server is still processing, the reconnected SSE will re-set "busy".
+        sessionStatus: "idle",
+        streamingText: "",
+        streamingToolCalls: new Map(),
+      };
 
     case "SET_FEEDBACK": {
       const messages = new Map(state.messages);
@@ -557,14 +566,17 @@ export function useChatStream() {
       if (res.ok) {
         const { data } = await res.json();
         dispatch({ type: "SET_SESSIONS", sessions: data });
+      } else {
+        console.warn("[Chat] loadSessions failed", { status: res.status, statusText: res.statusText });
       }
-    } catch {
-      // silent
+    } catch (err: any) {
+      console.error("[Chat] loadSessions error", { error: err?.message });
     }
   }, []);
 
   const createSession = useCallback(async (): Promise<string | null> => {
     try {
+      console.log("[Chat] createSession — POST /api/chat/sessions");
       const res = await fetch("/api/chat/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
@@ -572,12 +584,16 @@ export function useChatStream() {
       });
       if (res.ok) {
         const { data } = await res.json();
+        console.log("[Chat] createSession OK", { sessionId: data.id });
         dispatch({ type: "ADD_SESSION", session: data });
         dispatch({ type: "SET_ACTIVE_SESSION", sessionId: data.id });
         return data.id;
+      } else {
+        const text = await res.text().catch(() => "");
+        console.error("[Chat] createSession failed", { status: res.status, statusText: res.statusText, body: text.slice(0, 300) });
       }
-    } catch {
-      // silent
+    } catch (err: any) {
+      console.error("[Chat] createSession network error", { error: err?.message, stack: err?.stack });
     }
     return null;
   }, []);
@@ -589,13 +605,16 @@ export function useChatStream() {
 
   const deleteSession = useCallback(async (sessionId: string) => {
     try {
-      await fetch(`/api/chat/sessions/${sessionId}`, {
+      const res = await fetch(`/api/chat/sessions/${sessionId}`, {
         method: "DELETE",
         headers: getAuthHeaders(),
       });
+      if (!res.ok) {
+        console.warn("[Chat] deleteSession failed", { sessionId, status: res.status });
+      }
       dispatch({ type: "REMOVE_SESSION", sessionId });
-    } catch {
-      // silent
+    } catch (err: any) {
+      console.error("[Chat] deleteSession error", { sessionId, error: err?.message });
     }
   }, []);
 

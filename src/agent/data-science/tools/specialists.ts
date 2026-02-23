@@ -296,7 +296,8 @@ export const scanDocumentTool = tool({
   description:
     "Process uploaded images and documents inline using GPT-4o vision. " +
     "Use when the user has uploaded a file (image, PDF, etc.) and wants to: scan barcodes/QR codes, " +
-    "extract inventory data from stock sheets (OCR), or parse invoice data from invoice images. " +
+    "extract inventory data from stock sheets (OCR), or parse invoice data from invoice/PDF documents. " +
+    "Supports images (PNG, JPEG, GIF, WebP) AND PDF files. " +
     "Requires either an image URL (S3 presigned URL from the attachment) or base64-encoded image data.",
   parameters: z.object({
     mode: z
@@ -336,6 +337,7 @@ export const scanDocumentTool = tool({
     // read the file content and convert to base64 for the multimodal LLM.
     let resolvedImageUrl = imageUrl;
     let resolvedImageData = imageData;
+    let resolvedMimeType: string | undefined; // Track MIME for file vs image content part
 
     if (imageUrl && !imageData) {
       const internalMatch = imageUrl.match(/\/api\/chat\/attachments\/([^/]+)\/download/);
@@ -345,11 +347,21 @@ export const scanDocumentTool = tool({
         const cached = tempAttachmentCache.get(attachmentId);
         if (cached && cached.expiresAt > Date.now()) {
           console.log(`[SCAN:2] Temp cache HIT — ${cached.buffer.byteLength} bytes`, { contentType: cached.contentType });
-          // Resize image before encoding to base64 — reduces payload dramatically
-          const resized = await resizeImageForVision(cached.buffer, cached.contentType);
-          const base64 = resized.data.toString("base64");
-          console.log(`[SCAN:2] Image resized — base64 length: ${base64.length} chars`);
-          resolvedImageData = `data:${resized.contentType};base64,${base64}`;
+          resolvedMimeType = cached.contentType;
+          const isPdf = cached.contentType === "application/pdf";
+          if (isPdf) {
+            // PDFs can't be resized via Sharp — send raw to GPT-4o as a file part
+            const base64 = Buffer.from(cached.buffer).toString("base64");
+            console.log(`[SCAN:2] PDF detected — skipping resize, base64 length: ${base64.length} chars`);
+            resolvedImageData = `data:application/pdf;base64,${base64}`;
+          } else {
+            // Resize image before encoding to base64 — reduces payload dramatically
+            const resized = await resizeImageForVision(cached.buffer, cached.contentType);
+            const base64 = resized.data.toString("base64");
+            console.log(`[SCAN:2] Image resized — base64 length: ${base64.length} chars`);
+            resolvedImageData = `data:${resized.contentType};base64,${base64}`;
+            resolvedMimeType = resized.contentType;
+          }
           resolvedImageUrl = undefined;
         } else {
           console.log(`[SCAN:2] Temp cache MISS`, { attachmentId, expired: cached ? cached.expiresAt < Date.now() : 'not_found' });
@@ -365,7 +377,9 @@ export const scanDocumentTool = tool({
     }
 
     // If we have raw base64 imageData (not from temp cache), try to resize it too
-    if (resolvedImageData && !resolvedImageUrl) {
+    // Skip resize for PDFs — they aren't images and Sharp can't process them
+    const isResolvedPdf = resolvedMimeType === "application/pdf" || resolvedImageData?.startsWith("data:application/pdf");
+    if (resolvedImageData && !resolvedImageUrl && !isResolvedPdf) {
       try {
         const base64Match = resolvedImageData.match(/^data:[^;]+;base64,(.+)$/);
         if (base64Match) {
@@ -405,9 +419,17 @@ export const scanDocumentTool = tool({
       }
 
       // Build multimodal message content
+      // PDFs use 'file' content part; images use 'image' content part
       const messageContent: Array<any> = [];
 
-      if (resolvedImageData) {
+      if (isResolvedPdf && resolvedImageData) {
+        // GPT-4o supports PDFs via file content parts (not image parts)
+        const pdfBase64Match = resolvedImageData.match(/^data:[^;]+;base64,(.+)$/);
+        if (pdfBase64Match) {
+          messageContent.push({ type: "file", data: pdfBase64Match[1], mimeType: "application/pdf" });
+          console.log(`[SCAN:3] Using file content part for PDF`);
+        }
+      } else if (resolvedImageData) {
         messageContent.push({ type: "image", image: resolvedImageData });
       } else if (resolvedImageUrl) {
         messageContent.push({ type: "image", image: new URL(resolvedImageUrl) });

@@ -244,21 +244,29 @@ const agent = createAgent("document-scanner", {
       systemPrompt += `\n\nAdditional context: ${input.context}`;
     }
 
-    // Build the message content with image
-    const messageContent: Array<{ type: string; text?: string; image?: any }> = [];
+    // Build the message content with image or file (PDF)
+    // GPT-4o supports PDFs via 'file' content parts, images via 'image' parts
+    const messageContent: Array<any> = [];
+    const isPdf = input.mimeType === "application/pdf" ||
+      input.imageData?.startsWith("data:application/pdf") ||
+      input.imageUrl?.toLowerCase().endsWith(".pdf");
 
-    if (input.imageData) {
+    if (isPdf && input.imageData) {
+      // PDF — use file content part instead of image
+      const pdfBase64Match = input.imageData.match(/^data:[^;]+;base64,(.+)$/);
+      if (pdfBase64Match) {
+        ctx.logger.info("[SCANNER:3] Using file part for PDF", { len: input.imageData.length });
+        messageContent.push({ type: "file", data: pdfBase64Match[1], mimeType: "application/pdf" });
+      } else {
+        ctx.logger.info("[SCANNER:3] Using file part for PDF (raw base64)", { len: input.imageData.length });
+        messageContent.push({ type: "file", data: input.imageData, mimeType: "application/pdf" });
+      }
+    } else if (input.imageData) {
       ctx.logger.info("[SCANNER:3] Using imageData", { len: input.imageData.length });
-      messageContent.push({
-        type: "image",
-        image: input.imageData, // Vercel AI SDK accepts base64 directly
-      } as any);
+      messageContent.push({ type: "image", image: input.imageData });
     } else if (input.imageUrl) {
       ctx.logger.info("[SCANNER:3] Using imageUrl", { url: input.imageUrl.slice(0, 80) });
-      messageContent.push({
-        type: "image",
-        image: new URL(input.imageUrl),
-      } as any);
+      messageContent.push({ type: "image", image: new URL(input.imageUrl) });
     }
 
     messageContent.push({

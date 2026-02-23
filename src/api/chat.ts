@@ -227,9 +227,15 @@ chat.get("/chat/sessions/:id/events", sse(async (c, stream) => {
   // Register stream in session bus
   addStream(sessionId, stream);
 
-  // Send connected event
+  // Send connected event + current processing status.
+  // On reconnect, the client may have missed session.status events.
+  // Checking sessionAbortControllers tells us if processStream is active.
+  const isProcessing = sessionAbortControllers.has(sessionId);
   await stream.writeSSE({
     data: JSON.stringify({ type: "session.connected", properties: { sessionId } }),
+  });
+  await stream.writeSSE({
+    data: JSON.stringify({ type: "session.status", properties: { status: isProcessing ? "busy" : "idle" } }),
   });
 
   // Keepalive ping every 15s
@@ -360,6 +366,11 @@ chat.post("/chat/sessions/:id/send",
       broadcast(sessionId, "error", {
         message: err?.message || "Stream processing failed",
       });
+      // Always reset to idle so the session is never stuck on "busy".
+      // The error event above sets sessionStatus=idle on the client,
+      // but if the SSE reconnected and missed it, this explicit
+      // status broadcast acts as a safety net.
+      broadcast(sessionId, "session.status", { status: "idle" });
     }
   });
 

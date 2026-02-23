@@ -253,9 +253,10 @@ attachments.post("/chat/sessions/:sessionId/attachments", async (c) => {
     downloadUrl = `/api/chat/attachments/${attachmentId}/download`;
   }
 
-  // Persist metadata to DB (non-fatal — if DB table doesn't exist yet,
-  // the file is still accessible via temp cache or S3)
-  let saved: Record<string, any> | null = null;
+  // Persist metadata to DB — this is MANDATORY. Uploaded documents are
+  // important business records (invoices, stock sheets, receipts) that
+  // must survive redeployments and temp cache expiry.
+  let saved: Record<string, any>;
   log?.info("[UPLOAD:5] Persisting to DB", { attachmentId });
   try {
     const [row] = await db
@@ -273,12 +274,17 @@ attachments.post("/chat/sessions/:sessionId/attachments", async (c) => {
     saved = row;
     log?.info("[UPLOAD:5] DB insert OK", { attachmentId });
   } catch (dbErr: any) {
-    // DB insert failed — file is still in S3 or temp cache
-    log?.warn("[UPLOAD:5] DB insert FAILED — using temp metadata", {
+    log?.error("[UPLOAD:5] DB insert FAILED — rejecting upload", {
       attachmentId,
       error: dbErr?.message?.slice(0, 300),
       stack: dbErr?.stack?.slice(0, 500),
     });
+    // Clean up: remove from temp cache and S3 since we can't track it
+    tempAttachmentCache.delete(attachmentId);
+    if (objectStorage.isAvailable()) {
+      try { await s3.file(s3Key).delete(); } catch { /* best effort */ }
+    }
+    return c.json({ error: `Failed to save attachment record: ${dbErr?.message?.slice(0, 200)}` }, 500);
   }
 
   c.var.logger?.info("Chat attachment uploaded", {
@@ -293,14 +299,14 @@ attachments.post("/chat/sessions/:sessionId/attachments", async (c) => {
 
   return c.json({
     data: {
-      id: saved?.id ?? attachmentId,
-      filename: saved?.filename ?? filename,
-      contentType: saved?.contentType ?? contentType,
-      sizeBytes: saved?.sizeBytes ?? sizeBytes,
-      s3Key: saved?.s3Key ?? s3Key,
-      sessionId: saved?.sessionId ?? sessionId,
-      userId: saved?.userId ?? userId,
-      uploadedAt: saved?.createdAt ? saved.createdAt.toISOString() : new Date().toISOString(),
+      id: saved.id ?? attachmentId,
+      filename: saved.filename ?? filename,
+      contentType: saved.contentType ?? contentType,
+      sizeBytes: saved.sizeBytes ?? sizeBytes,
+      s3Key: saved.s3Key ?? s3Key,
+      sessionId: saved.sessionId ?? sessionId,
+      userId: saved.userId ?? userId,
+      uploadedAt: saved.createdAt ? saved.createdAt.toISOString() : new Date().toISOString(),
       downloadUrl,
       downloadUrlExpiresIn: "1 hour",
     },
@@ -320,11 +326,15 @@ attachments.post("/chat/sessions/:sessionId/attachments", async (c) => {
 });
 
 /**
- * GET /chat/attachments/:attachmentId/download — Serve attachment from temp cache.
- * Used when S3 is unavailable — the scanner agent and frontend access files via this endpoint.
+ * GET /chat/attachments/:attachmentId/download — Serve attachment content.
+ * Checks temp cache first (fast path), then falls back to S3.
+ * This endpoint is used by the scanner agent and frontend to access uploaded files.
  */
 attachments.get("/chat/attachments/:attachmentId/download", async (c) => {
   const attachmentId = c.req.param("attachmentId");
+  const log = c.var.logger;
+
+  // Fast path: temp cache (in-memory, populated on upload)
   const cached = tempAttachmentCache.get(attachmentId);
   if (cached && cached.expiresAt > Date.now()) {
     c.header("Content-Type", cached.contentType);
@@ -333,7 +343,53 @@ attachments.get("/chat/attachments/:attachmentId/download", async (c) => {
     c.header("Content-Length", String(cached.buffer.byteLength));
     return c.body(new Uint8Array(cached.buffer) as any);
   }
-  return c.json({ error: "Attachment not found or expired" }, 404);
+
+  // Slow path: look up in DB, then fetch from S3
+  try {
+    const [row] = await db
+      .select()
+      .from(attachmentsTable)
+      .where(eq(attachmentsTable.id, attachmentId))
+      .limit(1);
+
+    if (!row) {
+      return c.json({ error: "Attachment not found" }, 404);
+    }
+
+    if (objectStorage.isAvailable()) {
+      try {
+        const s3File = s3.file(row.s3Key);
+        const exists = await s3File.exists();
+        if (exists) {
+          const fileData = await s3File.arrayBuffer();
+          const buffer = new Uint8Array(fileData);
+
+          // Re-populate temp cache so subsequent requests (e.g. scanner) are fast
+          tempAttachmentCache.set(attachmentId, {
+            buffer,
+            contentType: row.contentType,
+            filename: row.filename,
+            expiresAt: Date.now() + TEMP_ATTACHMENT_TTL,
+          });
+          cleanTempAttachmentCache();
+
+          c.header("Content-Type", row.contentType);
+          c.header("Content-Disposition", `inline; filename="${row.filename}"`);
+          c.header("Cache-Control", "private, max-age=3600");
+          c.header("Content-Length", String(buffer.byteLength));
+          return c.body(buffer as any);
+        }
+      } catch (s3Err: any) {
+        log?.warn("[DOWNLOAD] S3 fetch failed", { attachmentId, s3Key: row.s3Key, error: s3Err?.message?.slice(0, 200) });
+      }
+    }
+
+    // DB record exists but file not in S3 or temp cache
+    return c.json({ error: "Attachment file not found in storage — it may have been deleted" }, 404);
+  } catch (dbErr: any) {
+    log?.error("[DOWNLOAD] DB lookup failed", { attachmentId, error: dbErr?.message?.slice(0, 200) });
+    return c.json({ error: "Failed to look up attachment" }, 500);
+  }
 });
 
 /**

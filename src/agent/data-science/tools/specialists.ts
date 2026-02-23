@@ -15,6 +15,7 @@
  * so the LLM can report failures clearly to the user.
  */
 
+import { createHash } from "crypto";
 import { tool } from "ai";
 import { generateText } from "ai";
 import { z } from "zod";
@@ -24,6 +25,8 @@ import reportGenerator from "@agent/report-generator";
 import knowledgeBase from "@agent/knowledge-base";
 import { exportReport, type ExportFormat } from "@lib/report-export";
 import { getModel } from "@lib/ai";
+import { db, attachments as attachmentsTable } from "@db/index";
+import { eq } from "drizzle-orm";
 import { config } from "@lib/config";
 import { maskPII } from "@lib/pii";
 import { tempAttachmentCache } from "@api/attachments";
@@ -339,14 +342,33 @@ export const scanDocumentTool = tool({
     let resolvedImageData = imageData;
     let resolvedMimeType: string | undefined; // Track MIME for file vs image content part
 
+    // Traceability: extract attachment metadata for ingestion records
+    let attachmentId: string | undefined;
+    let attachmentSessionId: string | undefined;
+    let attachmentFilename: string | undefined;
+    let attachmentUserId: string | undefined;
+    let documentHash: string | undefined; // SHA-256 of raw file content
+
     if (imageUrl && !imageData) {
       const internalMatch = imageUrl.match(/\/api\/chat\/attachments\/([^/]+)\/download/);
       if (internalMatch) {
-        const attachmentId = internalMatch[1];
+        attachmentId = internalMatch[1];
         console.log(`[SCAN:2] Internal URL detected — resolving from temp cache`, { attachmentId, cacheSize: tempAttachmentCache.size });
         const cached = tempAttachmentCache.get(attachmentId);
         if (cached && cached.expiresAt > Date.now()) {
           console.log(`[SCAN:2] Temp cache HIT — ${cached.buffer.byteLength} bytes`, { contentType: cached.contentType });
+          attachmentFilename = cached.filename;
+          // Compute SHA-256 hash for document dedup
+          documentHash = createHash("sha256").update(cached.buffer).digest("hex");
+          // Look up DB record for session/user context
+          try {
+            const [attRow] = await db.select().from(attachmentsTable).where(eq(attachmentsTable.id, attachmentId!)).limit(1);
+            if (attRow) {
+              attachmentSessionId = attRow.sessionId;
+              attachmentUserId = attRow.userId;
+              attachmentFilename = attRow.filename;
+            }
+          } catch { /* DB lookup non-fatal */ }
           resolvedMimeType = cached.contentType;
           const isPdf = cached.contentType === "application/pdf";
           if (isPdf) {
@@ -364,14 +386,76 @@ export const scanDocumentTool = tool({
           }
           resolvedImageUrl = undefined;
         } else {
-          console.log(`[SCAN:2] Temp cache MISS`, { attachmentId, expired: cached ? cached.expiresAt < Date.now() : 'not_found' });
-          return {
-            success: false,
-            mode,
-            error: "The uploaded file has expired from the temporary cache. Please upload the file again.",
-            errorType: "validation",
-            errorHint: "Ask the user to re-upload the document.",
-          };
+          // Temp cache MISS — try to fetch from S3 via DB record
+          console.log(`[SCAN:2] Temp cache MISS — trying S3 fallback`, { attachmentId });
+          try {
+            const [row] = await db
+              .select()
+              .from(attachmentsTable)
+              .where(eq(attachmentsTable.id, attachmentId))
+              .limit(1);
+            if (row && row.s3Key) {
+              const { s3 } = await import("bun");
+              const s3File = s3.file(row.s3Key);
+              const exists = await s3File.exists();
+              if (exists) {
+                const fileData = await s3File.arrayBuffer();
+                const buffer = new Uint8Array(fileData);
+                console.log(`[SCAN:2] S3 fallback HIT — ${buffer.byteLength} bytes`, { contentType: row.contentType, s3Key: row.s3Key });
+                // Capture attachment metadata for ingestion
+                attachmentSessionId = row.sessionId;
+                attachmentUserId = row.userId;
+                attachmentFilename = row.filename;
+                documentHash = createHash("sha256").update(buffer).digest("hex");
+                // Re-populate temp cache for future requests
+                tempAttachmentCache.set(attachmentId!, {
+                  buffer,
+                  contentType: row.contentType,
+                  filename: row.filename,
+                  expiresAt: Date.now() + 2 * 60 * 60 * 1000, // 2h
+                });
+                resolvedMimeType = row.contentType;
+                const isPdfS3 = row.contentType === "application/pdf";
+                if (isPdfS3) {
+                  const base64 = Buffer.from(buffer).toString("base64");
+                  resolvedImageData = `data:application/pdf;base64,${base64}`;
+                } else {
+                  const resized = await resizeImageForVision(buffer, row.contentType);
+                  const base64 = resized.data.toString("base64");
+                  resolvedImageData = `data:${resized.contentType};base64,${base64}`;
+                  resolvedMimeType = resized.contentType;
+                }
+                resolvedImageUrl = undefined;
+              } else {
+                console.log(`[SCAN:2] S3 file does not exist`, { s3Key: row.s3Key });
+                return {
+                  success: false,
+                  mode,
+                  error: "The uploaded file could not be found in storage. Please re-upload.",
+                  errorType: "validation",
+                  errorHint: "Ask the user to re-upload the document.",
+                };
+              }
+            } else {
+              console.log(`[SCAN:2] DB record not found for attachment`, { attachmentId });
+              return {
+                success: false,
+                mode,
+                error: "The uploaded file record was not found. Please re-upload.",
+                errorType: "validation",
+                errorHint: "Ask the user to re-upload the document.",
+              };
+            }
+          } catch (fallbackErr: any) {
+            console.log(`[SCAN:2] S3 fallback FAILED`, { error: fallbackErr?.message?.slice(0, 300) });
+            return {
+              success: false,
+              mode,
+              error: "The uploaded file has expired and could not be recovered from storage. Please re-upload.",
+              errorType: "validation",
+              errorHint: "Ask the user to re-upload the document.",
+            };
+          }
         }
       }
     }
@@ -492,12 +576,19 @@ export const scanDocumentTool = tool({
       }
 
       // ── Stage ingestion (dedup + DB records) ──
+      // Pass full traceability context: attachment ID, session, user, filename, hash.
+      // This ensures every uploaded document is properly recorded in document_ingestions.
       let ingestionResult;
       try {
         const stageInput = {
           scannerOutput: parsedData as Record<string, unknown>,
           confidence: parsedData?.confidence ?? null,
           rawText: maskedText ?? null,
+          attachmentId: attachmentId ?? null,
+          sessionId: attachmentSessionId ?? null,
+          uploadedBy: attachmentUserId ?? null,
+          sourceFilename: attachmentFilename ?? null,
+          documentHash: documentHash ?? null,
         };
         switch (mode) {
           case "invoice":

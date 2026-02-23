@@ -24,6 +24,7 @@ import Dashboard from "./pages/Dashboard";
 import ProductsPage from "./pages/ProductsPage";
 import OrdersPage from "./pages/OrdersPage";
 import CustomersPage from "./pages/CustomersPage";
+import OperationsPage from "./pages/OperationsPage";
 import InventoryPage from "./pages/InventoryPage";
 import InvoicesPage from "./pages/InvoicesPage";
 import AssistantPage from "./pages/AssistantPage";
@@ -43,6 +44,7 @@ export type { Page, AppConfig, AuthUser };
 const PAGE_TITLES: Record<Page, string> = {
   dashboard: "Dashboard",
   products: "Products",
+  operations: "Operations",
   orders: "Orders",
   customers: "Customers",
   inventory: "Inventory",
@@ -155,6 +157,8 @@ export default function App() {
         return <Dashboard config={cfg} />;
       case "products":
         return <ProductsPage config={cfg} />;
+      case "operations":
+        return <OperationsPage config={cfg} />;
       case "orders":
         return <OrdersPage config={cfg} />;
       case "customers":

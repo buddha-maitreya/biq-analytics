@@ -3,6 +3,7 @@
 export type Page =
   | "dashboard"
   | "products"
+  | "operations"
   | "orders"
   | "customers"
   | "inventory"

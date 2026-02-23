@@ -2357,6 +2357,84 @@ textarea {
   box-shadow: var(--shadow-sm);
 }
 
+/* ===== OPERATIONS PAGE TABS ===== */
+
+.operations-page .page-header {
+  margin-bottom: 12px;
+}
+
+.operations-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  padding: 4px;
+  background: var(--color-bg);
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+}
+
+.operations-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.operations-tab:hover {
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+[data-theme="dark"] .operations-tab:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.operations-tab.active {
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+.operations-tab-icon {
+  font-size: 1.1rem;
+}
+
+.operations-content {
+  min-height: 0;
+}
+
+/* Remove duplicate page-header from nested pages inside Operations */
+.operations-content .page-header {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  .operations-tabs {
+    gap: 2px;
+    padding: 3px;
+  }
+  .operations-tab {
+    padding: 8px 10px;
+    font-size: 0.8rem;
+    gap: 4px;
+  }
+  .operations-tab-icon {
+    font-size: 1rem;
+  }
+}
+
 /* ===== FILTER BAR ===== */
 
 .filter-bar {

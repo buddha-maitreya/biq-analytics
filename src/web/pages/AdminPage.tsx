@@ -545,8 +545,8 @@ function UsersAccessTab() {
 
       {/* Search + Invite */}
       <SearchToolbar
-        value={search}
-        onChange={setSearch}
+        search={search}
+        onSearchChange={setSearch}
         placeholder="Search users by name or email…"
         count={filtered.length}
         countLabel="user"
@@ -647,7 +647,7 @@ function UsersAccessTab() {
                   </td>
                   <td>
                     {u.primaryWarehouseName ? (
-                      <Badge variant="primary">{u.primaryWarehouseName}</Badge>
+                      <Badge variant="info">{u.primaryWarehouseName}</Badge>
                     ) : (
                       <span className="text-muted">—</span>
                     )}
@@ -5276,8 +5276,8 @@ function ApprovalWorkflowsTab() {
 
       {/* Toolbar */}
       <SearchToolbar
-        value=""
-        onChange={() => {}}
+        search=""
+        onSearchChange={() => {}}
         placeholder=""
         count={workflows.length}
         countLabel="workflow"
@@ -5435,7 +5435,7 @@ function ApprovalWorkflowsTab() {
                       {wf.description && <div className="cell-sub">{wf.description}</div>}
                     </td>
                     <td>
-                      <Badge variant="primary">{info?.icon ?? "📋"} {info?.label ?? wf.actionType}</Badge>
+                      <Badge variant="info">{info?.icon ?? "📋"} {info?.label ?? wf.actionType}</Badge>
                     </td>
                     <td>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>

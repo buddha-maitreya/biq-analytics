@@ -88,6 +88,16 @@ const DEFAULTS: Record<string, string> = {
   /** Provider API key (stored encrypted in DB) */
   aiModelApiKey: "",
 
+  // ── Analytics Configuration ─────────────────────────────────
+  /** Default number of days of historical data to analyze (used by insights agent) */
+  analyticsDefaultTimeframeDays: "30",
+  /** Maximum allowed timeframe in days (caps LLM-chosen values) */
+  analyticsMaxTimeframeDays: "90",
+  /** Default number of items to include in analysis results */
+  analyticsDefaultResultLimit: "10",
+  /** Maximum allowed result items */
+  analyticsMaxResultLimit: "50",
+
   // ── Report Configuration ──────────────────────────────────
   /** Whether to include a branded title/cover page */
   reportTitlePage: "true",
@@ -271,6 +281,56 @@ export function getReportSettingsDefaults(): ReportSettings {
     maxChartDataPoints: 15,
     confidentialFooter: true,
     maxCharts: 4,
+  };
+}
+
+// ── Analytics Settings ───────────────────────────────────────
+
+export interface AnalyticsSettings {
+  /** Default number of days of historical data to analyze */
+  defaultTimeframeDays: number;
+  /** Maximum allowed timeframe in days (caps LLM-chosen values) */
+  maxTimeframeDays: number;
+  /** Default number of items to include in analysis results */
+  defaultResultLimit: number;
+  /** Maximum allowed result items */
+  maxResultLimit: number;
+}
+
+/** In-memory cache for analytics settings */
+let _analyticsCache: AnalyticsSettings | null = null;
+let _analyticsCacheAt = 0;
+const ANALYTICS_CACHE_TTL = 60_000; // 1 minute
+
+/** Invalidate the analytics settings cache */
+export function invalidateAnalyticsCache() {
+  _analyticsCache = null;
+  _analyticsCacheAt = 0;
+}
+
+/** Get analytics settings as parsed values (cached for 1 min) */
+export async function getAnalyticsSettings(): Promise<AnalyticsSettings> {
+  const now = Date.now();
+  if (_analyticsCache && now - _analyticsCacheAt < ANALYTICS_CACHE_TTL) return _analyticsCache;
+
+  const all = await getAllSettings();
+  _analyticsCache = {
+    defaultTimeframeDays: Math.max(1, Math.min(365, parseInt(all.analyticsDefaultTimeframeDays, 10) || 30)),
+    maxTimeframeDays: Math.max(1, Math.min(365, parseInt(all.analyticsMaxTimeframeDays, 10) || 90)),
+    defaultResultLimit: Math.max(1, Math.min(100, parseInt(all.analyticsDefaultResultLimit, 10) || 10)),
+    maxResultLimit: Math.max(1, Math.min(100, parseInt(all.analyticsMaxResultLimit, 10) || 50)),
+  };
+  _analyticsCacheAt = now;
+  return _analyticsCache;
+}
+
+/** Return default analytics settings (for fallback when DB is unavailable) */
+export function getAnalyticsSettingsDefaults(): AnalyticsSettings {
+  return {
+    defaultTimeframeDays: 30,
+    maxTimeframeDays: 90,
+    defaultResultLimit: 10,
+    maxResultLimit: 50,
   };
 }
 

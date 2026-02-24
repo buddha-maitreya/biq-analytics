@@ -61,7 +61,7 @@ export type SandboxRuntime =
   | "python:3.14"
   | "node:latest"
   | "node:lts"
-  | "python"   // alias → python:3.14
+  | "python"   // alias → python:3.13
   | "node";    // alias → node:latest
 
 // ────────────────────────────────────────────────────────────
@@ -71,7 +71,7 @@ export type SandboxRuntime =
 /** Resolve runtime aliases to fully-qualified runtime names per SDK convention. */
 function normalizeRuntime(runtime: SandboxRuntime): string {
   switch (runtime) {
-    case "python": return "python:3.14";
+    case "python": return "python:3.13";
     case "node": return "node:latest";
     default: return runtime;
   }
@@ -1317,7 +1317,7 @@ export const PYTHON_ANALYSIS_DEPENDENCIES = [
  */
 export async function createAnalysisSnapshot(
   sandboxApi: any,
-  runtime: SandboxRuntime = "python:3.14",
+  runtime: SandboxRuntime = "python:3.13",
   extraDeps: string[] = []
 ): Promise<{ snapshotId: string }> {
   const isPython = runtime === "python" || runtime === "python:3.13" || runtime === "python:3.14";

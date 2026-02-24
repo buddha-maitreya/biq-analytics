@@ -29,6 +29,7 @@ import { db, attachments as attachmentsTable } from "@db/index";
 import { eq } from "drizzle-orm";
 import { config } from "@lib/config";
 import { maskPII } from "@lib/pii";
+import { getAnalyticsSettings } from "@services/settings";
 import { tempAttachmentCache } from "@api/attachments";
 import {
   stageInvoiceIngestion,
@@ -206,16 +207,21 @@ export const analyzeTrendsTool = tool({
       .number()
       .int()
       .min(1)
-      .max(365)
+      .max(90)
       .default(30)
-      .describe("Number of days to analyze"),
+      .describe("Number of days to analyze. Default 30. Use 30 unless the user explicitly requests a different period. Max 90 days."),
   }),
   execute: async ({ analysis, timeframeDays }): Promise<AnalyzeTrendsResult> => {
     try {
+      // Read admin-configured analytics defaults (cached 1 min)
+      const analyticsSettings = await getAnalyticsSettings();
+      const clampedDays = Math.min(timeframeDays, analyticsSettings.maxTimeframeDays);
+      const limit = analyticsSettings.defaultResultLimit;
+
       const result = await insightsAnalyzer.run({
         analysis,
-        timeframeDays,
-        limit: 10,
+        timeframeDays: clampedDays,
+        limit,
       });
       return {
         analysisType: result.analysisType,

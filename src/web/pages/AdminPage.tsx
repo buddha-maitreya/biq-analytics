@@ -10,7 +10,7 @@ interface AdminPageProps {
   onSaved?: () => void;
 }
 
-type AdminTab = "users" | "approvals" | "locations" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools" | "model" | "agents" | "prompts" | "evals" | "examples" | "scheduler" | "observability" | "reports";
+type AdminTab = "users" | "approvals" | "locations" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools" | "model" | "agents" | "prompts" | "evals" | "examples" | "scheduler" | "observability" | "reports" | "analytics";
 
 /* ---------- Sub-types ---------- */
 interface RBACConfig {
@@ -162,6 +162,7 @@ const NAV_SECTIONS: NavSection[] = [
       { key: "locations", label: "Locations", icon: "📍" },
       { key: "approvals", label: "Approval Workflows", icon: "✅" },
       { key: "reports", label: "Reports", icon: "📄" },
+      { key: "analytics", label: "Analytics", icon: "📊" },
     ],
   },
   {
@@ -195,6 +196,7 @@ const TAB_TITLES: Record<AdminTab, string> = {
   locations: "Locations & Supply Chain",
   approvals: "Approval Workflows",
   reports: "Report Settings",
+  analytics: "Analytics Settings",
   statuses: "Order Statuses",
   tax: "Tax Rules",
   settings: "Business Profile",
@@ -215,6 +217,7 @@ const TAB_DESCRIPTIONS: Record<AdminTab, string> = {
   locations: "Configure warehouses, branches, production sites, kitchens, and any point in your supply chain",
   approvals: "Configure multi-step approval chains for business actions",
   reports: "Configure report layout, content limits, charts, and formatting options",
+  analytics: "Configure default timeframes, result limits, and resource controls for AI analytics",
   statuses: "Define order lifecycle statuses and transitions",
   tax: "Configure tax rules and compliance settings",
   settings: "Company branding, payment providers, and system configuration",
@@ -329,6 +332,7 @@ export default function AdminPage({ config, onSaved }: AdminPageProps) {
           {tab === "scheduler" && <SchedulerTab />}
           {tab === "observability" && <ObservabilityTab />}
           {tab === "reports" && <ReportSettingsTab />}
+          {tab === "analytics" && <AnalyticsSettingsTab />}
           {tab === "settings" && <SettingsTab config={config} onSaved={onSaved} />}
         </div>
       </div>
@@ -5714,6 +5718,163 @@ function ReportSettingsTab() {
         .save-feedback.success { color: #059669; }
         .save-feedback.error { color: #dc2626; }
       `}</style>
+    </div>
+  );
+}
+
+/* ===== ANALYTICS SETTINGS TAB ===== */
+
+function AnalyticsSettingsTab() {
+  const [settings, setSettings] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
+
+  useEffect(() => {
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((d) => {
+        const all = d.data || {};
+        const defaults: Record<string, string> = {
+          analyticsDefaultTimeframeDays: "30",
+          analyticsMaxTimeframeDays: "90",
+          analyticsDefaultResultLimit: "10",
+          analyticsMaxResultLimit: "50",
+        };
+        const analyticsKeys: Record<string, string> = {};
+        for (const [k, v] of Object.entries(all)) {
+          if (k.startsWith("analytics")) analyticsKeys[k] = v as string;
+        }
+        setSettings({ ...defaults, ...analyticsKeys });
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const update = (key: string, val: string) =>
+    setSettings((prev) => ({ ...prev, [key]: val }));
+
+  const save = async () => {
+    setSaving(true);
+    setSaveMsg("");
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+      });
+      if (res.ok) {
+        setSaveMsg("Analytics settings saved successfully");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setSaveMsg(`Error: ${(err as any).error || "Failed to save"}`);
+      }
+    } catch (e: any) {
+      setSaveMsg(`Error: ${e.message}`);
+    } finally {
+      setSaving(false);
+      setTimeout(() => setSaveMsg(""), 3000);
+    }
+  };
+
+  if (loading) return <div className="admin-empty"><p>Loading analytics settings...</p></div>;
+
+  const NumberInput = ({ label, desc, settingKey, min, max, suffix }: { label: string; desc: string; settingKey: string; min: number; max: number; suffix?: string }) => (
+    <div className="report-setting-row">
+      <div className="report-setting-info">
+        <span className="report-setting-label">{label}</span>
+        <span className="report-setting-desc">{desc}</span>
+      </div>
+      <div className="report-setting-input">
+        <input
+          type="number"
+          className="input input-sm"
+          value={settings[settingKey] || ""}
+          min={min}
+          max={max}
+          onChange={(e) => update(settingKey, e.target.value)}
+          style={{ width: 80, textAlign: "right" }}
+        />
+        {suffix && <span className="report-setting-suffix">{suffix}</span>}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="report-settings-tab">
+      {/* Timeframe Section */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">📅 Data Timeframe</h3>
+        <p className="settings-section-desc">Control how much historical data the AI analytics engine processes. Shorter timeframes reduce token usage and latency.</p>
+        <div className="report-settings-group">
+          <NumberInput
+            label="Default Timeframe"
+            desc="Number of days of historical data analyzed when the user doesn't specify a period. Lower values save tokens and respond faster."
+            settingKey="analyticsDefaultTimeframeDays"
+            min={1}
+            max={365}
+            suffix="days"
+          />
+          <NumberInput
+            label="Maximum Timeframe"
+            desc="Hard cap on the timeframe the AI can analyze, even if asked for more. Prevents excessive data processing and token consumption."
+            settingKey="analyticsMaxTimeframeDays"
+            min={1}
+            max={365}
+            suffix="days"
+          />
+        </div>
+      </div>
+
+      {/* Result Limits Section */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">📊 Result Limits</h3>
+        <p className="settings-section-desc">Control how many items the analytics engine includes in results. Fewer items mean faster, more focused analysis.</p>
+        <div className="report-settings-group">
+          <NumberInput
+            label="Default Result Items"
+            desc="Number of products, categories, or data points included in each analysis by default. Fewer items = less token usage."
+            settingKey="analyticsDefaultResultLimit"
+            min={1}
+            max={100}
+            suffix="items"
+          />
+          <NumberInput
+            label="Maximum Result Items"
+            desc="Hard cap on the number of items the AI can include in a single analysis, even if asked for more."
+            settingKey="analyticsMaxResultLimit"
+            min={1}
+            max={100}
+            suffix="items"
+          />
+        </div>
+      </div>
+
+      {/* Info Box */}
+      <div style={{
+        padding: "12px 16px",
+        borderRadius: 8,
+        background: "var(--color-bg-elevated, #f0f9ff)",
+        border: "1px solid var(--color-border, #bae6fd)",
+        fontSize: "0.82rem",
+        lineHeight: 1.6,
+        color: "var(--color-text-muted, #64748b)",
+        marginBottom: 24,
+      }}>
+        <strong>💡 Token & Latency Impact:</strong> Each analysis sends historical data to an AI model for processing. Wider timeframes and more result items mean more data, more tokens, and longer response times. The defaults (30 days, 10 items) balance insight quality with cost efficiency. Adjust based on your business needs and AI budget.
+      </div>
+
+      {/* Save Button */}
+      <div className="report-settings-actions">
+        <button className="btn btn-primary" onClick={save} disabled={saving}>
+          {saving ? "Saving..." : "Save Analytics Settings"}
+        </button>
+        {saveMsg && (
+          <span className={`save-feedback ${saveMsg.startsWith("Error") ? "error" : "success"}`}>
+            {saveMsg}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

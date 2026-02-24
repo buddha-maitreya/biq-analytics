@@ -143,7 +143,7 @@ const agent = createAgent("insights-analyzer", {
     const ai = appState?.aiSettings;
 
     // ── Sandbox configuration ────────────────────────────────
-    const effectiveRuntime = (sandboxRuntime as SandboxRuntime) ?? "python:3.14";
+    const effectiveRuntime = (sandboxRuntime as SandboxRuntime) ?? "python:3.13";
 
     // ── Build custom instructions ───────────────────────────
     const customParts: string[] = [];

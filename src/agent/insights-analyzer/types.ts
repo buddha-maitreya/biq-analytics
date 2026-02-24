@@ -18,7 +18,7 @@ export interface InsightsConfig {
   temperature: number | undefined;
   /** Snapshot ID for pre-installed sandbox dependencies */
   sandboxSnapshotId?: string;
-  /** Sandbox runtime (default: "python:3.14") */
+  /** Sandbox runtime (default: "python:3.13") */
   sandboxRuntime?: string;
   /** @deprecated Use snapshots instead. Pre-install dependencies if no snapshot. */
   sandboxDeps?: string[];
@@ -36,7 +36,7 @@ export const inputSchema = s.object({
     .describe("Type of statistical analysis to perform (e.g. demand-forecast, anomaly-detection, restock-recommendations, sales-trends, or custom types)"),
   timeframeDays: s
     .number()
-    .describe("Number of days of historical data to analyze (1-365, default: 30)"),
+    .describe("Number of days of historical data to analyze (1-90, default: 30)"),
   productId: s.optional(
     s.string().describe("Optional product ID (UUID) to focus the analysis on")
   ),

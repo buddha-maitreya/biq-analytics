@@ -6,7 +6,7 @@ import * as settingsSvc from "@services/settings";
 import { invalidateConfigCache } from "./config";
 import { invalidateModelCache } from "@lib/ai";
 import { invalidateRateLimitCache } from "@lib/rate-limit";
-import { invalidateReportCache } from "@services/settings";
+import { invalidateReportCache, invalidateAnalyticsCache } from "@services/settings";
 import { generateText } from "ai";
 import * as objectStorage from "@services/object-storage";
 
@@ -34,6 +34,7 @@ router.put("/settings", validator({ input: updateSettingsSchema }), async (c) =>
   invalidateModelCache();
   invalidateRateLimitCache();
   invalidateReportCache();
+  invalidateAnalyticsCache();
   return c.json({ data: updated });
 });
 

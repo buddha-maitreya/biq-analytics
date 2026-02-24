@@ -36,11 +36,11 @@ export function createRunAnalysisTool(
   const isPython = runtime === "python" || runtime.startsWith("python:");
   const runtimeLabel = isPython ? "Python 3 (numpy/pandas/scipy/sklearn/statsmodels)"
     : runtime === "node" || runtime.startsWith("node:") ? "Node.js" : "Bun 1.x";
-  const depsNote = snapshotId
-    ? `Packages pre-installed in snapshot${dependencies?.length ? ` (${dependencies.join(", ")})` : isPython ? " (numpy, pandas, scipy, scikit-learn, statsmodels)" : ""}.`
-    : isPython
-      ? "You have the Python standard library. For advanced analytics, prefer a snapshot with numpy/pandas/scipy/sklearn/statsmodels pre-installed."
-      : "You have NO npm packages -- use only built-in JavaScript APIs.";
+  // Snapshot is resolved at the infrastructure level (sandbox.ts reads ANALYTICS_SNAPSHOT_ID env var).
+  // Python runtimes always have numpy/pandas/scipy/sklearn/statsmodels available.
+  const depsNote = isPython
+    ? "Pre-installed: numpy, pandas, scipy, scikit-learn, statsmodels."
+    : "You have NO npm packages -- use only built-in JavaScript APIs.";
 
   return tool({
     description: `Execute ${runtimeLabel} code in an isolated sandbox to perform sophisticated data analysis.

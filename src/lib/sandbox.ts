@@ -25,7 +25,7 @@
  *   4.4 — Multi-runtime support (bun:1, python, node)
  *
  * Security:
- *   - Network is ALWAYS disabled (no exfiltration)
+ *   - Network disabled by default (enabled only when Python has no snapshot, for uv pip install)
  *   - Only SELECT queries are allowed (safety-checked)
  *   - Execution timeout: configurable (default 30s)
  *   - Memory limit: configurable (default 256MB)
@@ -44,6 +44,15 @@ const DEFAULT_MAX_OUTPUT_BYTES = 512 * 1024; // 512KB
 
 /** Maximum data rows to pass to sandbox (keep low to reduce token bloat in LLM tool results) */
 const MAX_DATA_ROWS = 200;
+
+/**
+ * Default snapshot ID for Python runtimes.
+ * Read from ANALYTICS_SNAPSHOT_ID env var — set once per deployment,
+ * used automatically by all agents that run Python sandboxes.
+ * Eliminates per-request `uv pip install` (~6-10s) by booting from
+ * a pre-configured snapshot with numpy, pandas, scipy, sklearn, etc.
+ */
+const DEFAULT_PYTHON_SNAPSHOT_ID = process.env.ANALYTICS_SNAPSHOT_ID || undefined;
 
 /** Supported sandbox runtimes (shorthand aliases + versioned names) */
 export type SandboxRuntime =
@@ -261,6 +270,17 @@ export interface SandboxInput {
   dependencies?: string[];
   /** Memory limit in Kubernetes format (e.g. "256Mi", "512Mi", "1Gi"). Legacy "256MB" format is auto-converted. */
   memory?: string;
+  /**
+   * Enable direct database access from within the sandbox.
+   * When true:
+   *   - DATABASE_URL is injected as an env var into the sandbox
+   *   - Python scripts get a `query_db(sql)` helper function
+   *   - The script queries Postgres directly (via psycopg2)
+   *   - Server-side SQL fetching is skipped (no data.json for SQL)
+   *   - Network is enabled (required for DB connection)
+   * Requires `psycopg2-binary` in the snapshot.
+   */
+  directDbAccess?: boolean;
 }
 
 export interface SandboxResult {
@@ -407,8 +427,76 @@ const DATA = JSON.parse(fs.readFileSync('data.json', 'utf-8'));
  * - Provides DATA as both a raw list and a pandas DataFrame (DF)
  * - Custom JSON encoder handles numpy/pandas types (ndarray, int64, Timestamp, etc.)
  * - LLM code runs inside a function with access to all imports and data
+ * - When directDbAccess is true, provides query_db(sql) for live Postgres queries
  */
-function buildPythonScript(analysisCode: string): string {
+function buildPythonScript(analysisCode: string, directDbAccess = false): string {
+  // query_db() helper — injected when directDbAccess is enabled
+  const queryDbHelper = directDbAccess ? `
+# ── Direct database access ──────────────────────────────────
+# query_db(sql) connects to Postgres via DATABASE_URL env var.
+# Returns a list of dicts (one per row). Only SELECT queries allowed.
+import os as _os
+
+_DB_CONN = None
+
+def query_db(sql, limit=None):
+    """Execute a SELECT query against the business database.
+    
+    Args:
+        sql: PostgreSQL SELECT query string
+        limit: Optional row limit (appended as LIMIT clause if not already present)
+    
+    Returns:
+        list[dict] — one dict per row, keyed by column name
+    """
+    import re
+    # Safety: only SELECT/WITH queries
+    stripped = sql.strip().rstrip(';')
+    first_word = re.split(r'\\s+', stripped, maxsplit=1)[0].upper()
+    if first_word not in ('SELECT', 'WITH'):
+        raise ValueError(f"Only SELECT/WITH queries allowed, got: {first_word}")
+    for forbidden in ['INSERT ', 'UPDATE ', 'DELETE ', 'DROP ', 'ALTER ', 'TRUNCATE ', 'CREATE ', 'GRANT ', 'REVOKE ']:
+        if forbidden in stripped.upper():
+            raise ValueError(f"Dangerous SQL keyword detected: {forbidden.strip()}")
+    
+    # Add LIMIT if requested and not already present
+    if limit and 'LIMIT' not in stripped.upper():
+        stripped = f"{stripped} LIMIT {int(limit)}"
+    
+    global _DB_CONN
+    import psycopg2
+    import psycopg2.extras
+    if _DB_CONN is None or _DB_CONN.closed:
+        _DB_CONN = psycopg2.connect(_os.environ['DATABASE_URL'])
+        _DB_CONN.set_session(readonly=True, autocommit=True)
+    
+    with _DB_CONN.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(stripped)
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
+
+def query_df(sql, limit=None):
+    """Like query_db() but returns a pandas DataFrame with date columns auto-parsed."""
+    rows = query_db(sql, limit=limit)
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    for col in df.columns:
+        if any(kw in col.lower() for kw in ['date', 'time', 'created', 'updated', 'at']):
+            try:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+            except Exception:
+                pass
+    return df
+
+import atexit
+def _close_db():
+    global _DB_CONN
+    if _DB_CONN and not _DB_CONN.closed:
+        _DB_CONN.close()
+atexit.register(_close_db)
+` : '';
+
   return `
 import sys
 import json
@@ -416,6 +504,7 @@ import math
 import subprocess
 import os
 from datetime import datetime, timedelta, date
+from decimal import Decimal
 from collections import Counter, defaultdict
 
 # ── Auto-bootstrap: install packages if not available ───────
@@ -525,8 +614,10 @@ class AnalysisEncoder(json.JSONEncoder):
             return obj.isoformat()
         if isinstance(obj, set):
             return list(obj)
+        if isinstance(obj, Decimal):
+            return float(obj)
         return super().default(obj)
-
+${queryDbHelper}
 # ── Read DATA from data.json file ──────────────────────────
 with open('data.json', 'r') as __f:
     DATA = json.load(__f)
@@ -561,9 +652,9 @@ except Exception as e:
 }
 
 /** Build the appropriate wrapper script for the given runtime. */
-function buildScript(runtime: SandboxRuntime, code: string): string {
+function buildScript(runtime: SandboxRuntime, code: string, directDbAccess = false): string {
   if (runtime === "python" || runtime === "python:3.13" || runtime === "python:3.14") {
-    return buildPythonScript(code);
+    return buildPythonScript(code, directDbAccess);
   }
   if (runtime === "node" || runtime === "node:latest" || runtime === "node:lts") {
     return buildNodeScript(code);
@@ -701,19 +792,36 @@ export async function executeSandbox(
     timeoutMs = 30_000,
     maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES,
     runtime = "bun:1",
-    snapshotId,
+    snapshotId: explicitSnapshotId,
     memory = "256Mi",
+    directDbAccess = false,
   } = input;
 
-  // ── Step 1: Get data (from SQL or direct) ───────────────
-  const fetched = await fetchData(sqlQuery, directData, explanation);
-  if (fetched.error) return fetched.error;
-  const { data, dataRowCount } = fetched;
+  // Resolve snapshot: explicit caller value > env var default (Python only)
+  const snapshotId = explicitSnapshotId
+    ?? (isPythonRuntime(runtime) ? DEFAULT_PYTHON_SNAPSHOT_ID : undefined);
+
+  // ── Step 1: Get data ────────────────────────────────────
+  // When directDbAccess is true, the Python script calls query_db() itself.
+  // We skip server-side SQL fetching entirely — no data.json for SQL queries.
+  // Direct data (passed via `data` property) is still written to data.json.
+  let data: unknown = directData ?? [];
+  let dataRowCount = 0;
+
+  if (!directDbAccess) {
+    // Legacy path: fetch data server-side and pass via data.json
+    const fetched = await fetchData(sqlQuery, directData, explanation);
+    if (fetched.error) return fetched.error;
+    data = fetched.data;
+    dataRowCount = fetched.dataRowCount;
+  } else if (Array.isArray(directData)) {
+    dataRowCount = directData.length;
+  }
 
   // ── Step 2: Build script and run in sandbox ─────────────
   const scriptExt = getScriptExt(runtime);
   const scriptFile = `analysis.${scriptExt}`;
-  const script = buildScript(runtime, code);
+  const script = buildScript(runtime, code, directDbAccess);
   const dataJson = JSON.stringify(data);
 
   try {
@@ -721,6 +829,11 @@ export async function executeSandbox(
     const effectiveTimeout = (!snapshotId && isPythonRuntime(runtime))
       ? Math.max(timeoutMs, 60_000)  // At least 60s for uv install
       : timeoutMs;
+
+    // Network is needed when:
+    // - No snapshot and Python (uv pip install)
+    // - Direct DB access (psycopg2 connects to Postgres)
+    const needsNetwork = directDbAccess || (!snapshotId && isPythonRuntime(runtime));
 
     // Build run options for one-shot sandbox execution (SDK pattern)
     const runOpts: Record<string, any> = {
@@ -736,9 +849,15 @@ export async function executeSandbox(
         cpu: "500m",
       },
       timeout: { execution: msToDuration(effectiveTimeout) },
-      // Enable network when no snapshot — needed for uv pip install at runtime
-      network: { enabled: !snapshotId && isPythonRuntime(runtime) },
+      network: { enabled: needsNetwork },
     };
+
+    // Inject DATABASE_URL for direct DB access from within the sandbox
+    if (directDbAccess && process.env.DATABASE_URL) {
+      runOpts.env = {
+        DATABASE_URL: process.env.DATABASE_URL,
+      };
+    }
 
     // Set runtime (resolve aliases like "python" → "python:3.14")
     runOpts.runtime = normalizeRuntime(runtime);

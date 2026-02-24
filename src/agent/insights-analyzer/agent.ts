@@ -7,13 +7,15 @@
  * averages, trend projections, anomaly scoring, demand forecasting,
  * pareto analysis, cohort comparisons, etc.
  *
- * Architecture (single-pass, LLM-generated code):
- *   1. LLM receives the analysis request, database schema, and output format
- *   2. LLM WRITES its own SQL query to fetch relevant data
- *   3. LLM WRITES Python code using numpy/pandas/scipy/sklearn/statsmodels
- *      to perform statistical analysis (code MUST include confidence metrics)
- *   4. Sandbox executes the LLM-generated code in isolated runtime
- *   5. LLM returns structured JSON insights directly (no separate formatting step)
+ * Architecture (single-script code orchestration):
+ *   1. LLM receives analysis request, database schema, and Python API stubs
+ *   2. LLM generates ONE complete Python script that:
+ *      - Calls query_db()/query_df() to fetch data directly from Postgres
+ *      - Performs statistical analysis using numpy/pandas/scipy/sklearn/statsmodels
+ *      - Returns structured JSON insights including confidence metrics
+ *   3. Sandbox executes the script with directDbAccess (DATABASE_URL injected)
+ *   4. Only the final JSON result returns — no intermediate data in LLM context
+ *   5. On failure, error is fed back to LLM for one self-correction retry
  *
  * Confidence scoring is COMPUTATION-BASED: the sandbox code returns
  * statistical quality metrics (sample size, std deviation, p-values)
@@ -25,8 +27,7 @@
  */
 
 import { createAgent } from "@agentuity/runtime";
-import { generateText, tool } from "ai";
-import { z } from "zod";
+import { generateText } from "ai";
 import { config } from "@lib/config";
 import { getModel } from "@lib/ai";
 import { DB_SCHEMA_ANALYTICS } from "@lib/db-schema";
@@ -36,7 +37,7 @@ import { createCache, CACHE_NS, CACHE_TTL, analysisKey } from "@lib/cache";
 import { maskPII } from "@lib/pii";
 import { validateTextOutput } from "@lib/output-validation";
 import { createTokenTracker, DEFAULT_TOKEN_BUDGETS } from "@lib/tokens";
-import { SpanCollector, traced, extractToolInvocations } from "@lib/tracing";
+import { SpanCollector, traced } from "@lib/tracing";
 import { getAnalysisPromptForType } from "@services/type-registry";
 import type { AISettings } from "@services/settings";
 import {
@@ -45,7 +46,7 @@ import {
   outputSchema,
   type InsightItem,
 } from "./types";
-import { getAnalysisPrompt, parseInsightsFromText } from "./prompts";
+import { parseInsightsFromText } from "./prompts";
 import { getAgentConfigWithDefaults } from "@services/agent-configs";
 
 // ────────────────────────────────────────────────────────────
@@ -85,7 +86,8 @@ const agent = createAgent("insights-analyzer", {
       structuringModel: "gpt-4o-mini",
       maxSteps: 5,
       temperature: undefined,
-      sandboxSnapshotId: undefined,
+      // Snapshot resolved at infrastructure level by sandbox.ts
+      // (reads ANALYTICS_SNAPSHOT_ID env var as default for Python runtimes)
       sandboxRuntime: undefined,
       sandboxDeps: undefined,
       sandboxMemory: undefined,
@@ -131,7 +133,6 @@ const agent = createAgent("insights-analyzer", {
       : undefined;
     const sandboxSnapshotId = cfgJson.sandboxSnapshotId as string | undefined;
     const sandboxRuntime = cfgJson.sandboxRuntime as string | undefined;
-    const sandboxDeps = cfgJson.sandboxDeps as string[] | undefined;
     const sandboxMemory = (cfgJson.sandboxMemoryMb as number)
       ? `${cfgJson.sandboxMemoryMb}MB`
       : undefined;
@@ -140,89 +141,8 @@ const agent = createAgent("insights-analyzer", {
     const appState = ctx.app as unknown as { aiSettings?: AISettings } | undefined;
     const ai = appState?.aiSettings;
 
-    // ── Build the sandbox tool (closes over ctx.sandbox) ────
+    // ── Sandbox configuration ────────────────────────────────
     const effectiveRuntime = (sandboxRuntime as SandboxRuntime) ?? "python:3.14";
-    const hasPython = effectiveRuntime.startsWith("python");
-    const hasSnapshot = !!sandboxSnapshotId;
-
-    /** Truncate tool results to prevent context bloat across multi-step calls.
-     *  Keeps the structure but limits serialized JSON to ~4000 chars. */
-    function truncateToolResult(obj: Record<string, unknown>): Record<string, unknown> {
-      const json = JSON.stringify(obj);
-      if (json.length <= 4000) return obj;
-      // Keep _confidence, error fields, and summary — truncate large data
-      const slim: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(obj)) {
-        if (k === "_confidence" || k === "error" || k === "errorType" || k === "errorHint" ||
-            k === "stderr" || k === "explanation" || k === "dataRowCount") {
-          slim[k] = v;
-        } else if (typeof v === "string" && v.length > 500) {
-          slim[k] = v.slice(0, 500) + "… [truncated]";
-        } else if (Array.isArray(v) && v.length > 20) {
-          slim[k] = [...v.slice(0, 20), `… and ${v.length - 20} more items`];
-        } else if (typeof v === "object" && v !== null) {
-          const childJson = JSON.stringify(v);
-          if (childJson.length > 2000) {
-            slim[k] = JSON.parse(childJson.slice(0, 2000) + '"}');
-          } else {
-            slim[k] = v;
-          }
-        } else {
-          slim[k] = v;
-        }
-      }
-      return slim;
-    }
-
-    const runAnalysisTool = tool({
-      description: `Execute analysis: SQL query fetches data → Python code analyzes it in a sandbox.
-DATA = list of dicts (SQL rows). DF = pandas DataFrame. Pre-imported: numpy (np), pandas (pd), scipy.stats, sklearn, statsmodels.
-MUST return a dict with results. Include _confidence metrics. Sandbox has no network, ${sandboxTimeoutMs / 1000}s timeout.
-On errors: check errorType/errorHint and retry with fixed code.`,
-      parameters: z.object({
-        sqlQuery: z
-          .string()
-          .describe(
-            "PostgreSQL SELECT query to fetch the data needed for analysis"
-          ),
-        code: z
-          .string()
-          .describe(
-            `${effectiveRuntime.startsWith("python") ? "Python" : "JavaScript"} code to analyze the data. DATA is a list of dicts (SQL rows)${effectiveRuntime.startsWith("python") ? ". DF is a pandas DataFrame of the same data" : ""}. Must RETURN a result.`
-          ),
-        explanation: z
-          .string()
-          .describe("What this analysis step does"),
-      }),
-      execute: async ({ sqlQuery, code, explanation }) => {
-        const result = await executeSandbox(ctx.sandbox, {
-          code,
-          sqlQuery,
-          explanation,
-          timeoutMs: sandboxTimeoutMs,
-          runtime: effectiveRuntime,
-          snapshotId: sandboxSnapshotId,
-          dependencies: sandboxDeps,
-          memory: sandboxMemory,
-        });
-
-        if (!result.success) {
-          return truncateToolResult({
-            error: result.error,
-            errorType: result.errorType,
-            errorHint: result.errorHint,
-            stderr: result.stderr,
-            explanation,
-          });
-        }
-
-        return truncateToolResult({
-          result: result.result,
-          dataRowCount: result.dataRowCount,
-          explanation,
-        });
-      },
-    });
 
     // ── Build custom instructions ───────────────────────────
     const customParts: string[] = [];
@@ -251,8 +171,70 @@ On errors: check errorType/errorHint and retry with fixed code.`,
       ? [requestedModel]
       : [requestedModel, "gpt-4o-mini"];
 
-    let rawResponse = "";
-    let steps: any[] = [];
+    const tokenTracker = createTokenTracker();
+    const tokenBudget =
+      ((agentConfig.config as any)?.tokenBudget as number) ??
+      DEFAULT_TOKEN_BUDGETS["insights-analyzer"];
+
+    // System prompt instructs the LLM to generate a COMPLETE Python script
+    // instead of using tool calls. The script calls query_db()/query_df()
+    // directly inside the sandbox (directDbAccess mode), keeping all
+    // intermediate data in sandbox memory — only the final JSON returns.
+    const systemPrompt = `You are a data scientist for ${config.companyName}. Write a COMPLETE Python script that analyzes business data and returns structured insights.
+
+${DB_SCHEMA_ANALYTICS}
+
+Currency: ${config.currency}. Products="${config.labels.product}", Orders="${config.labels.order}", Customers="${config.labels.customer}".${businessContext}${customInstructions}
+
+PYTHON API (pre-loaded in sandbox):
+- query_db(sql, limit=None) -- execute a PostgreSQL SELECT query, returns list[dict]
+- query_df(sql, limit=None) -- same but returns pandas DataFrame (date columns auto-parsed)
+- Pre-installed: numpy (np), pandas (pd), scipy.stats, sklearn, statsmodels
+- Only SELECT/WITH queries. No INSERT/UPDATE/DELETE/DROP.
+
+YOUR SCRIPT MUST:
+1. Fetch data using query_db() or query_df() -- call them as many times as needed
+2. Perform statistical analysis (z-scores, trends, forecasts, anomaly detection, etc.)
+3. Handle empty data gracefully (check len() before analysis)
+4. Use pandas vectorized ops (groupby, rolling, pct_change) -- not row-by-row loops
+5. Return a dict with this EXACT structure:
+
+return {
+    "insights": [
+        {
+            "title": "Concise headline with key metric",
+            "severity": "info" or "warning" or "critical",
+            "description": "Detailed explanation with specific numbers and percentages",
+            "recommendation": "Actionable next step for the business",
+            "affectedItems": ["item_1", "item_2"],
+            "dataPoints": {"metric_name": value}
+        }
+    ],
+    "summary": "Executive summary of all findings (2-3 sentences with key numbers)",
+    "_confidence": {
+        "sampleSize": total_rows_analyzed,
+        "completeness": ratio_of_non_null_fields,
+        "timeSpanDays": actual_days_with_data,
+        "pValue": lowest_p_value_if_applicable
+    }
+}
+
+RULES:
+- Generate 3-8 insights ranked by business impact (critical first)
+- Use f-strings with real computed values -- never hardcode example numbers
+- Include at least one actionable recommendation per insight
+- Timeout: ${sandboxTimeoutMs / 1000}s. Keep queries and analysis efficient.
+- If insufficient data, return fewer insights with lower confidence, not fabricated ones.
+
+RESPOND WITH ONLY THE PYTHON CODE wrapped in triple-backtick python fences. No explanations outside the code block.`;
+
+    const analysisPrompt = `${await getAnalysisPromptForType(input.analysis, input.timeframeDays)}
+
+${input.productId ? `Focus on product ID: ${input.productId}` : "Analyze all active products."}
+
+Write the complete Python script now.`;
+
+    let generatedScript = "";
 
     for (const modelName of modelsToTry) {
       try {
@@ -264,43 +246,23 @@ On errors: check errorType/errorHint and retry with fixed code.`,
           async () => generateText({
           model: await getModel(modelName),
           ...(temperature !== undefined ? { temperature } : {}),
-          system: `You are a data scientist for ${config.companyName}. You analyze business data using Python in a sandbox.
-
-${DB_SCHEMA_ANALYTICS}
-
-Currency: ${config.currency}. Products="${config.labels.product}", Orders="${config.labels.order}", Customers="${config.labels.customer}".${businessContext}${customInstructions}
-
-TOOL USAGE:
-- Call run_analysis with a SQL query + Python code. You may call it multiple times.
-- DATA = list of dicts from SQL. DF = pandas DataFrame (dates auto-parsed).
-- Available: numpy (np), pandas (pd), scipy.stats, sklearn, statsmodels.
-- Use pandas vectorized ops (groupby, rolling, pct_change). Check for empty data first.
-- On errors: read errorType/errorHint, fix code, retry (max ${maxSteps} calls).
-- Only SELECT queries allowed. No INSERT/UPDATE/DELETE/DROP.
-
-CONFIDENCE: Your code MUST return _confidence in its result dict:
-\`\`\`python
-return { ..., "_confidence": { "sampleSize": len(DATA), "completeness": ratio, "timeSpanDays": days } }
-\`\`\`
-
-OUTPUT: After analysis, respond with ONLY this JSON:
-\`\`\`json
-{ "insights": [{ "title": "...", "severity": "info|warning|critical", "description": "...", "recommendation": "...", "affectedItems": [...], "dataPoints": {...} }], "summary": "..." }
-\`\`\`
-No confidence field in insights (computed from _confidence). Never fabricate data.`,
-          prompt: `${await getAnalysisPromptForType(input.analysis, input.timeframeDays)}
-
-${input.productId ? `Focus on product ID: ${input.productId}` : "Analyze all active products."}
-
-Output structured JSON insights after running your analysis.`,
-          tools: { run_analysis: runAnalysisTool },
-          maxSteps,
+          system: systemPrompt,
+          prompt: analysisPrompt,
         }),
           { model: modelName, analysis: input.analysis }
         );
 
-        rawResponse = result.text;
-        steps = result.steps;
+        // Extract Python code from LLM response
+        const codeMatch = result.text.match(/```python\s*([\s\S]*?)```/);
+        generatedScript = codeMatch?.[1]?.trim() || result.text.trim();
+
+        // Track token usage
+        if (result.usage) {
+          tokenTracker.add(
+            result.usage.promptTokens ?? 0,
+            result.usage.completionTokens ?? 0
+          );
+        }
         lastError = undefined;
         break; // Success — exit the model loop
       } catch (err: any) {
@@ -320,42 +282,68 @@ Output structured JSON insights after running your analysis.`,
       }
     }
 
-    if (lastError) {
-      throw lastError;
-    }
+    if (lastError) throw lastError;
 
-    // Phase 7.5: Token budget tracking
-    const tokenTracker = createTokenTracker();
-    const tokenBudget =
-      ((agentConfig.config as any)?.tokenBudget as number) ??
-      DEFAULT_TOKEN_BUDGETS["insights-analyzer"];
-    if ((steps as any).usage) {
-      tokenTracker.add(
-        (steps as any).usage.promptTokens,
-        (steps as any).usage.completionTokens
-      );
-    }
-    // Also accumulate from individual steps
-    for (const step of steps) {
-      if ((step as any).usage) {
-        tokenTracker.add(
-          (step as any).usage.promptTokens ?? 0,
-          (step as any).usage.completionTokens ?? 0
+    // ── Execute the generated script in sandbox ─────────────
+    let sandboxResult = await executeSandbox(ctx.sandbox, {
+      code: generatedScript,
+      directDbAccess: true,
+      explanation: `${input.analysis} analysis (single-script)`,
+      timeoutMs: sandboxTimeoutMs,
+      runtime: effectiveRuntime,
+      snapshotId: sandboxSnapshotId,
+      memory: sandboxMemory,
+    });
+
+    // ── Error retry: feed error back to LLM for self-correction ──
+    if (!sandboxResult.success && generatedScript) {
+      ctx.logger.warn("Sandbox script failed, attempting LLM self-correction", {
+        errorType: sandboxResult.errorType,
+        error: sandboxResult.error?.slice(0, 200),
+      });
+
+      try {
+        const retryResult = await traced(
+          ctx.tracer,
+          collector,
+          "generateText-retry",
+          "llm",
+          async () => generateText({
+            model: await getModel(modelsToTry[0]),
+            ...(temperature !== undefined ? { temperature } : {}),
+            system: systemPrompt,
+            prompt: `Your previous script failed with this error:\nERROR TYPE: ${sandboxResult.errorType}\nERROR: ${sandboxResult.error?.slice(0, 500)}\nSTDERR: ${sandboxResult.stderr?.slice(0, 500)}\nHINT: ${sandboxResult.errorHint}\n\nFix the script. Common fixes:\n- Check column names against the schema\n- Handle empty DataFrames (check len() first)\n- Use .fillna(0) for numeric operations on nullable columns\n- Ensure query_db() results are not empty before analysis\n\nWrite the corrected complete script:`,
+          }),
+          { model: modelsToTry[0], analysis: input.analysis, retry: true }
         );
+
+        if (retryResult.usage) {
+          tokenTracker.add(
+            retryResult.usage.promptTokens ?? 0,
+            retryResult.usage.completionTokens ?? 0
+          );
+        }
+
+        const fixedMatch = retryResult.text.match(/```python\s*([\s\S]*?)```/);
+        const fixedScript = fixedMatch?.[1]?.trim() || retryResult.text.trim();
+
+        if (fixedScript) {
+          sandboxResult = await executeSandbox(ctx.sandbox, {
+            code: fixedScript,
+            directDbAccess: true,
+            explanation: `${input.analysis} analysis (retry)`,
+            timeoutMs: sandboxTimeoutMs,
+            runtime: effectiveRuntime,
+            snapshotId: sandboxSnapshotId,
+            memory: sandboxMemory,
+          });
+        }
+      } catch (retryErr: any) {
+        ctx.logger.warn("LLM retry failed", { error: retryErr.message?.slice(0, 200) });
       }
     }
 
-    // ── Extract confidence metrics from tool results ────────
-    const toolResults = steps
-      .flatMap((s) => s.toolResults || [])
-      .map((tr: any) => tr.result)
-      .filter(Boolean);
-
-    // Aggregate _confidence from all sandbox runs
-    const confidenceMetrics = toolResults
-      .map((r: any) => r?._confidence ?? r?.result?._confidence)
-      .filter(Boolean);
-
+    // ── Compute confidence from sandbox result ──────────────
     /**
      * Compute a confidence score (0-1) from statistical metrics
      * returned by the sandbox code. Uses a weighted formula:
@@ -410,45 +398,39 @@ Output structured JSON insights after running your analysis.`,
       return Math.round((totalScore / metrics.length) * 100) / 100;
     }
 
-    const computedConfidence = computeConfidence(confidenceMetrics);
-
-    // ── Parse structured JSON from the LLM response ─────────
+    // ── Parse result from sandbox output ────────────────────
     let parsed: { insights: InsightItem[]; summary: string };
-    try {
-      // Extract JSON block from the response (supports ```json fences)
-      const jsonMatch = rawResponse.match(
-        /```json\s*([\s\S]*?)```|(\{[\s\S]*"insights"[\s\S]*\})/
-      );
-      const jsonStr = jsonMatch?.[1]?.trim() || jsonMatch?.[2]?.trim();
-      if (jsonStr) {
-        const obj = JSON.parse(jsonStr);
-        parsed = {
-          insights: Array.isArray(obj.insights)
-            ? obj.insights.map((ins: any) => ({
-                ...ins,
-                confidence: computedConfidence, // override with computed value
-              }))
-            : [],
-          summary: obj.summary ?? rawResponse,
-        };
-      } else {
-        const fallback = parseInsightsFromText(rawResponse);
-        parsed = {
-          insights: fallback.insights.map((ins: any) => ({
-            ...ins,
-            confidence: computedConfidence,
-          })) as InsightItem[],
-          summary: fallback.summary,
-        };
-      }
-    } catch {
-      const fallback = parseInsightsFromText(rawResponse);
+    let rawResponse = ""; // No LLM prose in single-script mode (used as fallback only)
+
+    if (sandboxResult.success && sandboxResult.result) {
+      const res = sandboxResult.result as any;
+      const confidenceMetrics = res?._confidence ? [res._confidence] : [];
+      const computedConfidence = computeConfidence(confidenceMetrics);
+
       parsed = {
-        insights: fallback.insights.map((ins: any) => ({
-          ...ins,
-          confidence: computedConfidence,
-        })) as InsightItem[],
-        summary: fallback.summary,
+        insights: Array.isArray(res.insights)
+          ? res.insights.map((ins: any) => ({
+              ...ins,
+              confidence: computedConfidence,
+            }))
+          : [],
+        summary: res.summary ?? JSON.stringify(res).slice(0, 500),
+      };
+    } else {
+      // Sandbox failed even after retry — return minimal fallback result
+      const fallbackMsg = sandboxResult.error
+        ? `Analysis encountered an error: ${sandboxResult.error.slice(0, 300)}`
+        : "Analysis could not be completed. Please try again.";
+
+      parsed = {
+        insights: [{
+          title: "Analysis Error",
+          severity: "warning" as const,
+          description: fallbackMsg,
+          recommendation: "Try with a different analysis type or shorter timeframe.",
+          confidence: 0.1,
+        }] as InsightItem[],
+        summary: fallbackMsg,
       };
     }
 
@@ -503,16 +485,10 @@ Output structured JSON insights after running your analysis.`,
       await cache.set(CACHE_NS.ANALYSIS, cacheKeyStr, result, { ttl: CACHE_TTL.MEDIUM });
     });
 
-    // Phase 1.10 + 2.2: Record tool invocations + flush telemetry (background)
-    {
-      const toolInvocations = extractToolInvocations(steps as any, "insights-analyzer");
-      for (const inv of toolInvocations) {
-        collector.addToolCall(inv);
-      }
-      ctx.waitUntil(async () => {
-        try { await collector.flush(); } catch { /* non-critical */ }
-      });
-    }
+    // Phase 1.10: Flush telemetry (background)
+    ctx.waitUntil(async () => {
+      try { await collector.flush(); } catch { /* non-critical */ }
+    });
 
     return result;
   },

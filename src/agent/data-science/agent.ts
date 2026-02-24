@@ -137,18 +137,15 @@ const agent = createAgent("data-science", {
     const ai = appState?.aiSettings;
 
     // Build per-request tool set -- sandbox API injected via closure
+    // Snapshot resolution is handled by executeSandbox() in sandbox.ts
+    // (reads ANALYTICS_SNAPSHOT_ID env var as default for Python runtimes)
     const sandboxCfg = (agentConfig.config ?? {}) as Record<string, unknown>;
-        // If snapshot ID is the placeholder, treat it as undefined to avoid API errors
-        const finalSnapshotId =
-          sandboxCfg.sandboxSnapshotId === "snp_set_this_in_admin_console"
-            ? undefined
-            : (sandboxCfg.sandboxSnapshotId as string | undefined);
 
-        const allTools = await getAllTools(
-          {
-            sandboxApi: ctx.sandbox,
-            sandboxTimeoutMs,
-            snapshotId: finalSnapshotId,
+    const allTools = await getAllTools(
+      {
+        sandboxApi: ctx.sandbox,
+        sandboxTimeoutMs,
+        snapshotId: sandboxCfg.sandboxSnapshotId as string | undefined,
         runtime: (sandboxCfg.sandboxRuntime as any) ?? undefined,
         dependencies: sandboxCfg.sandboxDeps as string[] | undefined,
         memory: sandboxCfg.sandboxMemory as string | undefined,

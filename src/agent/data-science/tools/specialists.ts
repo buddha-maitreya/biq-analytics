@@ -207,9 +207,9 @@ export const analyzeTrendsTool = tool({
       .number()
       .int()
       .min(1)
-      .max(90)
+      .max(365)
       .default(30)
-      .describe("Number of days to analyze. Default 30. Use 30 unless the user explicitly requests a different period. Max 90 days."),
+      .describe("Number of days to analyze. Default 30. Use 30 unless the user explicitly requests a different period. Values above 90 will be automatically capped to the configured maximum."),
   }),
   execute: async ({ analysis, timeframeDays }): Promise<AnalyzeTrendsResult> => {
     try {

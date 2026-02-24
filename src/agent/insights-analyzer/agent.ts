@@ -150,7 +150,7 @@ const agent = createAgent("insights-analyzer", {
       sandboxMemory,
     } = ctx.config ?? {} as any;
 
-    if (!ctx.config) {
+    if (!ctx.config || !agentConfig) {
       ctx.logger.error("Insights analyzer config is undefined — setup() likely failed");
       return {
         analysisType: input.analysis,

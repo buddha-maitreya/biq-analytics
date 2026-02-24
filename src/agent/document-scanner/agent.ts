@@ -209,6 +209,16 @@ const agent = createAgent("document-scanner", {
     }
 
     const { agentConfig, temperature } = ctx.config;
+
+    if (!agentConfig) {
+      ctx.logger.warn("[SCANNER:1] agentConfig undefined within ctx.config");
+      return {
+        success: false,
+        mode: input.mode,
+        error: "Document scanner unavailable — agent configuration missing. Please retry.",
+      };
+    }
+
     ctx.logger.info("[SCANNER:2] Config loaded", { modelOverride: agentConfig.modelOverride, temperature, hasCustomInstructions: !!agentConfig.customInstructions });
 
     // Validate input: need either imageData or imageUrl

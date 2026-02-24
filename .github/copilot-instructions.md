@@ -449,21 +449,26 @@ agentuity cloud sandbox create --runtime python:3.13 --name data-science --netwo
 **Install packages in a sandbox:**
 ```bash
 # Step 1: Create a venv (uv venvs don't include pip, so use uv for installs)
-agentuity cloud sandbox exec <sbx_id> -- uv venv /home/agentuity/venv
+# IMPORTANT: When restoring from a snapshot, the venv has broken Python symlinks.
+# Always use --clear to replace the broken venv:
+agentuity cloud sandbox exec <sbx_id> -- uv venv /home/agentuity/venv --clear
 
-# Step 2: Install packages using uv with VIRTUAL_ENV set
-agentuity cloud sandbox exec <sbx_id> -- bash -c "VIRTUAL_ENV=/home/agentuity/venv uv pip install pandas numpy scipy scikit-learn matplotlib seaborn statsmodels"
+# Step 2: Install ALL packages using uv with VIRTUAL_ENV set
+# Must include psycopg2-binary for direct DB access (query_db() helper)
+agentuity cloud sandbox exec <sbx_id> -- bash -c "VIRTUAL_ENV=/home/agentuity/venv uv pip install pandas numpy scipy scikit-learn matplotlib seaborn statsmodels plotly prophet lifetimes psycopg2-binary"
 ```
 
 **Why this pattern (lessons learned):**
 1. `uv pip install --system` fails → Python is "externally managed" (PEP 668)
 2. `uv pip install --system --break-system-packages` fails → permission denied on system Python dir
 3. `venv/bin/python -m pip install` fails → uv venvs don't include pip by default
-4. **Correct:** Create venv with `uv venv`, then `VIRTUAL_ENV=<path> uv pip install` ✓
+4. `uv venv /path` without `--clear` fails → "A virtual environment already exists" error
+5. Snapshot venvs have **broken Python symlinks** → `uv pip install` fails with "Broken symlink at venv/bin/python3, was the underlying Python interpreter removed?"
+6. **Correct:** Recreate venv with `uv venv --clear`, then `VIRTUAL_ENV=<path> uv pip install` ✓
 
 **Create a snapshot from a configured sandbox:**
 ```bash
-agentuity cloud sandbox snapshot create <sbx_id> --name data-science-snapshot
+agentuity cloud sandbox snapshot create <sbx_id> --name analytics-snapshot-v3
 # Returns: snapshot_<id>
 ```
 

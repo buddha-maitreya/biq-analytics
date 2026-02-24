@@ -1,22 +1,22 @@
 {
   "analytics_sandbox": {
-    "id": "sbx_29b867ff14cd347f9163b0f4d0905b61d4e28ce226ba1e635d9cdcdd2c86",
-    "name": "analytics-v2",
+    "id": "sbx_f0aa3c550922788cb91f75c1f22b8399b08489233bfe8e5b4434e9d7cbd2",
+    "name": "analytics-v3",
     "runtime": "python:3.13",
     "region": "use",
-    "created": "2026-02-24T06:10:00Z",
+    "created": "2026-02-24T15:53:00Z",
     "status": "active",
     "idle_timeout": "45m",
     "network": true
   },
   "analytics_snapshot": {
-    "id": "snp_39ad8274d8de96e4ace2e0e95d1cad1c20d8fc04f57a608edf45f86ebd18",
-    "name": "analytics-snapshot-v2",
+    "id": "snp_f98d0b5ce2570ba00fb135c72340f36f6293ea732ada7addca56c49ca1bc",
+    "name": "analytics-snapshot-v3",
     "tag": "latest",
-    "size_mb": 246.94,
-    "files": 23670,
+    "size_mb": 253.87,
+    "files": 23389,
     "visibility": "private",
-    "created": "2026-02-24T06:15:49Z",
+    "created": "2026-02-24T15:55:50Z",
     "packages": [
       "pandas",
       "numpy",
@@ -28,12 +28,10 @@
       "statsmodels",
       "prophet",
       "lifetimes",
-      "mlxtend",
-      "squarify",
-      "pillow",
-      "openpyxl"
+      "psycopg2-binary",
+      "pillow"
     ]
   },
-  "env_var": "ANALYTICS_SNAPSHOT_ID=snp_39ad8274d8de96e4ace2e0e95d1cad1c20d8fc04f57a608edf45f86ebd18",
-  "notes": "Sandbox may terminate after idle timeout. Snapshot persists indefinitely. To recreate sandbox from snapshot: agentuity cloud sandbox create --runtime python:3.13 --snapshot <snapshot_id> --name analytics-v3 --network --idle-timeout 45m"
+  "env_var": "ANALYTICS_SNAPSHOT_ID=snp_f98d0b5ce2570ba00fb135c72340f36f6293ea732ada7addca56c49ca1bc",
+  "notes": "Sandbox may terminate after idle timeout. Snapshot persists indefinitely. To recreate sandbox from snapshot: agentuity cloud sandbox create --snapshot <snapshot_id> --name analytics-v4 --network --idle-timeout 45m. IMPORTANT: Use --clear when recreating venv from snapshot (broken symlinks)."
 }

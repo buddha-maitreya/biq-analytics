@@ -207,9 +207,9 @@ export const analyzeTrendsTool = tool({
       .number()
       .int()
       .min(1)
-      .max(365)
+      .max(90)
       .default(30)
-      .describe("Number of days to analyze. Default 30. Use 30 unless the user explicitly requests a different period. Values above 90 will be automatically capped to the configured maximum."),
+      .describe("Number of days of historical data to analyze. ALWAYS use 30 unless the user explicitly states a specific number of days or date range. NEVER choose a larger value based on the analysis type — forecasting, trends, and anomaly detection all work with 30 days by default. Valid range: 1-90."),
   }),
   execute: async ({ analysis, timeframeDays }): Promise<AnalyzeTrendsResult> => {
     try {
@@ -245,11 +245,11 @@ export const generateReportTool = tool({
     startDate: z
       .string()
       .optional()
-      .describe("Start date in ISO format. Defaults to 30 days ago. IMPORTANT: When the user mentions a month or period without specifying a year, ALWAYS use the current year from the system prompt's 'Current date' field."),
+      .describe("Start date in ISO format. ALWAYS default to 30 days ago unless the user explicitly specifies a date or period. NEVER invent a longer range based on the report type. When the user mentions a month without a year, use the current year."),
     endDate: z
       .string()
       .optional()
-      .describe("End date in ISO format. Defaults to now. IMPORTANT: When the user mentions a month or period without specifying a year, ALWAYS use the current year from the system prompt's 'Current date' field."),
+      .describe("End date in ISO format. ALWAYS default to today unless the user explicitly specifies an end date. When the user mentions a month without a year, use the current year."),
   }),
   execute: async ({ reportType, startDate, endDate }): Promise<GenerateReportResult> => {
     try {

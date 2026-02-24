@@ -214,10 +214,30 @@ function QueryResultTable({ output }: { output: any }) {
 
 function InsightsResult({ output }: { output: any }) {
   const insights = output.insights || [];
+  const charts = output.charts || [];
   return (
     <div className="tool-insights">
       {output.summary && (
         <div className="tool-insights-summary">{output.summary}</div>
+      )}
+      {charts.length > 0 && (
+        <div className="tool-insights-charts">
+          {charts.map((chart: any, i: number) => (
+            <div key={i} className="tool-chart-container">
+              <div className="tool-chart-title">{chart.title}</div>
+              <img
+                src={`data:image/png;base64,${chart.data}`}
+                alt={chart.title}
+                className="tool-chart-image"
+                style={{
+                  maxWidth: "100%",
+                  width: Math.min(chart.width || 800, 800),
+                  height: "auto",
+                }}
+              />
+            </div>
+          ))}
+        </div>
       )}
       {insights.map((insight: any, i: number) => (
         <div key={i} className={`tool-insight-card severity-${insight.severity}`}>

@@ -32,7 +32,7 @@ import { config } from "@lib/config";
 import { getModel } from "@lib/ai";
 import { DB_SCHEMA_ANALYTICS } from "@lib/db-schema";
 import { executeSandbox } from "@lib/sandbox";
-import type { SandboxRuntime } from "@lib/sandbox";
+import type { SandboxRuntime, SandboxResult } from "@lib/sandbox";
 import { createCache, CACHE_NS, CACHE_TTL, analysisKey } from "@lib/cache";
 import { maskPII } from "@lib/pii";
 import { validateTextOutput } from "@lib/output-validation";
@@ -45,6 +45,7 @@ import {
   inputSchema,
   outputSchema,
   type InsightItem,
+  type InsightChart,
 } from "./types";
 import { parseInsightsFromText } from "./prompts";
 import { getAgentConfigWithDefaults } from "@services/agent-configs";
@@ -180,7 +181,7 @@ const agent = createAgent("insights-analyzer", {
     // instead of using tool calls. The script calls query_db()/query_df()
     // directly inside the sandbox (directDbAccess mode), keeping all
     // intermediate data in sandbox memory — only the final JSON returns.
-    const systemPrompt = `You are a data scientist for ${config.companyName}. Write a COMPLETE Python script that analyzes business data and returns structured insights.
+    const systemPrompt = `You are a data scientist for ${config.companyName}. Write a COMPLETE Python script that analyzes business data, generates publication-quality charts, and returns structured insights.
 
 ${DB_SCHEMA_ANALYTICS}
 
@@ -189,15 +190,34 @@ Currency: ${config.currency}. Products="${config.labels.product}", Orders="${con
 PYTHON API (pre-loaded in sandbox):
 - query_db(sql, limit=None) -- execute a PostgreSQL SELECT query, returns list[dict]
 - query_df(sql, limit=None) -- same but returns pandas DataFrame (date columns auto-parsed)
-- Pre-installed: numpy (np), pandas (pd), scipy.stats, sklearn, statsmodels
+- Pre-installed: numpy (np), pandas (pd), scipy.stats, sklearn, statsmodels, matplotlib, seaborn
+
+DATABASE ACCESS:
 - Only SELECT/WITH queries. No INSERT/UPDATE/DELETE/DROP.
 
+CHART API (pre-loaded — brand colors and styling already applied):
+- apply_brand_style() — already called at script start, do NOT call again
+- get_brand_palette(n) — returns n brand colors as hex list
+- format_currency(value) — formats as "${config.currency} 1.2M" / "${config.currency} 45.3K"
+- currency_formatter() — returns matplotlib FuncFormatter for currency Y-axis
+- save_chart(fig, title, width=800, height=400) — saves chart as base64 PNG
+  * Call this INSTEAD of plt.show() or plt.savefig()
+  * Charts are automatically collected and returned with results
+- sns (seaborn) is available with brand palette pre-set
+
 YOUR SCRIPT MUST:
-1. Fetch data using query_db() or query_df() -- call them as many times as needed
+1. Fetch data using query_db() or query_df() — call them as many times as needed
 2. Perform statistical analysis (z-scores, trends, forecasts, anomaly detection, etc.)
-3. Handle empty data gracefully (check len() before analysis)
-4. Use pandas vectorized ops (groupby, rolling, pct_change) -- not row-by-row loops
-5. Return a dict with this EXACT structure:
+3. Generate 2-3 publication-quality charts using matplotlib/seaborn that visualize key findings:
+   - Use fig, ax = plt.subplots(figsize=(10, 5)) for each chart
+   - Use seaborn (sns) for beautiful statistical visualizations when appropriate
+   - Use get_brand_palette() for colors, currency_formatter() for money axes
+   - Add clear titles, axis labels, and legends
+   - Call save_chart(fig, "Descriptive Title") for each chart — NEVER plt.show()
+   - Chart types to consider: line plots, bar charts, heatmaps, scatter plots, area charts
+4. Handle empty data gracefully (check len() before analysis and charting)
+5. Use pandas vectorized ops (groupby, rolling, pct_change) — not row-by-row loops
+6. Return a dict with this EXACT structure:
 
 return {
     "insights": [
@@ -219,12 +239,23 @@ return {
     }
 }
 
+CHART STYLE GUIDELINES:
+- Clean, professional look — no default matplotlib styling
+- Use sns.lineplot/barplot/heatmap for elegant charts
+- Add gridlines (alpha=0.3) for readability
+- Use format_currency() in annotations and currency_formatter() on y-axes showing money
+- Include data labels on bar charts when ≤12 bars
+- Use fig.suptitle() for main title, ax.set_xlabel()/set_ylabel() for axis labels
+- Rotate x-labels 45° if they overlap: plt.xticks(rotation=45, ha='right')
+- Always call plt.tight_layout() or fig.tight_layout() before save_chart()
+
 RULES:
 - Generate 3-8 insights ranked by business impact (critical first)
-- Use f-strings with real computed values -- never hardcode example numbers
+- Use f-strings with real computed values — never hardcode example numbers
 - Include at least one actionable recommendation per insight
 - Timeout: ${sandboxTimeoutMs / 1000}s. Keep queries and analysis efficient.
 - If insufficient data, return fewer insights with lower confidence, not fabricated ones.
+- Do NOT call plt.show() — only save_chart()
 
 RESPOND WITH ONLY THE PYTHON CODE wrapped in triple-backtick python fences. No explanations outside the code block.`;
 
@@ -284,12 +315,27 @@ Write the complete Python script now.`;
 
     if (lastError) throw lastError;
 
+    // ── Chart configuration for brand-aware sandbox charts ────
+    const chartConfig = {
+      primaryColor: "#3b82f6",
+      secondaryColor: "#10b981",
+      accentColor: "#f59e0b",
+      currencySymbol: config.currency,
+      currencyPosition: "prefix" as const,
+      companyName: config.companyName,
+      chartStyle: "modern" as const,
+      fontFamily: "Inter",
+      dpi: 150,
+    };
+
     // ── Execute the generated script in sandbox ─────────────
     let sandboxResult = await executeSandbox(ctx.sandbox, {
       code: generatedScript,
       directDbAccess: true,
+      chartConfig,
       explanation: `${input.analysis} analysis (single-script)`,
       timeoutMs: sandboxTimeoutMs,
+      maxOutputBytes: 2 * 1024 * 1024, // 2MB — charts are base64 PNGs (~100-200KB each)
       runtime: effectiveRuntime,
       snapshotId: sandboxSnapshotId,
       memory: sandboxMemory,
@@ -331,8 +377,10 @@ Write the complete Python script now.`;
           sandboxResult = await executeSandbox(ctx.sandbox, {
             code: fixedScript,
             directDbAccess: true,
+            chartConfig,
             explanation: `${input.analysis} analysis (retry)`,
             timeoutMs: sandboxTimeoutMs,
+            maxOutputBytes: 2 * 1024 * 1024,
             runtime: effectiveRuntime,
             snapshotId: sandboxSnapshotId,
             memory: sandboxMemory,
@@ -399,13 +447,21 @@ Write the complete Python script now.`;
     }
 
     // ── Parse result from sandbox output ────────────────────
-    let parsed: { insights: InsightItem[]; summary: string };
+    let parsed: { insights: InsightItem[]; summary: string; charts?: InsightChart[] };
     let rawResponse = ""; // No LLM prose in single-script mode (used as fallback only)
 
     if (sandboxResult.success && sandboxResult.result) {
       const res = sandboxResult.result as any;
       const confidenceMetrics = res?._confidence ? [res._confidence] : [];
       const computedConfidence = computeConfidence(confidenceMetrics);
+
+      // Extract charts from sandbox result (collected via save_chart() calls)
+      const charts: InsightChart[] = (sandboxResult.charts ?? []).map((c) => ({
+        data: c.data,
+        title: c.title,
+        width: c.width,
+        height: c.height,
+      }));
 
       parsed = {
         insights: Array.isArray(res.insights)
@@ -415,6 +471,7 @@ Write the complete Python script now.`;
             }))
           : [],
         summary: res.summary ?? JSON.stringify(res).slice(0, 500),
+        ...(charts.length > 0 ? { charts } : {}),
       };
     } else {
       // Sandbox failed even after retry — return minimal fallback result
@@ -466,6 +523,7 @@ Write the complete Python script now.`;
     ctx.logger.info("Insights analysis complete", {
       analysis: input.analysis,
       insightsCount: parsed.insights?.length ?? 0,
+      chartsCount: parsed.charts?.length ?? 0,
       timeframeDays: input.timeframeDays,
       productId: input.productId ?? "all",
       durationMs: startedAt ? Date.now() - startedAt : undefined,
@@ -478,6 +536,7 @@ Write the complete Python script now.`;
       generatedAt: new Date().toISOString(),
       insights: parsed.insights ?? [],
       summary: parsed.summary ?? rawResponse,
+      ...(parsed.charts?.length ? { charts: parsed.charts } : {}),
     };
 
     // Phase 3.2: Cache analysis result (15-minute TTL)

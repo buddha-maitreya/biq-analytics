@@ -281,6 +281,24 @@ export interface SandboxInput {
    * Requires `psycopg2-binary` in the snapshot.
    */
   directDbAccess?: boolean;
+  /**
+   * Brand-aware chart configuration injected into the Python sandbox.
+   * When provided, injects `create_chart()` and `save_chart()` helpers
+   * that produce publication-quality matplotlib/seaborn charts with
+   * brand colors, currency formatting, and professional styling.
+   * Charts are returned as base64 PNG in the `_charts` array of the result.
+   */
+  chartConfig?: {
+    primaryColor?: string;
+    secondaryColor?: string;
+    accentColor?: string;
+    currencySymbol?: string;
+    currencyPosition?: "prefix" | "suffix";
+    companyName?: string;
+    chartStyle?: "modern" | "classic" | "minimal";
+    fontFamily?: string;
+    dpi?: number;
+  };
 }
 
 export interface SandboxResult {
@@ -308,6 +326,17 @@ export interface SandboxResult {
   outputTruncated?: boolean;
   /** Runtime that was used */
   runtime?: SandboxRuntime;
+  /** Charts generated via save_chart() in the Python sandbox (base64 PNGs) */
+  charts?: Array<{
+    /** Base64-encoded PNG image data */
+    data: string;
+    /** Chart title */
+    title: string;
+    /** Display width in pixels */
+    width: number;
+    /** Display height in pixels */
+    height: number;
+  }>;
 }
 
 /**
@@ -429,7 +458,11 @@ const DATA = JSON.parse(fs.readFileSync('data.json', 'utf-8'));
  * - LLM code runs inside a function with access to all imports and data
  * - When directDbAccess is true, provides query_db(sql) for live Postgres queries
  */
-function buildPythonScript(analysisCode: string, directDbAccess = false): string {
+function buildPythonScript(
+  analysisCode: string,
+  directDbAccess = false,
+  chartConfig?: SandboxInput["chartConfig"]
+): string {
   // query_db() helper — injected when directDbAccess is enabled
   const queryDbHelper = directDbAccess ? `
 # ── Direct database access ──────────────────────────────────
@@ -618,6 +651,142 @@ class AnalysisEncoder(json.JSONEncoder):
             return float(obj)
         return super().default(obj)
 ${queryDbHelper}
+${chartConfig ? `
+# ── Chart utilities (brand-aware matplotlib/seaborn) ────────
+# Injected when chartConfig is provided. Produces publication-quality
+# charts with brand colors, currency formatting, and professional styling.
+# Charts are collected in _CHARTS list and merged into the result.
+
+_CHARTS = []  # Collector: list of { data: base64, title: str, width: int, height: int }
+
+_CHART_CONFIG = ${JSON.stringify({
+    primaryColor: chartConfig.primaryColor ?? "#3b82f6",
+    secondaryColor: chartConfig.secondaryColor ?? "#10b981",
+    accentColor: chartConfig.accentColor ?? "#f59e0b",
+    currencySymbol: chartConfig.currencySymbol ?? "KES",
+    currencyPosition: chartConfig.currencyPosition ?? "prefix",
+    companyName: chartConfig.companyName ?? "Business IQ",
+    chartStyle: chartConfig.chartStyle ?? "modern",
+    fontFamily: chartConfig.fontFamily ?? "Inter",
+    dpi: chartConfig.dpi ?? 150,
+})}
+
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as mticker
+    try:
+        import seaborn as sns
+        sns.set_theme(style="whitegrid")
+    except ImportError:
+        sns = None
+
+    def apply_brand_style():
+        """Apply brand-aware styling to matplotlib. Call once before creating charts."""
+        style_map = {
+            'minimal': 'seaborn-v0_8-whitegrid',
+            'classic': 'classic',
+            'modern': 'seaborn-v0_8-darkgrid',
+        }
+        try:
+            plt.style.use(style_map.get(_CHART_CONFIG['chartStyle'], 'seaborn-v0_8-darkgrid'))
+        except Exception:
+            plt.style.use('seaborn-v0_8-whitegrid')
+        
+        plt.rcParams.update({
+            'figure.facecolor': '#ffffff',
+            'axes.facecolor': '#ffffff',
+            'text.color': '#1f2937',
+            'axes.labelcolor': '#1f2937',
+            'xtick.color': '#374151',
+            'ytick.color': '#374151',
+            'axes.titlesize': 14,
+            'axes.titleweight': 'bold',
+            'axes.labelsize': 11,
+            'figure.titlesize': 16,
+            'figure.titleweight': 'bold',
+            'axes.spines.top': False,
+            'axes.spines.right': False,
+        })
+        try:
+            plt.rcParams['font.family'] = _CHART_CONFIG.get('fontFamily', 'sans-serif')
+        except Exception:
+            plt.rcParams['font.family'] = 'sans-serif'
+        
+        if sns:
+            palette = get_brand_palette(6)
+            sns.set_palette(palette)
+    
+    def get_brand_palette(n=6):
+        """Return n brand colors starting from primary/secondary/accent."""
+        base = [
+            _CHART_CONFIG['primaryColor'],
+            _CHART_CONFIG['secondaryColor'],
+            _CHART_CONFIG['accentColor'],
+        ]
+        extras = ['#6366f1', '#ec4899', '#14b8a6', '#f97316', '#8b5cf6', '#06b6d4',
+                  '#84cc16', '#f43f5e', '#0ea5e9', '#a855f7']
+        palette = base + [c for c in extras if c not in base]
+        return palette[:max(n, 3)]
+
+    def format_currency(value):
+        """Format a number as currency (e.g. KES 1.2M, KES 45.3K)."""
+        sym = _CHART_CONFIG['currencySymbol']
+        pos = _CHART_CONFIG['currencyPosition']
+        if abs(value) >= 1_000_000:
+            formatted = f"{value/1_000_000:,.1f}M"
+        elif abs(value) >= 1_000:
+            formatted = f"{value/1_000:,.1f}K"
+        else:
+            formatted = f"{value:,.0f}"
+        return f"{formatted} {sym}" if pos == 'suffix' else f"{sym} {formatted}"
+
+    def currency_formatter():
+        """Return a matplotlib FuncFormatter for currency axis labels."""
+        return mticker.FuncFormatter(lambda x, pos: format_currency(x))
+
+    def save_chart(fig, title="Chart", width=800, height=400):
+        """Convert a matplotlib figure to base64 PNG and append to _CHARTS.
+        
+        Args:
+            fig: matplotlib Figure object
+            title: Chart title (displayed in UI)
+            width: Display width in pixels
+            height: Display height in pixels
+        
+        Always call this instead of plt.show() or plt.savefig().
+        """
+        import io as _io
+        import base64 as _b64
+        
+        dpi = _CHART_CONFIG.get('dpi', 150)
+        buf = _io.BytesIO()
+        fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight',
+                    facecolor=fig.get_facecolor(), edgecolor='none')
+        buf.seek(0)
+        b64 = _b64.b64encode(buf.read()).decode('utf-8')
+        buf.close()
+        plt.close(fig)
+        
+        _CHARTS.append({
+            'data': b64,
+            'title': title,
+            'width': width,
+            'height': height,
+        })
+
+    # Apply brand style immediately so all charts inherit it
+    apply_brand_style()
+
+except ImportError:
+    # matplotlib not available — chart helpers become no-ops
+    def apply_brand_style(): pass
+    def get_brand_palette(n=6): return ['#3b82f6'] * n
+    def format_currency(value): return f"{_CHART_CONFIG['currencySymbol']} {value:,.0f}"
+    def currency_formatter(): return None
+    def save_chart(fig, title="Chart", width=800, height=400): pass
+` : ''}
 # ── Read DATA from data.json file ──────────────────────────
 with open('data.json', 'r') as __f:
     DATA = json.load(__f)
@@ -642,6 +811,9 @@ ${analysisCode.split("\n").map((line) => `        ${line}`).join("\n")}
 
     __result = __run_analysis()
     if __result is not None:
+        # Merge any charts generated via save_chart() into the result
+        if isinstance(__result, dict) and '_CHARTS' in dir() and _CHARTS:
+            __result['_charts'] = _CHARTS
         print(json.dumps(__result, cls=AnalysisEncoder))
 except Exception as e:
     import traceback
@@ -652,9 +824,14 @@ except Exception as e:
 }
 
 /** Build the appropriate wrapper script for the given runtime. */
-function buildScript(runtime: SandboxRuntime, code: string, directDbAccess = false): string {
+function buildScript(
+  runtime: SandboxRuntime,
+  code: string,
+  directDbAccess = false,
+  chartConfig?: SandboxInput["chartConfig"]
+): string {
   if (runtime === "python" || runtime === "python:3.13" || runtime === "python:3.14") {
-    return buildPythonScript(code, directDbAccess);
+    return buildPythonScript(code, directDbAccess, chartConfig);
   }
   if (runtime === "node" || runtime === "node:latest" || runtime === "node:lts") {
     return buildNodeScript(code);
@@ -795,6 +972,7 @@ export async function executeSandbox(
     snapshotId: explicitSnapshotId,
     memory = "256Mi",
     directDbAccess = false,
+    chartConfig,
   } = input;
 
   // Resolve snapshot: explicit caller value > env var default (Python only)
@@ -821,7 +999,7 @@ export async function executeSandbox(
   // ── Step 2: Build script and run in sandbox ─────────────
   const scriptExt = getScriptExt(runtime);
   const scriptFile = `analysis.${scriptExt}`;
-  const script = buildScript(runtime, code, directDbAccess);
+  const script = buildScript(runtime, code, directDbAccess, chartConfig);
   const dataJson = JSON.stringify(data);
 
   try {
@@ -920,6 +1098,17 @@ export async function executeSandbox(
       parsed = stdout;
     }
 
+    // Extract _charts from parsed result (injected by save_chart() in Python)
+    let charts: SandboxResult["charts"];
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const obj = parsed as Record<string, unknown>;
+      if (Array.isArray(obj._charts) && obj._charts.length > 0) {
+        charts = obj._charts as SandboxResult["charts"];
+        // Remove _charts from the result so callers get clean data
+        delete obj._charts;
+      }
+    }
+
     return {
       success: true,
       result: parsed,
@@ -929,6 +1118,7 @@ export async function executeSandbox(
       dataRowCount,
       explanation,
       runtime,
+      charts,
     };
   } catch (err: any) {
     const errMsg = err.message || String(err);

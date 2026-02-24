@@ -78,9 +78,31 @@ export interface InsightItem {
   dataPoints?: Record<string, unknown>;
 }
 
+/** Chart generated in the sandbox via save_chart() */
+export interface InsightChart {
+  /** Base64-encoded PNG image data */
+  data: string;
+  /** Chart title */
+  title: string;
+  /** Display width in pixels */
+  width: number;
+  /** Display height in pixels */
+  height: number;
+}
+
 export const outputSchema = s.object({
   analysisType: s.string().describe("The analysis type that was performed"),
   generatedAt: s.string().describe("ISO timestamp of generation"),
   insights: s.array(insightSchema).describe("Structured business insights"),
   summary: s.string().describe("Executive summary paragraph"),
+  charts: s.optional(
+    s.array(
+      s.object({
+        data: s.string().describe("Base64-encoded PNG chart image"),
+        title: s.string().describe("Chart title"),
+        width: s.number().describe("Display width in pixels"),
+        height: s.number().describe("Display height in pixels"),
+      })
+    ).describe("Publication-quality charts generated via matplotlib/seaborn")
+  ),
 });

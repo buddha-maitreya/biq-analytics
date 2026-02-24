@@ -1943,6 +1943,24 @@ textarea {
 .severity-badge.high { background: #fecaca; color: #991b1b; }
 .severity-badge.medium { background: #fed7aa; color: #9a3412; }
 .severity-badge.low { background: #bbf7d0; color: #166534; }
+.severity-badge.critical { background: #fecaca; color: #991b1b; }
+.severity-badge.warning { background: #fed7aa; color: #9a3412; }
+.severity-badge.info { background: #dbeafe; color: #1e40af; }
+
+.tool-insight-card.severity-critical {
+  border-left-color: #ef4444;
+  background: #fef2f2;
+}
+
+.tool-insight-card.severity-warning {
+  border-left-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.tool-insight-card.severity-info {
+  border-left-color: #3b82f6;
+  background: #eff6ff;
+}
 
 .tool-insight-title {
   font-size: 13px;
@@ -1965,6 +1983,65 @@ textarea {
   font-size: 12px;
   margin: 0;
   color: var(--color-text-muted);
+}
+
+/* -- Charts in Insights -- */
+
+.tool-insights-charts {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 8px 0 12px;
+}
+
+.tool-chart-container {
+  background: #ffffff;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.tool-chart-title {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 12px;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary, #f9fafb);
+}
+
+.tool-chart-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: 4px;
+}
+
+/* Dark mode overrides for charts */
+[data-theme="dark"] .tool-chart-container {
+  background: #1f2937;
+  border-color: #374151;
+}
+
+[data-theme="dark"] .tool-chart-title {
+  background: #111827;
+  border-color: #374151;
+}
+
+[data-theme="dark"] .tool-insight-card.severity-critical {
+  background: #451a1a;
+  border-left-color: #ef4444;
+}
+
+[data-theme="dark"] .tool-insight-card.severity-warning {
+  background: #451a00;
+  border-left-color: #f59e0b;
+}
+
+[data-theme="dark"] .tool-insight-card.severity-info {
+  background: #1e3a5f;
+  border-left-color: #3b82f6;
 }
 
 /* -- Tool-specific: Report -- */

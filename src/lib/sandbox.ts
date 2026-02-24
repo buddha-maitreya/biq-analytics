@@ -42,8 +42,8 @@ import { sql } from "drizzle-orm";
 /** Maximum stdout size before truncation (bytes) */
 const DEFAULT_MAX_OUTPUT_BYTES = 512 * 1024; // 512KB
 
-/** Maximum data rows to pass to sandbox */
-const MAX_DATA_ROWS = 500;
+/** Maximum data rows to pass to sandbox (keep low to reduce token bloat in LLM tool results) */
+const MAX_DATA_ROWS = 200;
 
 /** Supported sandbox runtimes (shorthand aliases + versioned names) */
 export type SandboxRuntime =

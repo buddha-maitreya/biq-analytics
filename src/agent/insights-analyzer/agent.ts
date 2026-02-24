@@ -29,7 +29,7 @@ import { generateText, tool } from "ai";
 import { z } from "zod";
 import { config } from "@lib/config";
 import { getModel } from "@lib/ai";
-import { DB_SCHEMA } from "@lib/db-schema";
+import { DB_SCHEMA_ANALYTICS } from "@lib/db-schema";
 import { executeSandbox } from "@lib/sandbox";
 import type { SandboxRuntime } from "@lib/sandbox";
 import { createCache, CACHE_NS, CACHE_TTL, analysisKey } from "@lib/cache";
@@ -142,21 +142,43 @@ const agent = createAgent("insights-analyzer", {
 
     // ── Build the sandbox tool (closes over ctx.sandbox) ────
     const effectiveRuntime = (sandboxRuntime as SandboxRuntime) ?? "python:3.14";
-    const runtimeLabel = effectiveRuntime.startsWith("python") ? "Python 3 (numpy/pandas/scipy/sklearn/statsmodels)"
-      : effectiveRuntime.startsWith("node") ? "Node.js" : "Bun 1.x";
-    const depsNote = sandboxSnapshotId
-      ? `Packages pre-installed in snapshot${sandboxDeps?.length ? ` (${sandboxDeps.join(", ")})` : " (numpy, pandas, scipy, scikit-learn, statsmodels)"}.`
-      : effectiveRuntime.startsWith("python")
-        ? "You have the Python standard library. For advanced analytics, prefer a snapshot with numpy/pandas/scipy/sklearn/statsmodels pre-installed."
-        : "You have NO npm packages -- use built-in JS/Bun APIs only (Math, Date, Array methods, etc).";
+    const hasPython = effectiveRuntime.startsWith("python");
+    const hasSnapshot = !!sandboxSnapshotId;
+
+    /** Truncate tool results to prevent context bloat across multi-step calls.
+     *  Keeps the structure but limits serialized JSON to ~4000 chars. */
+    function truncateToolResult(obj: Record<string, unknown>): Record<string, unknown> {
+      const json = JSON.stringify(obj);
+      if (json.length <= 4000) return obj;
+      // Keep _confidence, error fields, and summary — truncate large data
+      const slim: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if (k === "_confidence" || k === "error" || k === "errorType" || k === "errorHint" ||
+            k === "stderr" || k === "explanation" || k === "dataRowCount") {
+          slim[k] = v;
+        } else if (typeof v === "string" && v.length > 500) {
+          slim[k] = v.slice(0, 500) + "… [truncated]";
+        } else if (Array.isArray(v) && v.length > 20) {
+          slim[k] = [...v.slice(0, 20), `… and ${v.length - 20} more items`];
+        } else if (typeof v === "object" && v !== null) {
+          const childJson = JSON.stringify(v);
+          if (childJson.length > 2000) {
+            slim[k] = JSON.parse(childJson.slice(0, 2000) + '"}');
+          } else {
+            slim[k] = v;
+          }
+        } else {
+          slim[k] = v;
+        }
+      }
+      return slim;
+    }
 
     const runAnalysisTool = tool({
-      description: `Execute a data analysis pipeline: run a SQL query to fetch data, then execute ${runtimeLabel} code in a sandboxed runtime to compute statistical results.
-The SQL results become the DATA variable (array of row objects) in the code.
-Your code MUST return a result object with the computed analysis.
-${depsNote}
-The sandbox has NO network access and a ${sandboxTimeoutMs / 1000}-second timeout.
-If execution fails, you'll receive an errorType and errorHint -- use them to fix your code and try again.`,
+      description: `Execute analysis: SQL query fetches data → Python code analyzes it in a sandbox.
+DATA = list of dicts (SQL rows). DF = pandas DataFrame. Pre-imported: numpy (np), pandas (pd), scipy.stats, sklearn, statsmodels.
+MUST return a dict with results. Include _confidence metrics. Sandbox has no network, ${sandboxTimeoutMs / 1000}s timeout.
+On errors: check errorType/errorHint and retry with fixed code.`,
       parameters: z.object({
         sqlQuery: z
           .string()
@@ -185,20 +207,20 @@ If execution fails, you'll receive an errorType and errorHint -- use them to fix
         });
 
         if (!result.success) {
-          return {
+          return truncateToolResult({
             error: result.error,
             errorType: result.errorType,
             errorHint: result.errorHint,
             stderr: result.stderr,
             explanation,
-          };
+          });
         }
 
-        return {
+        return truncateToolResult({
           result: result.result,
           dataRowCount: result.dataRowCount,
           explanation,
-        };
+        });
       },
     });
 
@@ -219,139 +241,88 @@ If execution fails, you'll receive an errorType and errorHint -- use them to fix
       : "";
 
     // ── Single-pass: LLM generates code + structured insights ──
-    const { text: rawResponse, steps } = await traced(
-      ctx.tracer,
-      collector,
-      "generateText",
-      "llm",
-      async () => generateText({
-      model: await getModel(agentConfig.modelOverride ?? undefined),
-      ...(temperature !== undefined ? { temperature } : {}),
-      system: `You are an expert data scientist and business analyst for ${config.companyName}.
-You have access to a tool that lets you:
-1. Write a SQL query to fetch data from the business database
-2. Write ${runtimeLabel} code to perform statistical analysis on that data
-3. The code runs in an isolated sandbox (${depsNote.replace(/\.$/, "")}, no network)
+    // Determine which model to use — prefer gpt-4o-mini for analytics
+    // (higher TPM limits: 200K vs 30K on Tier 1 orgs, sufficient for code gen)
+    const requestedModel = agentConfig.modelOverride ?? "gpt-4o-mini";
+    let lastError: Error | undefined;
 
-${DB_SCHEMA}
+    // Try with the requested model first, fall back to gpt-4o-mini on TPM errors
+    const modelsToTry = requestedModel === "gpt-4o-mini"
+      ? [requestedModel]
+      : [requestedModel, "gpt-4o-mini"];
 
-Terminology: Products are "${config.labels.product}" (plural: "${config.labels.productPlural}"), orders are "${config.labels.order}", customers are "${config.labels.customer}".
-Currency: ${config.currency}${businessContext}${customInstructions}
+    let rawResponse = "";
+    let steps: any[] = [];
 
-WORKFLOW:
-1. Use the run_analysis tool to fetch data and compute statistics. You may call it MULTIPLE times if needed (e.g., first fetch and analyze sales data, then fetch and analyze inventory data).
-2. After getting all computed results, provide your analysis as STRUCTURED JSON (see OUTPUT FORMAT below).
+    for (const modelName of modelsToTry) {
+      try {
+        const result = await traced(
+          ctx.tracer,
+          collector,
+          "generateText",
+          "llm",
+          async () => generateText({
+          model: await getModel(modelName),
+          ...(temperature !== undefined ? { temperature } : {}),
+          system: `You are a data scientist for ${config.companyName}. You analyze business data using Python in a sandbox.
 
-ERROR HANDLING:
-- If the tool returns an error, check the errorType and errorHint fields
-- For "syntax" errors: check indentation (4 spaces), colons, brackets
-- For "runtime" errors: check for None/NaN, empty DataFrames, zero division, wrong column names
-- For "import" errors: use only pre-installed packages (numpy, pandas, scipy, sklearn, statsmodels)
-- For "timeout" errors: simplify the algorithm, use vectorized pandas/numpy ops instead of loops
-- You may retry the tool with corrected code (up to ${maxSteps} total tool calls)
+${DB_SCHEMA_ANALYTICS}
 
-PYTHON SANDBOX ENVIRONMENT:
-- DATA: list of dicts (SQL result rows), e.g. [{"name": "Widget", "total_sold": 150}, ...]
-- DF: pandas DataFrame created from DATA (columns auto-detected, date columns auto-parsed)
-- Pre-imported: numpy (np), pandas (pd), scipy.stats, sklearn, statsmodels, datetime, math, json
-- Your code runs inside a function — use \`return {...}\` to return results
-- All numpy/pandas types (int64, float64, Timestamp, ndarray, Series) are auto-serialized to JSON
+Currency: ${config.currency}. Products="${config.labels.product}", Orders="${config.labels.order}", Customers="${config.labels.customer}".${businessContext}${customInstructions}
 
-PYTHON BEST PRACTICES:
-- Use pandas vectorized operations over loops: \`df['col'].mean()\` not manual iteration
-- Use \`DF.groupby()\` for aggregations, \`.rolling()\` for moving averages
-- Handle missing data: \`DF['col'].fillna(0)\`, \`DF.dropna(subset=[...])\`
-- Convert types safely: \`pd.to_numeric(DF['col'], errors='coerce')\`
-- For time series: \`DF.set_index('date').resample('W').sum()\`
-- Check for empty data: \`if DF is None or len(DF) == 0: return {"error": "No data"}\`
+TOOL USAGE:
+- Call run_analysis with a SQL query + Python code. You may call it multiple times.
+- DATA = list of dicts from SQL. DF = pandas DataFrame (dates auto-parsed).
+- Available: numpy (np), pandas (pd), scipy.stats, sklearn, statsmodels.
+- Use pandas vectorized ops (groupby, rolling, pct_change). Check for empty data first.
+- On errors: read errorType/errorHint, fix code, retry (max ${maxSteps} calls).
+- Only SELECT queries allowed. No INSERT/UPDATE/DELETE/DROP.
 
-AVAILABLE LIBRARIES & PATTERNS:
+CONFIDENCE: Your code MUST return _confidence in its result dict:
 \`\`\`python
-# Statistical analysis
-from scipy import stats
-slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
-z_scores = stats.zscore(values)
-stat, p_val = stats.shapiro(data)  # normality test
-
-# Machine learning
-from sklearn.linear_model import LinearRegression
-from sklearn.ensemble import RandomForestRegressor, IsolationForest
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
-
-# Time series forecasting
-from statsmodels.tsa.holtwinters import ExponentialSmoothing
-from statsmodels.tsa.seasonal import seasonal_decompose
-from statsmodels.tsa.stattools import adfuller  # stationarity test
-
-# Pandas analytics
-df.rolling(window=7).mean()           # 7-day moving average
-df.groupby('category').agg({'revenue': ['sum', 'mean', 'std']})
-df.pct_change()                        # period-over-period change
-df.describe()                          # summary statistics
-df.corr()                             # correlation matrix
-pd.qcut(df['revenue'], q=4, labels=['Q1','Q2','Q3','Q4'])  # quartile binning
+return { ..., "_confidence": { "sampleSize": len(DATA), "completeness": ratio, "timeSpanDays": days } }
 \`\`\`
 
-CONFIDENCE SCORING (computation-based):
-Your sandbox code MUST include confidence metrics in its return dict:
-\`\`\`python
-return {
-    # ... your analysis results ...
-    "_confidence": {
-        "sampleSize": len(DATA),                          # rows analyzed
-        "completeness": non_null_count / total_fields,     # data completeness (0-1)
-        "stdDev": float(np.std(values)),                   # standard deviation
-        "coefficientOfVariation": float(np.std(v) / np.mean(v)),  # CV
-        "pValue": float(p_value),                          # significance test
-        "r2Score": float(r2),                              # R² if regression used
-        "rmse": float(rmse),                               # RMSE if forecasting
-        "timeSpanDays": actual_days_with_data,             # actual data coverage
-        "requestedDays": ${"{timeframeDays}"},             # requested timeframe
-    }
-}
-\`\`\`
-Include whichever metrics apply to your analysis. These will be used to compute
-insight confidence scores automatically -- do NOT guess confidence values.
-
-OUTPUT FORMAT:
-After completing your analysis, respond with ONLY a JSON block (no other text):
+OUTPUT: After analysis, respond with ONLY this JSON:
 \`\`\`json
-{
-  "insights": [
-    {
-      "title": "Concise headline",
-      "severity": "info|warning|critical",
-      "description": "Plain-English explanation",
-      "recommendation": "Specific, actionable next step",
-      "affectedItems": ["Product A", "SKU-123"],
-      "dataPoints": { "metric1": 42, "metric2": 3.14 }
-    }
-  ],
-  "summary": "Executive summary paragraph"
-}
+{ "insights": [{ "title": "...", "severity": "info|warning|critical", "description": "...", "recommendation": "...", "affectedItems": [...], "dataPoints": {...} }], "summary": "..." }
 \`\`\`
-
-Do NOT include a "confidence" field in insights -- it will be computed from the sandbox _confidence metrics.
-Severity guide: info = noteworthy, warning = needs attention soon, critical = urgent action required.
-
-GUARDRAILS:
-- Never fabricate data points or statistics. Every number must come from your sandbox computation.
-- Only use read-only SELECT queries. Never generate INSERT, UPDATE, DELETE, DROP, or ALTER SQL.
-- Do not expose raw database credentials, connection strings, or infrastructure details.
-- Mask personally identifiable information (PII) in outputs (e.g., j***@example.com).
-- Stay within scientific and statistical analysis -- decline requests unrelated to business data.`,
-      prompt: `${await getAnalysisPromptForType(input.analysis, input.timeframeDays)}
+No confidence field in insights (computed from _confidence). Never fabricate data.`,
+          prompt: `${await getAnalysisPromptForType(input.analysis, input.timeframeDays)}
 
 ${input.productId ? `Focus on product ID: ${input.productId}` : "Analyze all active products."}
 
-After running your analysis with the tool, output your structured JSON insights as specified in the OUTPUT FORMAT.`,
-      tools: { run_analysis: runAnalysisTool },
-      maxSteps,
-    }),
-      { model: agentConfig.modelOverride ?? "default", analysis: input.analysis }
-    );
+Output structured JSON insights after running your analysis.`,
+          tools: { run_analysis: runAnalysisTool },
+          maxSteps,
+        }),
+          { model: modelName, analysis: input.analysis }
+        );
+
+        rawResponse = result.text;
+        steps = result.steps;
+        lastError = undefined;
+        break; // Success — exit the model loop
+      } catch (err: any) {
+        lastError = err;
+        const msg = err.message || "";
+        // If it's a TPM/rate limit error, try the next model
+        if (msg.includes("tokens per min") || msg.includes("TPM") || msg.includes("rate limit") || msg.includes("Request too large")) {
+          ctx.logger.warn("TPM limit hit, falling back to next model", {
+            model: modelName,
+            nextModel: modelsToTry[modelsToTry.indexOf(modelName) + 1] ?? "none",
+            error: msg.slice(0, 200),
+          });
+          continue;
+        }
+        // Non-TPM error — don't retry with a different model
+        throw err;
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
 
     // Phase 7.5: Token budget tracking
     const tokenTracker = createTokenTracker();

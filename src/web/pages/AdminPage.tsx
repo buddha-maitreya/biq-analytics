@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import type { AppConfig } from "../types";
+import {
+  StatCard, StatRow, SectionCard, SearchToolbar, EmptyState,
+  AlertBanner, FormPanel, FieldGroup, FormFieldV2, Badge, TipBlock, LoadingState,
+} from "../components/AdminUI";
 
 interface AdminPageProps {
   config: AppConfig;
@@ -450,7 +454,7 @@ function UsersAccessTab() {
     setForm((f) => ({ ...f, assignedWarehouses: all ? null : [] }));
   };
 
-  if (loading) return <div className="loading-state"><div className="spinner" />Loading users…</div>;
+  if (loading) return <LoadingState message="Loading users..." />;
 
   /* ── Permission Editor Modal ── */
   if (permUser) {
@@ -524,55 +528,59 @@ function UsersAccessTab() {
 
   return (
     <div>
-      {/* Role summary strip */}
-      <div className="summary-strip">
-        <button className={`summary-chip ${!roleFilter ? "active" : ""}`} onClick={() => setRoleFilter(null)}>
-          <span className="chip-count">{users.length}</span>
-          <span className="chip-label">All Users</span>
-        </button>
+      {/* Role filter chips */}
+      <StatRow>
+        <StatCard icon="👥" value={users.length} label="All Users" accent={!roleFilter ? "#3b82f6" : "#64748b"} onClick={() => setRoleFilter(null)} />
         {(rbac?.roles ?? []).map((role) => (
-          <button key={role} className={`summary-chip ${roleFilter === role ? "active" : ""}`} onClick={() => setRoleFilter(roleFilter === role ? null : role)}>
-            <span className="chip-dot" style={{ background: ROLE_COLORS[role] }} />
-            <span className="chip-count">{roleCounts[role] || 0}</span>
-            <span className="chip-label">{ROLE_LABELS[role] ?? role}</span>
-          </button>
+          <StatCard
+            key={role}
+            icon={role === "super_admin" ? "🛡️" : role === "admin" ? "⚙️" : role === "manager" ? "📋" : role === "staff" ? "🧑‍💼" : "👁️"}
+            value={roleCounts[role] || 0}
+            label={ROLE_LABELS[role] ?? role}
+            accent={roleFilter === role ? ROLE_COLORS[role] : "#64748b"}
+            onClick={() => setRoleFilter(roleFilter === role ? null : role)}
+          />
         ))}
-      </div>
+      </StatRow>
 
-      {/* Toolbar */}
-      <div className="toolbar">
-        <div className="search-box">
-          <span className="search-icon">🔍</span>
-          <input placeholder="Search users…" value={search} onChange={(e) => setSearch(e.target.value)} />
-          {search && <button className="search-clear" onClick={() => setSearch("")}>✕</button>}
-        </div>
-        <span className="toolbar-count">{filtered.length} user{filtered.length !== 1 ? "s" : ""}</span>
+      {/* Search + Invite */}
+      <SearchToolbar
+        value={search}
+        onChange={setSearch}
+        placeholder="Search users by name or email…"
+        count={filtered.length}
+        countLabel="user"
+      >
         <button className="btn btn-primary btn-sm" onClick={() => { resetForm(); setShowForm(true); }}>+ Invite User</button>
-      </div>
+      </SearchToolbar>
 
-      {/* Create/Edit Form */}
+      {/* Create / Edit Form */}
       {showForm && (
-        <div className="card user-form-card" style={{ marginBottom: 16 }}>
-          <h4 style={{ marginBottom: 12 }}>{editUser ? `Edit — ${editUser.name}` : "Invite New User"}</h4>
-          <div className="form-grid cols-4">
-            <label>
-              <span className="form-label">Email</span>
+        <FormPanel
+          title={editUser ? `Edit — ${editUser.name}` : "Invite New User"}
+          icon={editUser ? "✏️" : "📧"}
+          onClose={resetForm}
+          onSave={save}
+          saveLabel={editUser ? "Update" : "Create"}
+          footer={!editUser ? <TipBlock>Default permissions for the selected role will be applied. Customize individual permissions after creation.</TipBlock> : undefined}
+        >
+          <FieldGroup label="Account Details" cols={3}>
+            <FormFieldV2 label="Email" required>
               <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="user@company.com" />
-            </label>
-            <label>
-              <span className="form-label">Full Name</span>
+            </FormFieldV2>
+            <FormFieldV2 label="Full Name" required>
               <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Jane Doe" />
-            </label>
-            <label>
-              <span className="form-label">Role</span>
+            </FormFieldV2>
+            <FormFieldV2 label="Role" required>
               <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
                 {(rbac?.roles ?? []).map((r) => (
                   <option key={r} value={r}>{ROLE_LABELS[r] ?? r}</option>
                 ))}
               </select>
-            </label>
-            <label>
-              <span className="form-label">Home Location</span>
+            </FormFieldV2>
+          </FieldGroup>
+          <FieldGroup label="Assignment" hint="Where and to whom this person reports" cols={2}>
+            <FormFieldV2 label="Home Location" hint="Where this person physically works">
               <select
                 value={form.primaryWarehouseId ?? ""}
                 onChange={(e) => setForm({ ...form, primaryWarehouseId: e.target.value || null })}
@@ -582,12 +590,8 @@ function UsersAccessTab() {
                   <option key={wh.id} value={wh.id}>{wh.name} ({wh.code})</option>
                 ))}
               </select>
-              <span className="form-hint">Where this person physically works</span>
-            </label>
-          </div>
-          <div className="form-grid cols-4" style={{ marginTop: 8 }}>
-            <label>
-              <span className="form-label">Reports To</span>
+            </FormFieldV2>
+            <FormFieldV2 label="Reports To" hint="Direct supervisor in the approval chain">
               <select
                 value={form.reportsTo ?? ""}
                 onChange={(e) => setForm({ ...form, reportsTo: e.target.value || null })}
@@ -601,128 +605,130 @@ function UsersAccessTab() {
                     </option>
                   ))}
               </select>
-              <span className="form-hint">Direct supervisor in the approval chain</span>
-            </label>
-            <div className="form-actions" style={{ alignSelf: "end" }}>
-              <button className="btn btn-primary" onClick={save}>{editUser ? "Update" : "Create"}</button>
-              <button className="btn btn-secondary" onClick={resetForm}>Cancel</button>
-            </div>
-          </div>
-          {!editUser && (
-            <p className="form-hint" style={{ marginTop: 8 }}>Default permissions for the selected role will be applied. Customize after creation.</p>
-          )}
-        </div>
+            </FormFieldV2>
+          </FieldGroup>
+        </FormPanel>
       )}
 
       {/* Users Table */}
-      <div className="card table-card">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>User</th>
-              <th>Role</th>
-              <th>Home Location</th>
-              <th>Reports To</th>
-              <th>Permissions</th>
-              <th>Access</th>
-              <th>Status</th>
-              <th style={{ textAlign: "right" }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((u) => (
-              <tr key={u.id} className={u.isActive ? "" : "row-inactive"}>
-                <td>
-                  <div className="cell-main">{u.name}</div>
-                  <div className="cell-sub">{u.email}</div>
-                </td>
-                <td>
-                  <span className="role-pill" style={{ background: ROLE_COLORS[u.role] }}>{ROLE_LABELS[u.role] ?? u.role}</span>
-                </td>
-                <td>
-                  {u.primaryWarehouseName ? (
-                    <span className="wh-badge">{u.primaryWarehouseName}</span>
-                  ) : (
-                    <span className="text-muted">—</span>
-                  )}
-                </td>
-                <td>
-                  {u.reportsTo ? (() => {
-                    const supervisor = users.find((s) => s.id === u.reportsTo);
-                    return supervisor ? (
-                      <div>
-                        <div className="cell-main">{supervisor.name}</div>
-                        <div className="cell-sub">{ROLE_LABELS[supervisor.role] ?? supervisor.role}</div>
-                      </div>
-                    ) : <span className="text-muted">—</span>;
-                  })() : <span className="text-muted">— Top level —</span>}
-                </td>
-                <td>
-                  <div className="perm-tags">
-                    {(u.permissions ?? []).slice(0, 4).map((p) => (
-                      <span key={p} className="perm-tag">{PERM_LABELS[p]?.icon ?? "•"} {PERM_LABELS[p]?.label ?? p}</span>
-                    ))}
-                    {(u.permissions ?? []).length > 4 && (
-                      <span className="perm-tag perm-tag-more">+{(u.permissions ?? []).length - 4}</span>
+      {filtered.length === 0 ? (
+        <EmptyState
+          icon="👥"
+          title={search || roleFilter ? "No users match your filters" : "No users yet"}
+          description={search || roleFilter ? "Try adjusting your search or role filter." : "Invite your first team member to get started."}
+          action={!search && !roleFilter ? <button className="btn btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>+ Invite User</button> : undefined}
+        />
+      ) : (
+        <SectionCard title="Team Members" icon="👥" subtitle={`${filtered.length} user${filtered.length !== 1 ? "s" : ""}`} noPadding>
+          <table className="admin-data-table">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Role</th>
+                <th>Home Location</th>
+                <th>Reports To</th>
+                <th>Permissions</th>
+                <th>Access</th>
+                <th>Status</th>
+                <th style={{ textAlign: "right" }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((u) => (
+                <tr key={u.id} className={u.isActive ? "" : "row-inactive"}>
+                  <td>
+                    <div className="cell-main">{u.name}</div>
+                    <div className="cell-sub">{u.email}</div>
+                  </td>
+                  <td>
+                    <Badge variant={u.role === "super_admin" ? "danger" : u.role === "admin" ? "warning" : u.role === "manager" ? "info" : "default"}>
+                      {ROLE_LABELS[u.role] ?? u.role}
+                    </Badge>
+                  </td>
+                  <td>
+                    {u.primaryWarehouseName ? (
+                      <Badge variant="primary">{u.primaryWarehouseName}</Badge>
+                    ) : (
+                      <span className="text-muted">—</span>
                     )}
-                  </div>
-                </td>
-                <td>
-                  {u.allAccess ? (
-                    <span className="wh-badge wh-badge-all">🌐 All</span>
-                  ) : (
-                    <div className="wh-tags">
-                      {(u.warehouseDetails ?? []).slice(0, 2).map((w) => (
-                        <span key={w.id} className="wh-badge">{w.name}</span>
+                  </td>
+                  <td>
+                    {u.reportsTo ? (() => {
+                      const supervisor = users.find((s) => s.id === u.reportsTo);
+                      return supervisor ? (
+                        <div>
+                          <div className="cell-main">{supervisor.name}</div>
+                          <div className="cell-sub">{ROLE_LABELS[supervisor.role] ?? supervisor.role}</div>
+                        </div>
+                      ) : <span className="text-muted">—</span>;
+                    })() : <span className="text-muted">— Top level —</span>}
+                  </td>
+                  <td>
+                    <div className="perm-tags">
+                      {(u.permissions ?? []).slice(0, 4).map((p) => (
+                        <span key={p} className="perm-tag">{PERM_LABELS[p]?.icon ?? "•"} {PERM_LABELS[p]?.label ?? p}</span>
                       ))}
-                      {(u.warehouseDetails ?? []).length > 2 && (
-                        <span className="wh-badge">+{(u.warehouseDetails ?? []).length - 2}</span>
+                      {(u.permissions ?? []).length > 4 && (
+                        <span className="perm-tag perm-tag-more">+{(u.permissions ?? []).length - 4}</span>
                       )}
                     </div>
-                  )}
-                </td>
-                <td>
-                  <span className={`status-badge ${u.isActive ? "status-active" : "status-inactive"}`}>
-                    {u.isActive ? "Active" : "Inactive"}
-                  </span>
-                </td>
-                <td>
-                  <div className="action-cell">
-                    <button className="btn btn-xs btn-secondary" onClick={() => openPermissions(u)}>🔑 Permissions</button>
-                    <button className="btn btn-xs btn-secondary" onClick={() => openEdit(u)}>Edit</button>
-                    <button className={`btn btn-xs ${u.isActive ? "btn-warning" : "btn-primary"}`} onClick={() => toggleActive(u)}>
-                      {u.isActive ? "Deactivate" : "Activate"}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {filtered.length === 0 && (
-              <tr><td colSpan={8} className="text-center text-muted">No users match</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+                  </td>
+                  <td>
+                    {u.allAccess ? (
+                      <Badge variant="success" dot>All Locations</Badge>
+                    ) : (
+                      <div className="wh-tags">
+                        {(u.warehouseDetails ?? []).slice(0, 2).map((w) => (
+                          <Badge key={w.id} variant="default">{w.name}</Badge>
+                        ))}
+                        {(u.warehouseDetails ?? []).length > 2 && (
+                          <Badge variant="default">+{(u.warehouseDetails ?? []).length - 2}</Badge>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    <Badge variant={u.isActive ? "success" : "danger"} dot>{u.isActive ? "Active" : "Inactive"}</Badge>
+                  </td>
+                  <td>
+                    <div className="action-cell">
+                      <button className="btn btn-xs btn-secondary" onClick={() => openPermissions(u)}>🔑 Permissions</button>
+                      <button className="btn btn-xs btn-secondary" onClick={() => openEdit(u)}>✏️ Edit</button>
+                      <button className={`btn btn-xs ${u.isActive ? "btn-warning" : "btn-primary"}`} onClick={() => toggleActive(u)}>
+                        {u.isActive ? "Deactivate" : "Activate"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </SectionCard>
+      )}
 
-      {/* RBAC Legend */}
-      <div className="rbac-legend">
-        <h4>Role Hierarchy</h4>
-        <div className="rbac-hierarchy">
+      {/* RBAC Hierarchy Legend */}
+      <SectionCard title="Role Hierarchy" icon="🏛️" subtitle="How roles inherit permissions" accent="#6366f1">
+        <div className="admin-role-hierarchy">
           {(rbac?.roles ?? []).slice().reverse().map((role, i, arr) => (
-            <div key={role} className="rbac-rank">
-              <span className="rbac-rank-badge" style={{ background: ROLE_COLORS[role] }}>{ROLE_LABELS[role]}</span>
-              <span className="rbac-rank-desc">
-                {role === "super_admin" && "Full control. Manages admins & all warehouse access."}
-                {role === "admin" && "Manages staff permissions & warehouse assignments."}
-                {role === "manager" && "Operational access with assigned permissions."}
-                {role === "staff" && "POS & limited access. Permissions set by admin."}
-                {role === "viewer" && "Read-only dashboard access."}
-              </span>
-              {i < arr.length - 1 && <span className="rbac-rank-arrow">↑ manages ↓</span>}
+            <div key={role} className="admin-role-rank">
+              <div className="admin-role-rank-num" style={{ background: ROLE_COLORS[role] }}>{arr.length - i}</div>
+              <div className="admin-role-rank-body">
+                <Badge variant={role === "super_admin" ? "danger" : role === "admin" ? "warning" : role === "manager" ? "info" : "default"}>
+                  {ROLE_LABELS[role]}
+                </Badge>
+                <span className="admin-role-rank-desc">
+                  {role === "super_admin" && "Full control. Manages admins & all warehouse access."}
+                  {role === "admin" && "Manages staff permissions & warehouse assignments."}
+                  {role === "manager" && "Operational access with assigned permissions."}
+                  {role === "staff" && "POS & limited access. Permissions set by admin."}
+                  {role === "viewer" && "Read-only dashboard access."}
+                </span>
+              </div>
+              {i < arr.length - 1 && <div className="admin-role-rank-connector" />}
             </div>
           ))}
         </div>
-      </div>
+      </SectionCard>
     </div>
   );
 }
@@ -1224,68 +1230,69 @@ function KnowledgeBaseTab() {
     }
   };
 
-  if (loading) return <div className="loading-state"><div className="spinner" />Loading knowledge base…</div>;
+  if (loading) return <LoadingState message="Loading knowledge base..." />;
 
   return (
     <div>
       {message && (
-        <div className={`alert alert-${message.type}`} style={{ marginBottom: 16 }}>
-          {message.type === "success" ? "✅" : "❌"} {message.text}
-        </div>
+        <AlertBanner type={message.type} onDismiss={() => setMessage(null)}>
+          {message.text}
+        </AlertBanner>
       )}
 
       {/* ── Quick Actions ── */}
-      <div className="kb-quick-actions">
+      <div className="admin-kb-actions">
         <button
-          className={`kb-action-card ${activeAction === "upload" ? "kb-action-active" : ""}`}
+          className={`admin-kb-action ${activeAction === "upload" ? "active" : ""}`}
           onClick={() => setActiveAction(activeAction === "upload" ? null : "upload")}
         >
-          <span className="kb-action-icon">📤</span>
-          <span className="kb-action-title">Upload Document</span>
-          <span className="kb-action-desc">PDF, TXT, MD, CSV files</span>
+          <span className="admin-kb-action-icon">📤</span>
+          <span className="admin-kb-action-title">Upload Document</span>
+          <span className="admin-kb-action-desc">PDF, TXT, MD, CSV files</span>
         </button>
         <button
-          className={`kb-action-card ${activeAction === "url" ? "kb-action-active" : ""}`}
+          className={`admin-kb-action ${activeAction === "url" ? "active" : ""}`}
           onClick={() => setActiveAction(activeAction === "url" ? null : "url")}
         >
-          <span className="kb-action-icon">🔗</span>
-          <span className="kb-action-title">Add URL</span>
-          <span className="kb-action-desc">Index a webpage</span>
+          <span className="admin-kb-action-icon">🔗</span>
+          <span className="admin-kb-action-title">Add URL</span>
+          <span className="admin-kb-action-desc">Index a webpage</span>
         </button>
         <button
-          className={`kb-action-card ${activeAction === "text" ? "kb-action-active" : ""}`}
+          className={`admin-kb-action ${activeAction === "text" ? "active" : ""}`}
           onClick={() => setActiveAction(activeAction === "text" ? null : "text")}
         >
-          <span className="kb-action-icon">📝</span>
-          <span className="kb-action-title">Add Text Content</span>
-          <span className="kb-action-desc">Paste raw text</span>
+          <span className="admin-kb-action-icon">📝</span>
+          <span className="admin-kb-action-title">Add Text Content</span>
+          <span className="admin-kb-action-desc">Paste raw text</span>
         </button>
-        <button className="kb-action-card" onClick={handleReindex}>
-          <span className="kb-action-icon">🔄</span>
-          <span className="kb-action-title">Re-index All</span>
-          <span className="kb-action-desc">Rebuild search index</span>
+        <button className="admin-kb-action" onClick={handleReindex}>
+          <span className="admin-kb-action-icon">🔄</span>
+          <span className="admin-kb-action-title">Re-index All</span>
+          <span className="admin-kb-action-desc">Rebuild search index</span>
         </button>
       </div>
 
       {/* ── Action Form ── */}
       {activeAction && (
-        <div className="card kb-form-card">
-          <h4 style={{ marginBottom: 12 }}>
-            {activeAction === "upload" && "📤 Upload Document"}
-            {activeAction === "url" && "🔗 Add URL Source"}
-            {activeAction === "text" && "📝 Add Text Content"}
-          </h4>
-          <div className="form-grid cols-2">
-            <label>
-              <span className="form-label">Title</span>
+        <FormPanel
+          title={activeAction === "upload" ? "Upload Document" : activeAction === "url" ? "Add URL Source" : "Add Text Content"}
+          icon={activeAction === "upload" ? "📤" : activeAction === "url" ? "🔗" : "📝"}
+          onClose={resetForm}
+          onSave={activeAction === "url" ? addUrl : upload}
+          saving={uploading}
+          saveLabel={activeAction === "url" ? "Add & Index" : "Upload & Index"}
+        >
+          <FieldGroup cols={2}>
+            <FormFieldV2 label="Title" required>
               <input
+                type="text"
                 value={uploadForm.title}
                 onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
                 placeholder="Document title"
               />
-            </label>
-            <label>
-              <span className="form-label">Category</span>
+            </FormFieldV2>
+            <FormFieldV2 label="Category">
               <select
                 value={uploadForm.category}
                 onChange={(e) => setUploadForm({ ...uploadForm, category: e.target.value })}
@@ -1298,68 +1305,65 @@ function KnowledgeBaseTab() {
                 <option value="legal">Legal / Compliance</option>
                 <option value="faq">FAQ</option>
               </select>
-            </label>
-          </div>
+            </FormFieldV2>
+          </FieldGroup>
 
           {activeAction === "upload" && (
-            <>
-              <label style={{ marginTop: 12 }}>
-                <span className="form-label">Select File</span>
+            <FieldGroup cols={1}>
+              <FormFieldV2 label="Select File" hint="Supported: .txt, .md, .csv, .json, .xml, .html, .pdf, .doc, .docx">
                 <input type="file" accept=".txt,.md,.csv,.json,.xml,.html,.pdf,.doc,.docx" onChange={handleFileSelect} />
-              </label>
+              </FormFieldV2>
               {uploadForm.content && (
-                <p className="form-hint" style={{ marginTop: 4 }}>✅ {uploadForm.filename} loaded — {uploadForm.content.length.toLocaleString()} characters</p>
+                <AlertBanner type="success">{uploadForm.filename} loaded — {uploadForm.content.length.toLocaleString()} characters</AlertBanner>
               )}
-            </>
+            </FieldGroup>
           )}
 
           {activeAction === "url" && (
-            <label style={{ marginTop: 12 }}>
-              <span className="form-label">URL</span>
-              <input
-                type="url"
-                value={uploadForm.url}
-                onChange={(e) => setUploadForm({ ...uploadForm, url: e.target.value })}
-                placeholder="https://example.com/page"
-              />
-            </label>
+            <FieldGroup cols={1}>
+              <FormFieldV2 label="URL" required>
+                <input
+                  type="url"
+                  value={uploadForm.url}
+                  onChange={(e) => setUploadForm({ ...uploadForm, url: e.target.value })}
+                  placeholder="https://example.com/page"
+                />
+              </FormFieldV2>
+            </FieldGroup>
           )}
 
           {activeAction === "text" && (
-            <label style={{ marginTop: 12 }}>
-              <span className="form-label">Content</span>
-              <textarea
-                rows={5}
-                value={uploadForm.content}
-                onChange={(e) => setUploadForm({ ...uploadForm, content: e.target.value })}
-                placeholder="Paste document text here…"
-              />
-            </label>
+            <FieldGroup cols={1}>
+              <FormFieldV2 label="Content" required>
+                <textarea
+                  rows={5}
+                  value={uploadForm.content}
+                  onChange={(e) => setUploadForm({ ...uploadForm, content: e.target.value })}
+                  placeholder="Paste document text here..."
+                />
+              </FormFieldV2>
+            </FieldGroup>
           )}
-
-          <div className="form-actions" style={{ marginTop: 12 }}>
-            <button
-              className="btn btn-primary"
-              onClick={activeAction === "url" ? addUrl : upload}
-              disabled={uploading || (!uploadForm.title.trim()) || (activeAction === "url" ? !uploadForm.url.trim() : !uploadForm.content.trim())}
-            >
-              {uploading ? "Processing…" : activeAction === "url" ? "Add & Index" : "Upload & Index"}
-            </button>
-            <button className="btn btn-secondary" onClick={resetForm}>Cancel</button>
-          </div>
-        </div>
+        </FormPanel>
       )}
 
       {/* ── Indexed Documents ── */}
-      <div className="card" style={{ marginTop: 16 }}>
-        <div className="section-header" style={{ marginBottom: 12 }}>
-          <h4>📚 Indexed Documents</h4>
-          <span className="badge">{docs.length} document{docs.length !== 1 ? "s" : ""}</span>
-        </div>
+      <SectionCard
+        title="Indexed Documents"
+        icon="📚"
+        subtitle={`${docs.length} document${docs.length !== 1 ? "s" : ""} in your knowledge base`}
+        noPadding
+      >
         {docs.length === 0 ? (
-          <p className="text-muted">No documents yet. Use Quick Actions above to add content to your knowledge base.</p>
+          <div style={{ padding: 24 }}>
+            <EmptyState
+              icon="📚"
+              title="No Documents Yet"
+              description="Use the Quick Actions above to add content to your knowledge base."
+            />
+          </div>
         ) : (
-          <table className="data-table">
+          <table className="admin-data-table">
             <thead>
               <tr>
                 <th>Title</th>
@@ -1376,9 +1380,9 @@ function KnowledgeBaseTab() {
                     <div className="cell-main">{d.title}</div>
                     <div className="cell-sub">{d.filename}</div>
                   </td>
-                  <td><span className="category-badge">{d.category}</span></td>
-                  <td>{d.chunkCount}</td>
-                  <td>{new Date(d.uploadedAt).toLocaleDateString()}</td>
+                  <td><Badge variant="default">{d.category}</Badge></td>
+                  <td><Badge variant="info">{d.chunkCount}</Badge></td>
+                  <td style={{ color: "var(--color-text-muted)", fontSize: "0.82rem" }}>{new Date(d.uploadedAt).toLocaleDateString()}</td>
                   <td style={{ textAlign: "right" }}>
                     <button className="btn btn-xs btn-danger" onClick={() => remove(d.filename)}>Remove</button>
                   </td>
@@ -1387,30 +1391,37 @@ function KnowledgeBaseTab() {
             </tbody>
           </table>
         )}
-      </div>
+      </SectionCard>
 
       {/* ── Query Test ── */}
-      <div className="card" style={{ marginTop: 16 }}>
-        <h4>🔍 Test Knowledge Base</h4>
-        <p className="text-muted" style={{ fontSize: "0.8rem", marginBottom: 12 }}>Ask a question to test your indexed documents</p>
-        <div className="query-input">
+      <SectionCard title="Test Knowledge Base" icon="🔍" subtitle="Ask a question to test your indexed documents">
+        <div style={{ display: "flex", gap: 8 }}>
           <input
             type="text"
             value={queryText}
             onChange={(e) => setQueryText(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && query()}
-            placeholder="Ask a question about your documents…"
+            placeholder="Ask a question about your documents..."
+            style={{
+              flex: 1, padding: "10px 14px", border: "1.5px solid var(--color-border)",
+              borderRadius: 10, fontSize: 14, background: "var(--color-input-bg)", color: "var(--color-text)"
+            }}
           />
           <button className="btn btn-primary" onClick={query} disabled={querying || !queryText.trim()}>
-            {querying ? "Searching…" : "Query"}
+            {querying ? "Searching..." : "Query"}
           </button>
         </div>
         {queryResult && (
-          <div className="query-result">
-            <p>{queryResult}</p>
+          <div style={{
+            marginTop: 12, padding: "14px 18px", borderRadius: 10,
+            background: "color-mix(in srgb, var(--color-primary) 4%, var(--color-surface))",
+            border: "1px solid color-mix(in srgb, var(--color-primary) 15%, var(--color-border))",
+            fontSize: "0.85rem", lineHeight: 1.6, whiteSpace: "pre-wrap"
+          }}>
+            {queryResult}
           </div>
         )}
-      </div>
+      </SectionCard>
     </div>
   );
 }
@@ -1747,16 +1758,16 @@ function SettingsTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
     setSaving(false);
   };
 
-  if (loading) return <div className="loading-state"><div className="spinner" />Loading settings…</div>;
+  if (loading) return <LoadingState message="Loading settings..." />;
 
   const upd = (key: string, val: string) => setSettings((p) => ({ ...p, [key]: val }));
 
   return (
     <div>
       {message && (
-        <div className={`alert alert-${message.type}`} style={{ marginBottom: 16 }}>
-          {message.type === "success" ? "✅" : "❌"} {message.text}
-        </div>
+        <AlertBanner type={message.type} onDismiss={() => setMessage(null)}>
+          {message.text}
+        </AlertBanner>
       )}
 
       {/* Sub-tabs */}
@@ -1777,37 +1788,31 @@ function SettingsTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
 
       {/* ── Business Identity ── */}
       {section === "business" && (
-        <div className="settings-grid">
-          <div className="card settings-card">
-            <h4>🏢 Business Identity</h4>
-            <p className="text-muted" style={{ marginBottom: 16, fontSize: "0.8rem" }}>Appears in the sidebar and throughout the app.</p>
-            <div className="form-grid" style={{ gap: 12 }}>
-              <label>
-                <span className="form-label">Business Name</span>
+        <div>
+          <SectionCard title="Business Identity" icon="🏢" subtitle="Appears in the sidebar and throughout the app" accent="#3b82f6">
+            <FieldGroup label="Branding" cols={2}>
+              <FormFieldV2 label="Business Name">
                 <input type="text" placeholder="e.g. Safari Adventures Kenya" value={settings.businessName} onChange={(e) => upd("businessName", e.target.value)} />
-              </label>
-              <label>
-                <span className="form-label">Tagline</span>
+              </FormFieldV2>
+              <FormFieldV2 label="Tagline">
                 <input type="text" placeholder="e.g. Your Gateway to African Wildlife" value={settings.businessTagline} onChange={(e) => upd("businessTagline", e.target.value)} />
-              </label>
-              <label>
-                <span className="form-label">Logo URL</span>
+              </FormFieldV2>
+            </FieldGroup>
+            <FieldGroup label="Appearance" cols={2}>
+              <FormFieldV2 label="Logo URL">
                 <input type="text" placeholder="https://example.com/logo.png" value={settings.businessLogoUrl} onChange={(e) => upd("businessLogoUrl", e.target.value)} />
-              </label>
-              <label>
-                <span className="form-label">Primary Color</span>
+              </FormFieldV2>
+              <FormFieldV2 label="Primary Color">
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <input type="color" value={settings.primaryColor} onChange={(e) => upd("primaryColor", e.target.value)} style={{ width: 48, height: 36, padding: 2, cursor: "pointer" }} />
                   <input type="text" value={settings.primaryColor} onChange={(e) => upd("primaryColor", e.target.value)} style={{ width: 120 }} />
                 </div>
-              </label>
-            </div>
+              </FormFieldV2>
+            </FieldGroup>
 
             {/* Approvals Badge Polling */}
-            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
-              <span className="form-label">Approvals Badge Polling</span>
-              <p className="text-muted" style={{ fontSize: "0.75rem", margin: "4px 0 10px" }}>Controls whether the sidebar checks for pending approvals in the background.</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <FieldGroup label="Approvals Badge Polling" hint="Controls whether the sidebar checks for pending approvals in the background">
+              <div style={{ gridColumn: "1 / -1", display: "flex", flexDirection: "column", gap: 8 }}>
                 <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
                   <input type="radio" name="approvalsPolling" value="disabled" checked={settings.approvalsPolling === "disabled"} onChange={() => upd("approvalsPolling", "disabled")} style={{ marginTop: 3 }} />
                   <div>
@@ -1823,7 +1828,7 @@ function SettingsTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
                   </div>
                 </label>
               </div>
-            </div>
+            </FieldGroup>
 
             {/* Preview */}
             <div className="settings-preview" style={{ marginTop: 16 }}>
@@ -1839,9 +1844,7 @@ function SettingsTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
                 <span className="preview-powered">Powered by Business IQ</span>
               </div>
             </div>
-          </div>
-
-
+          </SectionCard>
         </div>
       )}
 
@@ -2005,42 +2008,27 @@ function SettingsTab({ config, onSaved }: { config: AppConfig; onSaved?: () => v
 
       {/* ── Rate Limits ── */}
       {section === "ratelimits" && (
-        <div className="settings-grid">
-          <div className="card settings-card">
-            <h4>🚦 Rate Limits</h4>
-            <p className="text-muted" style={{ marginBottom: 16, fontSize: "0.8rem" }}>
-              Control how many requests each user can make per minute (or per day for tools).
-              This protects your system from abuse and runaway costs. Changes take effect within 1 minute.
-            </p>
-            <div className="form-grid" style={{ gap: 16 }}>
-              <label>
-                <span className="form-label">💬 Chat Messages (per user / minute)</span>
-                <input type="number" min="1" max="1000" value={settings.rateLimitChat} onChange={(e) => upd("rateLimitChat", e.target.value)} />
-                <span className="form-hint">Max messages a user can send per minute in the AI chat. Default: 30</span>
-              </label>
-              <label>
-                <span className="form-label">📋 Report Generation (per user / minute)</span>
-                <input type="number" min="1" max="100" value={settings.rateLimitReport} onChange={(e) => upd("rateLimitReport", e.target.value)} />
-                <span className="form-hint">Max AI reports a user can generate per minute. Default: 10</span>
-              </label>
-              <label>
-                <span className="form-label">📸 Document Scanning (per user / minute)</span>
-                <input type="number" min="1" max="500" value={settings.rateLimitScan} onChange={(e) => upd("rateLimitScan", e.target.value)} />
-                <span className="form-hint">Max barcode/invoice/stock-sheet scans per minute. Default: 20</span>
-              </label>
-              <label>
-                <span className="form-label">🔗 Webhook Events (per source / minute)</span>
-                <input type="number" min="1" max="10000" value={settings.rateLimitWebhook} onChange={(e) => upd("rateLimitWebhook", e.target.value)} />
-                <span className="form-hint">Max incoming webhook events per source per minute. Default: 100</span>
-              </label>
-              <label>
-                <span className="form-label">🔧 Custom Tool Runs (per user / day)</span>
-                <input type="number" min="1" max="10000" value={settings.rateLimitToolDaily} onChange={(e) => upd("rateLimitToolDaily", e.target.value)} />
-                <span className="form-hint">Max custom tool invocations per user per 24 hours. Default: 100</span>
-              </label>
-            </div>
-          </div>
-        </div>
+        <SectionCard title="Rate Limits" icon="🚦" subtitle="Control how many requests each user can make. Changes take effect within 1 minute." accent="#f59e0b">
+          <FieldGroup label="Per-User Limits (per minute)" cols={3}>
+            <FormFieldV2 label="💬 Chat Messages" hint="Max messages a user can send per minute. Default: 30">
+              <input type="number" min="1" max="1000" value={settings.rateLimitChat} onChange={(e) => upd("rateLimitChat", e.target.value)} />
+            </FormFieldV2>
+            <FormFieldV2 label="📋 Report Generation" hint="Max AI reports per minute. Default: 10">
+              <input type="number" min="1" max="100" value={settings.rateLimitReport} onChange={(e) => upd("rateLimitReport", e.target.value)} />
+            </FormFieldV2>
+            <FormFieldV2 label="📸 Document Scanning" hint="Max scans per minute. Default: 20">
+              <input type="number" min="1" max="500" value={settings.rateLimitScan} onChange={(e) => upd("rateLimitScan", e.target.value)} />
+            </FormFieldV2>
+          </FieldGroup>
+          <FieldGroup label="System Limits" cols={2}>
+            <FormFieldV2 label="🔗 Webhook Events (per source / minute)" hint="Max incoming webhook events per source per minute. Default: 100">
+              <input type="number" min="1" max="10000" value={settings.rateLimitWebhook} onChange={(e) => upd("rateLimitWebhook", e.target.value)} />
+            </FormFieldV2>
+            <FormFieldV2 label="🔧 Custom Tool Runs (per user / day)" hint="Max custom tool invocations per user per 24 hours. Default: 100">
+              <input type="number" min="1" max="10000" value={settings.rateLimitToolDaily} onChange={(e) => upd("rateLimitToolDaily", e.target.value)} />
+            </FormFieldV2>
+          </FieldGroup>
+        </SectionCard>
       )}
 
       <div style={{ marginTop: 16 }}>
@@ -2546,17 +2534,17 @@ function AIAgentsTab() {
     setSaving(null);
   };
 
-  if (loading) return <div className="loading-state"><div className="spinner" />Loading agent configurations…</div>;
+  if (loading) return <LoadingState message="Loading agent configurations..." />;
 
   return (
     <div>
       {message && (
-        <div className={`alert alert-${message.type}`} style={{ marginBottom: 16 }}>
-          {message.type === "success" ? "✅" : "❌"} {message.text}
-        </div>
+        <AlertBanner type={message.type} onDismiss={() => setMessage(null)}>
+          {message.text}
+        </AlertBanner>
       )}
 
-      <div className="settings-grid">
+      <div className="admin-agent-grid">
         {agents.map((agent) => {
           const meta = AGENT_META[agent.agentName];
           const edit = editState[agent.agentName];
@@ -2564,28 +2552,33 @@ function AIAgentsTab() {
           if (!meta || !edit) return null;
 
           return (
-            <div key={agent.agentName} className="card settings-card" style={{ borderLeft: `4px solid ${meta.color}` }}>
+            <div key={agent.agentName} className="admin-agent-card">
               {/* Header */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <button
-                  className="ai-section-header"
-                  style={{ flex: 1, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0 }}
-                  onClick={() => setExpandedAgent(isExpanded ? null : agent.agentName)}
-                >
+              <div
+                className="admin-agent-card-header"
+                onClick={() => setExpandedAgent(isExpanded ? null : agent.agentName)}
+              >
+                <div className="admin-agent-card-info">
+                  <div
+                    className="admin-agent-card-icon"
+                    style={{ background: `color-mix(in srgb, ${meta.color} 12%, transparent)` }}
+                  >
+                    {meta.icon}
+                  </div>
                   <div>
-                    <h3 style={{ margin: 0 }}>{meta.icon} {edit.displayName}</h3>
-                    <p className="text-muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
+                    <h3 className="admin-agent-card-name">{edit.displayName}</h3>
+                    <div className="admin-agent-card-role">
                       {meta.role}
                       {agent.updatedAt && (
-                        <span style={{ marginLeft: 8, fontSize: 11, opacity: 0.7 }}>
+                        <span className="admin-agent-card-updated">
                           · Updated {new Date(agent.updatedAt).toLocaleDateString()}
                         </span>
                       )}
-                    </p>
+                    </div>
                   </div>
-                  <span className="ai-section-chevron">{isExpanded ? "▼" : "▶"}</span>
-                </button>
-                <label className="toggle-switch" style={{ marginLeft: 16 }}>
+                </div>
+                <span className={`admin-agent-card-chevron ${isExpanded ? "expanded" : ""}`}>▶</span>
+                <label className="toggle-switch" onClick={(e) => e.stopPropagation()} style={{ marginLeft: 8 }}>
                   <input type="checkbox" checked={edit.isActive} onChange={() => handleToggle(agent.agentName)} />
                   <span className="toggle-slider" />
                   <span className="toggle-label">{edit.isActive ? "Active" : "Disabled"}</span>
@@ -2594,101 +2587,98 @@ function AIAgentsTab() {
 
               {/* Expanded editor */}
               {isExpanded && (
-                <div style={{ marginTop: 16, borderTop: "1px solid var(--color-border)", paddingTop: 16 }}>
-                  <div className="form-grid" style={{ gap: 16 }}>
+                <div className="admin-agent-card-body">
+                  <div className="admin-agent-card-body-inner">
                     {/* Basic fields */}
-                    <FormField label="Display Name" hint="Human-friendly label shown in the UI">
-                      <input type="text" value={edit.displayName} onChange={(e) => updateField(agent.agentName, "displayName", e.target.value)} />
-                    </FormField>
-
-                    <FormField label="Description" hint="What this agent specializes in">
-                      <textarea rows={2} value={edit.description ?? ""} onChange={(e) => updateField(agent.agentName, "description", e.target.value)} style={{ resize: "vertical" }} />
-                    </FormField>
+                    <FieldGroup label="Identity" cols={2}>
+                      <FormFieldV2 label="Display Name" hint="Human-friendly label shown in the UI">
+                        <input type="text" value={edit.displayName} onChange={(e) => updateField(agent.agentName, "displayName", e.target.value)} />
+                      </FormFieldV2>
+                      <FormFieldV2 label="Description" hint="What this agent specializes in">
+                        <textarea rows={2} value={edit.description ?? ""} onChange={(e) => updateField(agent.agentName, "description", e.target.value)} style={{ resize: "vertical" }} />
+                      </FormFieldV2>
+                    </FieldGroup>
 
                     {/* Model & Performance */}
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                      <FormField label="Model Override" hint="Leave empty to use system default">
+                    <FieldGroup label="Model & Performance" cols={2}>
+                      <FormFieldV2 label="Model Override" hint="Leave empty to use system default">
                         <input type="text" placeholder="e.g. gpt-4o-mini, claude-3-haiku" value={edit.modelOverride ?? ""} onChange={(e) => updateField(agent.agentName, "modelOverride", e.target.value || null)} />
-                      </FormField>
-
-                      <FormField label="Temperature" hint="0.00 (deterministic) – 2.00 (creative)">
+                      </FormFieldV2>
+                      <FormFieldV2 label="Temperature" hint="0.00 (deterministic) – 2.00 (creative)">
                         <input type="number" step="0.05" min="0" max="2" placeholder="System default" value={edit.temperature ?? ""} onChange={(e) => updateField(agent.agentName, "temperature", e.target.value || null)} />
-                      </FormField>
-                    </div>
+                      </FormFieldV2>
+                    </FieldGroup>
 
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                      <FormField label="Max Steps" hint="Tool-calling rounds">
+                    <FieldGroup label="Execution Limits" cols={3}>
+                      <FormFieldV2 label="Max Steps" hint="Tool-calling rounds (1–20)">
                         <input type="number" min="1" max="20" placeholder="Default" value={edit.maxSteps ?? ""} onChange={(e) => updateField(agent.agentName, "maxSteps", e.target.value ? parseInt(e.target.value) : null)} />
-                      </FormField>
-
-                      <FormField label="Timeout (ms)" hint="Execution timeout">
+                      </FormFieldV2>
+                      <FormFieldV2 label="Timeout (ms)" hint="5,000 – 300,000">
                         <input type="number" min="1000" max="300000" step="1000" placeholder="Default" value={edit.timeoutMs ?? ""} onChange={(e) => updateField(agent.agentName, "timeoutMs", e.target.value ? parseInt(e.target.value) : null)} />
-                      </FormField>
-
-                      <FormField label="Priority" hint="Lower = higher priority">
+                      </FormFieldV2>
+                      <FormFieldV2 label="Priority" hint="Lower = higher priority">
                         <input type="number" min="0" max="99" value={edit.executionPriority} onChange={(e) => updateField(agent.agentName, "executionPriority", parseInt(e.target.value) || 0)} />
-                      </FormField>
-                    </div>
+                      </FormFieldV2>
+                    </FieldGroup>
 
                     {/* Custom Instructions */}
-                    <FormField label="Custom Instructions" hint="Business-specific instructions appended to this agent's system prompt">
-                      <textarea rows={4} placeholder="e.g. Focus on wholesale metrics. Always include profit margins. Flag inventory below 50 units." value={edit.customInstructions ?? ""} onChange={(e) => updateField(agent.agentName, "customInstructions", e.target.value || null)} style={{ resize: "vertical" }} />
-                    </FormField>
+                    <FieldGroup label="Custom Instructions" cols={1}>
+                      <FormFieldV2 label="Business Context" hint="Appended to this agent's system prompt for per-business customization">
+                        <textarea rows={4} placeholder="e.g. Focus on wholesale metrics. Always include profit margins. Flag inventory below 50 units." value={edit.customInstructions ?? ""} onChange={(e) => updateField(agent.agentName, "customInstructions", e.target.value || null)} style={{ resize: "vertical" }} />
+                      </FormFieldV2>
+                    </FieldGroup>
 
                     {/* Agent-specific config */}
                     {meta.configHints.length > 0 && (
-                      <div>
-                        <h4 style={{ margin: "8px 0", fontSize: 14 }}>🔧 Agent-Specific Settings</h4>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                          {meta.configHints.map((ch) => (
-                            <FormField key={ch.key} label={ch.label} hint={ch.hint}>
-                              {ch.type === "boolean" ? (
-                                <label className="toggle-switch" style={{ marginTop: 4 }}>
-                                  <input type="checkbox" checked={!!edit.config?.[ch.key]} onChange={(e) => updateConfig(agent.agentName, ch.key, e.target.checked)} />
-                                  <span className="toggle-slider" />
-                                  <span className="toggle-label">{edit.config?.[ch.key] ? "On" : "Off"}</span>
-                                </label>
-                              ) : ch.type === "number" ? (
-                                <input type="number" value={(edit.config?.[ch.key] as number) ?? ""} onChange={(e) => updateConfig(agent.agentName, ch.key, e.target.value ? parseFloat(e.target.value) : undefined)} />
-                              ) : (
-                                <input type="text" value={(edit.config?.[ch.key] as string) ?? ""} onChange={(e) => updateConfig(agent.agentName, ch.key, e.target.value || undefined)} />
-                              )}
-                            </FormField>
-                          ))}
-                        </div>
-                      </div>
+                      <FieldGroup label="Agent-Specific Settings" cols={2}>
+                        {meta.configHints.map((ch) => (
+                          <FormFieldV2 key={ch.key} label={ch.label} hint={ch.hint}>
+                            {ch.type === "boolean" ? (
+                              <label className="toggle-switch" style={{ marginTop: 4 }}>
+                                <input type="checkbox" checked={!!edit.config?.[ch.key]} onChange={(e) => updateConfig(agent.agentName, ch.key, e.target.checked)} />
+                                <span className="toggle-slider" />
+                                <span className="toggle-label">{edit.config?.[ch.key] ? "On" : "Off"}</span>
+                              </label>
+                            ) : ch.type === "number" ? (
+                              <input type="number" value={(edit.config?.[ch.key] as number) ?? ""} onChange={(e) => updateConfig(agent.agentName, ch.key, e.target.value ? parseFloat(e.target.value) : undefined)} />
+                            ) : (
+                              <input type="text" value={(edit.config?.[ch.key] as string) ?? ""} onChange={(e) => updateConfig(agent.agentName, ch.key, e.target.value || undefined)} />
+                            )}
+                          </FormFieldV2>
+                        ))}
+                      </FieldGroup>
                     )}
-                  </div>
 
-                  {/* Validation errors */}
-                  {validateAgentConfig(edit).length > 0 && (
-                    <div className="alert alert-error" style={{ marginTop: 12, fontSize: 13 }}>
-                      {validateAgentConfig(edit).map((e, i) => <div key={i}>⚠️ {e}</div>)}
+                    {/* Validation errors */}
+                    {validateAgentConfig(edit).length > 0 && (
+                      <AlertBanner type="warning">
+                        {validateAgentConfig(edit).map((e, i) => <div key={i}>{e}</div>)}
+                      </AlertBanner>
+                    )}
+
+                    {/* Save + Reset buttons */}
+                    <div className="admin-agent-card-actions">
+                      <button className="btn btn-primary" onClick={() => handleSave(agent.agentName)} disabled={saving === agent.agentName || validateAgentConfig(edit).length > 0}>
+                        {saving === agent.agentName ? "Saving..." : `Save ${edit.displayName}`}
+                      </button>
+                      <button className="btn btn-secondary" onClick={() => handleReset(agent.agentName)} disabled={saving === agent.agentName} title="Reset this agent to factory defaults">
+                        Reset Defaults
+                      </button>
                     </div>
-                  )}
-
-                  {/* Save + Reset buttons */}
-                  <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
-                    <button className="btn btn-primary" onClick={() => handleSave(agent.agentName)} disabled={saving === agent.agentName || validateAgentConfig(edit).length > 0}>
-                      {saving === agent.agentName ? "Saving…" : `💾 Save ${edit.displayName}`}
-                    </button>
-                    <button className="btn btn-secondary" onClick={() => handleReset(agent.agentName)} disabled={saving === agent.agentName} title="Reset this agent to factory defaults">
-                      ↺ Reset Defaults
-                    </button>
                   </div>
                 </div>
               )}
             </div>
           );
         })}
-
-        <InfoBox>
-          <strong>💡 How AI Agents work:</strong> Each agent specializes in a different task — orchestration, statistical analysis, report writing, or document retrieval.
-          Configuration changes take effect immediately. Use <strong>Model Override</strong> to use a faster/cheaper model for specific agents.
-          <strong> Custom Instructions</strong> are appended to the agent's built-in system prompt for per-business customization.
-          Disable an agent to prevent the orchestrator from delegating to it.
-        </InfoBox>
       </div>
+
+      <TipBlock>
+        <strong>How AI Agents work:</strong> Each agent specializes in a different task — orchestration, statistical analysis, report writing, or document retrieval.
+        Configuration changes take effect within 60 seconds. Use <strong>Model Override</strong> to use a faster/cheaper model for specific agents.
+        <strong> Custom Instructions</strong> are appended to the agent's built-in system prompt for per-business customization.
+        Disable an agent to prevent the orchestrator from delegating to it.
+      </TipBlock>
     </div>
   );
 }
@@ -5264,167 +5254,138 @@ function ApprovalWorkflowsTab() {
     setSeeding(false);
   };
 
-  if (loading) return <div className="loading-state"><div className="spinner" />Loading workflows…</div>;
+  if (loading) return <LoadingState message="Loading workflows..." />;
 
   return (
     <div>
-      {/* Info Box */}
-      <InfoBox>
-        <strong>✅ Approval Workflows</strong> define multi-step approval chains for business actions.
+      {/* Info & Stats */}
+      <TipBlock>
+        <strong>Approval Workflows</strong> define multi-step approval chains for business actions.
         When a user performs an action that requires approval (e.g., requesting inventory delivery,
         adjusting stock, or creating a large order), the request is routed through the configured
-        approval chain — from staff → manager → admin. Each user's <strong>"Reports To"</strong> field
+        approval chain. Each user's <strong>"Reports To"</strong> field
         (set in Users & Access) determines who reviews their requests.
-      </InfoBox>
+      </TipBlock>
+
+      <StatRow>
+        <StatCard icon="✅" value={workflows.length} label="Total Workflows" accent="#3b82f6" />
+        <StatCard icon="🟢" value={workflows.filter(w => w.isActive).length} label="Active" accent="#22c55e" />
+        <StatCard icon="⏸️" value={workflows.filter(w => !w.isActive).length} label="Inactive" accent="#64748b" />
+        <StatCard icon="🔗" value={workflows.reduce((s, w) => s + w.stepCount, 0)} label="Total Steps" accent="#8b5cf6" />
+      </StatRow>
 
       {/* Toolbar */}
-      <div className="toolbar" style={{ marginBottom: 16 }}>
-        <span className="toolbar-count">{workflows.length} workflow{workflows.length !== 1 ? "s" : ""} configured</span>
-        <div style={{ display: "flex", gap: 8 }}>
-          {workflows.length === 0 && (
-            <button className="btn btn-secondary btn-sm" onClick={seedDefaults} disabled={seeding}>
-              {seeding ? "Seeding…" : "🌱 Seed Defaults"}
-            </button>
-          )}
-          <button className="btn btn-primary btn-sm" onClick={() => { resetForm(); setShowForm(true); }}>+ New Workflow</button>
-        </div>
-      </div>
+      <SearchToolbar
+        value=""
+        onChange={() => {}}
+        placeholder=""
+        count={workflows.length}
+        countLabel="workflow"
+      >
+        {workflows.length === 0 && (
+          <button className="btn btn-secondary btn-sm" onClick={seedDefaults} disabled={seeding}>
+            {seeding ? "Seeding…" : "🌱 Seed Defaults"}
+          </button>
+        )}
+        <button className="btn btn-primary btn-sm" onClick={() => { resetForm(); setShowForm(true); }}>+ New Workflow</button>
+      </SearchToolbar>
 
       {/* Create/Edit Form */}
       {showForm && (
-        <div className="admin-form-panel">
-          {/* Panel Header */}
-          <div className="admin-form-panel-header">
-            <div className="admin-form-panel-header-icon">{editWf ? "✏️" : "✅"}</div>
-            <h4>{editWf ? `Edit — ${editWf.name}` : "New Approval Workflow"}</h4>
-          </div>
-
-          {/* Panel Body */}
-          <div className="admin-form-panel-body">
-            <div className="form-grid cols-3">
-              <label>
-                <span className="form-label">Action Type</span>
-                <select
-                  value={ACTION_TYPE_OPTIONS.some(o => o.value === form.actionType) ? form.actionType : "custom"}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (val === "custom") {
-                      setForm({ ...form, actionType: "" });
-                    } else {
-                      const opt = ACTION_TYPE_OPTIONS.find(o => o.value === val);
-                      setForm({ ...form, actionType: val, name: form.name || opt?.label || "" });
-                    }
-                  }}
-                >
-                  <option value="" disabled>Select an action…</option>
-                  {ACTION_TYPE_OPTIONS.map(o => (
-                    <option key={o.value} value={o.value}>{o.icon} {o.label}</option>
-                  ))}
-                </select>
-                {(!ACTION_TYPE_OPTIONS.some(o => o.value === form.actionType) || form.actionType === "") && (
-                  <input
-                    style={{ marginTop: 6 }}
-                    value={form.actionType}
-                    onChange={(e) => setForm({ ...form, actionType: e.target.value })}
-                    placeholder="e.g. inventory.delivery_request"
-                  />
-                )}
-                <span className="form-hint">Machine-readable identifier for this workflow trigger</span>
-              </label>
-              <label>
-                <span className="form-label">Workflow Name</span>
+        <FormPanel
+          title={editWf ? `Edit — ${editWf.name}` : "New Approval Workflow"}
+          icon={editWf ? "✏️" : "✅"}
+          onClose={resetForm}
+          onSave={save}
+          saveLabel={editWf ? "Update Workflow" : "Create Workflow"}
+          footer={
+            <div className="admin-toggle-switch" onClick={() => setForm({ ...form, isActive: !form.isActive })}>
+              <div className={`admin-toggle-track ${form.isActive ? "active" : ""}`}>
+                <div className="admin-toggle-thumb" />
+              </div>
+              <span className="admin-toggle-label">{form.isActive ? "Active" : "Inactive"}</span>
+            </div>
+          }
+        >
+          <FieldGroup label="Workflow Details" cols={3}>
+            <FormFieldV2 label="Action Type" required hint="Machine-readable identifier for this workflow trigger">
+              <select
+                value={ACTION_TYPE_OPTIONS.some(o => o.value === form.actionType) ? form.actionType : "custom"}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === "custom") {
+                    setForm({ ...form, actionType: "" });
+                  } else {
+                    const opt = ACTION_TYPE_OPTIONS.find(o => o.value === val);
+                    setForm({ ...form, actionType: val, name: form.name || opt?.label || "" });
+                  }
+                }}
+              >
+                <option value="" disabled>Select an action…</option>
+                {ACTION_TYPE_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.icon} {o.label}</option>
+                ))}
+              </select>
+              {(!ACTION_TYPE_OPTIONS.some(o => o.value === form.actionType) || form.actionType === "") && (
                 <input
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="e.g. Inventory Delivery Request"
+                  style={{ marginTop: 6 }}
+                  value={form.actionType}
+                  onChange={(e) => setForm({ ...form, actionType: e.target.value })}
+                  placeholder="e.g. inventory.delivery_request"
                 />
-                <span className="form-hint">Human-readable name displayed in approval inbox</span>
-              </label>
-              <label>
-                <span className="form-label">Auto-Approve Above Role</span>
-                <select
-                  value={form.autoApproveAboveRole}
-                  onChange={(e) => setForm({ ...form, autoApproveAboveRole: e.target.value })}
-                >
-                  <option value="">— None —</option>
-                  <option value="manager">Manager & above</option>
-                  <option value="admin">Admin & above</option>
-                  <option value="super_admin">Super Admin only</option>
+              )}
+            </FormFieldV2>
+            <FormFieldV2 label="Workflow Name" required hint="Human-readable name displayed in approval inbox">
+              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Inventory Delivery Request" />
+            </FormFieldV2>
+            <FormFieldV2 label="Auto-Approve Above Role" hint="Skip approval for users at this role or higher">
+              <select value={form.autoApproveAboveRole} onChange={(e) => setForm({ ...form, autoApproveAboveRole: e.target.value })}>
+                <option value="">— None —</option>
+                <option value="manager">Manager & above</option>
+                <option value="admin">Admin & above</option>
+                <option value="super_admin">Super Admin only</option>
+              </select>
+            </FormFieldV2>
+          </FieldGroup>
+
+          <FieldGroup label="Description & Condition" cols={2}>
+            <FormFieldV2 label="Description">
+              <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Describe when this workflow should be triggered…" rows={2} />
+            </FormFieldV2>
+            <FormFieldV2 label="Condition (Optional)" hint="Only trigger when condition is met (leave empty for always)">
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input style={{ flex: 1 }} value={form.conditionField} onChange={(e) => setForm({ ...form, conditionField: e.target.value })} placeholder="Field (e.g. totalAmount)" />
+                <select style={{ width: 60 }} value={form.conditionOp} onChange={(e) => setForm({ ...form, conditionOp: e.target.value })}>
+                  <option value=">">&gt;</option>
+                  <option value=">=">&gt;=</option>
+                  <option value="<">&lt;</option>
+                  <option value="<=">&lt;=</option>
+                  <option value="==">=</option>
                 </select>
-                <span className="form-hint">Skip approval for users at this role or higher</span>
-              </label>
-            </div>
-
-            <div className="form-grid cols-2" style={{ marginTop: 16 }}>
-              <label>
-                <span className="form-label">Description</span>
-                <textarea
-                  value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  placeholder="Describe when this workflow should be triggered…"
-                  rows={2}
-                />
-              </label>
-              <div>
-                <span className="form-label">Condition (Optional)</span>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <input
-                    style={{ flex: 1 }}
-                    value={form.conditionField}
-                    onChange={(e) => setForm({ ...form, conditionField: e.target.value })}
-                    placeholder="Field (e.g. totalAmount)"
-                  />
-                  <select
-                    style={{ width: 60 }}
-                    value={form.conditionOp}
-                    onChange={(e) => setForm({ ...form, conditionOp: e.target.value })}
-                  >
-                    <option value=">">&gt;</option>
-                    <option value=">=">&gt;=</option>
-                    <option value="<">&lt;</option>
-                    <option value="<=">&lt;=</option>
-                    <option value="==">=</option>
-                  </select>
-                  <input
-                    style={{ width: 100 }}
-                    type="number"
-                    value={form.conditionValue}
-                    onChange={(e) => setForm({ ...form, conditionValue: e.target.value })}
-                    placeholder="Value"
-                  />
-                </div>
-                <span className="form-hint">Only trigger when condition is met (leave empty for always)</span>
+                <input style={{ width: 100 }} type="number" value={form.conditionValue} onChange={(e) => setForm({ ...form, conditionValue: e.target.value })} placeholder="Value" />
               </div>
-            </div>
+            </FormFieldV2>
+          </FieldGroup>
 
-            {/* Approval Steps */}
-            <div className="admin-form-section">
-              <div className="admin-form-section-header">
-                <span className="admin-form-section-title">Approval Steps</span>
-                <button className="btn btn-secondary btn-xs" onClick={addStep}>+ Add Step</button>
-              </div>
-              <div>
+          {/* Approval Steps */}
+          <FieldGroup label="Approval Steps" hint="Steps are executed in order. Step 1 is reviewed first, then step 2, etc.">
+            <div style={{ gridColumn: "1 / -1" }}>
+              <div className="admin-approval-steps">
                 {form.steps.map((step, idx) => (
-                  <div key={idx} className="approval-step-card">
-                    <div className="approval-step-number">{step.stepOrder}</div>
-                    <div className="approval-step-fields">
-                      <label>
-                        <span className="form-label">Approver Role</span>
+                  <div key={idx} className="admin-approval-step">
+                    <div className="admin-approval-step-num">{step.stepOrder}</div>
+                    <div className="admin-approval-step-body">
+                      <FormFieldV2 label="Approver Role">
                         <select value={step.approverRole} onChange={(e) => updateStep(idx, "approverRole", e.target.value)}>
                           <option value="staff">Staff</option>
                           <option value="manager">Manager</option>
                           <option value="admin">Admin</option>
                           <option value="super_admin">Super Admin</option>
                         </select>
-                      </label>
-                      <label>
-                        <span className="form-label">Step Label</span>
-                        <input
-                          value={step.label}
-                          onChange={(e) => updateStep(idx, "label", e.target.value)}
-                          placeholder="e.g. Manager Review"
-                        />
-                      </label>
+                      </FormFieldV2>
+                      <FormFieldV2 label="Step Label">
+                        <input value={step.label} onChange={(e) => updateStep(idx, "label", e.target.value)} placeholder="e.g. Manager Review" />
+                      </FormFieldV2>
                     </div>
                     {form.steps.length > 1 && (
                       <button className="approval-step-remove" onClick={() => removeStep(idx)} title="Remove step">✕</button>
@@ -5432,48 +5393,27 @@ function ApprovalWorkflowsTab() {
                   </div>
                 ))}
               </div>
-              <p className="form-hint" style={{ marginTop: 4 }}>
-                Steps are executed in order. Step 1 is reviewed first, then step 2, etc.
-              </p>
+              <button className="btn btn-secondary btn-xs" style={{ marginTop: 8 }} onClick={addStep}>+ Add Step</button>
             </div>
-          </div>
-
-          {/* Panel Footer */}
-          <div className="admin-form-panel-footer">
-            <div
-              className="admin-toggle-switch"
-              onClick={() => setForm({ ...form, isActive: !form.isActive })}
-            >
-              <div className={`admin-toggle-track ${form.isActive ? "active" : ""}`}>
-                <div className="admin-toggle-thumb" />
-              </div>
-              <span className="admin-toggle-label">{form.isActive ? "Active" : "Inactive"}</span>
-            </div>
-            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-              <button className="btn btn-primary" onClick={save}>
-                {editWf ? "💾 Update Workflow" : "✅ Create Workflow"}
-              </button>
-              <button className="btn btn-secondary" onClick={resetForm}>Cancel</button>
-            </div>
-          </div>
-        </div>
+          </FieldGroup>
+        </FormPanel>
       )}
 
       {/* Workflows List */}
       {workflows.length === 0 && !showForm ? (
-        <div className="card" style={{ padding: 40, textAlign: "center" }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
-          <h3>No Approval Workflows Configured</h3>
-          <p className="text-muted" style={{ marginBottom: 16 }}>
-            Set up approval chains to route business actions through your management hierarchy.
-          </p>
-          <button className="btn btn-primary" onClick={seedDefaults} disabled={seeding}>
-            {seeding ? "Seeding…" : "🌱 Seed Default Workflows"}
-          </button>
-        </div>
-      ) : (
-        <div className="card table-card">
-          <table className="data-table">
+        <EmptyState
+          icon="✅"
+          title="No Approval Workflows Configured"
+          description="Set up approval chains to route business actions through your management hierarchy."
+          action={
+            <button className="btn btn-primary" onClick={seedDefaults} disabled={seeding}>
+              {seeding ? "Seeding…" : "🌱 Seed Default Workflows"}
+            </button>
+          }
+        />
+      ) : workflows.length > 0 && (
+        <SectionCard title="Configured Workflows" icon="📋" subtitle={`${workflows.length} workflow${workflows.length !== 1 ? "s" : ""}`} noPadding>
+          <table className="admin-data-table">
             <thead>
               <tr>
                 <th>Workflow</th>
@@ -5495,19 +5435,15 @@ function ApprovalWorkflowsTab() {
                       {wf.description && <div className="cell-sub">{wf.description}</div>}
                     </td>
                     <td>
-                      <span className="perm-tag">{info?.icon ?? "📋"} {info?.label ?? wf.actionType}</span>
+                      <Badge variant="primary">{info?.icon ?? "📋"} {info?.label ?? wf.actionType}</Badge>
                     </td>
                     <td>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
                         {wf.steps.map((step, i) => (
                           <React.Fragment key={step.id}>
-                            <span className="role-pill" style={{
-                              background: ROLE_COLORS[step.approverRole] ?? "#555",
-                              fontSize: 11,
-                              padding: "2px 8px",
-                            }}>
+                            <Badge variant={step.approverRole === "super_admin" ? "danger" : step.approverRole === "admin" ? "warning" : step.approverRole === "manager" ? "info" : "default"}>
                               {step.label || ROLE_LABELS[step.approverRole] || step.approverRole}
-                            </span>
+                            </Badge>
                             {i < wf.steps.length - 1 && <span style={{ color: "var(--color-text-muted)", fontSize: 12 }}>→</span>}
                           </React.Fragment>
                         ))}
@@ -5515,26 +5451,26 @@ function ApprovalWorkflowsTab() {
                     </td>
                     <td>
                       {cond?.field ? (
-                        <span className="text-muted" style={{ fontSize: 12 }}>
-                          {cond.field} {cond.operator} {cond.value?.toLocaleString()}
-                        </span>
+                        <Badge variant="warning">{cond.field} {cond.operator} {cond.value?.toLocaleString()}</Badge>
                       ) : (
                         <span className="text-muted">Always</span>
                       )}
                     </td>
                     <td>
-                      <span
-                        className={`status-badge ${wf.isActive ? "status-active" : "status-inactive"}`}
-                        style={{ cursor: "pointer" }}
-                        onClick={() => toggleActive(wf)}
+                      <Badge
+                        variant={wf.isActive ? "success" : "default"}
+                        dot
                       >
                         {wf.isActive ? "Active" : "Inactive"}
-                      </span>
+                      </Badge>
                     </td>
                     <td>
                       <div className="action-cell">
-                        <button className="btn btn-xs btn-secondary" onClick={() => openEdit(wf)}>Edit</button>
-                        <button className="btn btn-xs btn-warning" onClick={() => deleteWf(wf)}>Delete</button>
+                        <button className="btn btn-xs btn-secondary" onClick={() => toggleActive(wf)}>
+                          {wf.isActive ? "⏸️ Pause" : "▶️ Enable"}
+                        </button>
+                        <button className="btn btn-xs btn-secondary" onClick={() => openEdit(wf)}>✏️ Edit</button>
+                        <button className="btn btn-xs btn-warning" onClick={() => deleteWf(wf)}>🗑️ Delete</button>
                       </div>
                     </td>
                   </tr>
@@ -5542,7 +5478,7 @@ function ApprovalWorkflowsTab() {
               })}
             </tbody>
           </table>
-        </div>
+        </SectionCard>
       )}
     </div>
   );
@@ -5991,37 +5927,25 @@ function LocationsTab({ config }: { config: AppConfig }) {
   return (
     <div>
       {/* Stats Row */}
-      <div className="summary-cards" style={{ marginBottom: 16 }}>
-        <div className="summary-card">
-          <span className="summary-card-value">{stats.total}</span>
-          <span className="summary-card-label">Active Locations</span>
-        </div>
-        <div className="summary-card">
-          <span className="summary-card-value">{stats.types}</span>
-          <span className="summary-card-label">Location Types</span>
-        </div>
-        <div className="summary-card">
-          <span className="summary-card-value" style={{ fontSize: "0.95rem" }}>{stats.defaultName}</span>
-          <span className="summary-card-label">Default Location</span>
-        </div>
-      </div>
+      <StatRow>
+        <StatCard icon="📍" value={stats.total} label="Active Locations" accent="#3b82f6" />
+        <StatCard icon="🏷️" value={stats.types} label="Location Types" accent="#8b5cf6" />
+        <StatCard icon="⭐" value={stats.defaultName} label="Default Location" accent="#059669" />
+      </StatRow>
 
       {/* Toolbar */}
-      <div className="toolbar" style={{ marginBottom: 12 }}>
-        <div className="search-box" style={{ flex: 1 }}>
-          <span className="search-icon">🔍</span>
-          <input
-            placeholder="Search locations..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          {search && <button className="search-clear" onClick={() => setSearch("")}>✕</button>}
-        </div>
+      <SearchToolbar
+        search={search}
+        onSearchChange={setSearch}
+        placeholder="Search locations by name, code, or address..."
+        count={filtered.length}
+        countLabel="location"
+      >
         <select
-          className="form-select"
+          className="admin-search-input"
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value)}
-          style={{ minWidth: 140 }}
+          style={{ flex: "none", width: 160, padding: "9px 12px" }}
         >
           <option value="all">All Types</option>
           {allTypes.map((t) => (
@@ -6031,36 +5955,51 @@ function LocationsTab({ config }: { config: AppConfig }) {
         <button className="btn btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>
           + Add Location
         </button>
-      </div>
+      </SearchToolbar>
 
       {/* Create / Edit Form */}
       {showForm && (
-        <div className="card form-card inline-form" style={{ marginBottom: 16 }}>
-          <h3>{editLoc ? "Edit Location" : "Add Location"}</h3>
-          {error && <div className="form-error" style={{ color: "#ef4444", marginBottom: 8, fontSize: "0.85rem" }}>{error}</div>}
-          <div className="form-grid cols-2">
-            <label>
-              Name *
+        <FormPanel
+          title={editLoc ? `Edit — ${editLoc.name}` : "Add New Location"}
+          icon="📍"
+          onClose={resetForm}
+          onSave={handleSave}
+          saving={saving}
+          saveLabel={editLoc ? "Update Location" : "Create Location"}
+          footer={
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: "0.85rem" }}>
               <input
+                type="checkbox"
+                checked={form.isDefault}
+                onChange={(e) => setForm({ ...form, isDefault: e.target.checked })}
+              />
+              Set as default location
+            </label>
+          }
+        >
+          {error && <AlertBanner type="error">{error}</AlertBanner>}
+
+          <FieldGroup label="Basic Details" cols={2}>
+            <FormFieldV2 label="Name" required hint="Human-readable name for this location">
+              <input
+                type="text"
                 placeholder="e.g. Main Warehouse, Downtown Branch"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
-            </label>
-            <label>
-              Code *
+            </FormFieldV2>
+            <FormFieldV2 label="Code" required hint="Short unique identifier (auto-uppercased)">
               <input
+                type="text"
                 placeholder="e.g. WH-MAIN, BR-DT"
                 value={form.code}
                 onChange={(e) => setForm({ ...form, code: e.target.value })}
-                style={{ textTransform: "uppercase" }}
+                style={{ textTransform: "uppercase", fontFamily: "'SF Mono', 'Fira Code', monospace" }}
               />
-            </label>
-            <label>
-              Location Type
-              <div style={{ display: "flex", gap: 4 }}>
+            </FormFieldV2>
+            <FormFieldV2 label="Location Type" hint="Category for filtering and analytics">
+              <div style={{ display: "flex", gap: 6 }}>
                 <select
-                  className="form-select"
                   value={LOCATION_TYPE_PRESETS.includes(form.locationType) ? form.locationType : "__custom"}
                   onChange={(e) => {
                     if (e.target.value !== "__custom") {
@@ -6076,6 +6015,7 @@ function LocationsTab({ config }: { config: AppConfig }) {
                 </select>
                 {!LOCATION_TYPE_PRESETS.includes(form.locationType) && (
                   <input
+                    type="text"
                     placeholder="Custom type"
                     value={form.locationType}
                     onChange={(e) => setForm({ ...form, locationType: e.target.value })}
@@ -6083,156 +6023,137 @@ function LocationsTab({ config }: { config: AppConfig }) {
                   />
                 )}
               </div>
-            </label>
-            <label>
-              Sort Order
+            </FormFieldV2>
+            <FormFieldV2 label="Sort Order" hint="Lower numbers appear first">
               <input
                 type="number"
                 min={0}
                 value={form.sortOrder}
                 onChange={(e) => setForm({ ...form, sortOrder: Number(e.target.value) || 0 })}
               />
-            </label>
-            <label>
-              Contact Person
+            </FormFieldV2>
+          </FieldGroup>
+
+          <FieldGroup label="Contact Information" cols={3}>
+            <FormFieldV2 label="Contact Person" hint="On-site manager or lead">
               <input
+                type="text"
                 placeholder="Manager name"
                 value={form.contactPerson}
                 onChange={(e) => setForm({ ...form, contactPerson: e.target.value })}
               />
-            </label>
-            <label>
-              Phone
+            </FormFieldV2>
+            <FormFieldV2 label="Phone">
               <input
-                placeholder="+1 555 0100"
+                type="text"
+                placeholder="+254 700 000000"
                 value={form.phone}
                 onChange={(e) => setForm({ ...form, phone: e.target.value })}
               />
-            </label>
-            <label>
-              Email
+            </FormFieldV2>
+            <FormFieldV2 label="Email">
               <input
+                type="email"
                 placeholder="location@company.com"
                 value={form.email}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
               />
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
-              <input
-                type="checkbox"
-                checked={form.isDefault}
-                onChange={(e) => setForm({ ...form, isDefault: e.target.checked })}
+            </FormFieldV2>
+          </FieldGroup>
+
+          <FieldGroup label="Address" cols={1}>
+            <FormFieldV2 label="Physical Address" hint="Full street address for deliveries and maps">
+              <textarea
+                placeholder="Physical address"
+                rows={2}
+                value={form.address}
+                onChange={(e) => setForm({ ...form, address: e.target.value })}
               />
-              Set as default location
-            </label>
-          </div>
-          <label style={{ marginTop: 8 }}>
-            Address
-            <textarea
-              placeholder="Physical address"
-              rows={2}
-              value={form.address}
-              onChange={(e) => setForm({ ...form, address: e.target.value })}
-            />
-          </label>
-          <div className="form-actions">
-            <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-              {saving ? "Saving..." : editLoc ? "Update" : "Create"}
-            </button>
-            <button className="btn btn-secondary" onClick={resetForm}>Cancel</button>
-          </div>
-        </div>
+            </FormFieldV2>
+          </FieldGroup>
+        </FormPanel>
       )}
 
-      {/* Locations Table */}
+      {/* Locations Grid */}
       {loading ? (
-        <div className="loading-state">
-          <div className="spinner" />
-          <p>Loading locations...</p>
-        </div>
+        <LoadingState message="Loading locations..." />
       ) : filtered.length === 0 ? (
-        <div className="card text-center text-muted" style={{ padding: 32 }}>
-          {search || typeFilter !== "all"
-            ? "No locations match your filters"
-            : "No locations configured yet. Add your first location above."}
-        </div>
+        <EmptyState
+          icon="📍"
+          title={search || typeFilter !== "all" ? "No Locations Match" : "No Locations Configured"}
+          description={search || typeFilter !== "all"
+            ? "Try adjusting your search or filter criteria."
+            : "Add your first location to start tracking inventory across your supply chain."}
+          action={!search && typeFilter === "all" ? (
+            <button className="btn btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>+ Add First Location</button>
+          ) : undefined}
+        />
       ) : (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Code</th>
-              <th>Type</th>
-              <th>Address</th>
-              <th>Contact</th>
-              <th>Order</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((loc) => {
-              const meta = (loc.metadata ?? {}) as any;
-              return (
-                <tr key={loc.id}>
-                  <td>
-                    <div className="cell-main">
+        <div className="admin-location-grid">
+          {filtered.map((loc) => {
+            const meta = (loc.metadata ?? {}) as any;
+            return (
+              <div key={loc.id} className="admin-location-card">
+                {loc.isDefault && <span className="admin-location-card-default">Default</span>}
+                <div className="admin-location-card-header">
+                  <div>
+                    <h4 className="admin-location-card-name">
                       {loc.name}
-                      {loc.isDefault && <span className="badge badge-default" style={{ marginLeft: 6 }}>Default</span>}
-                    </div>
-                  </td>
-                  <td><code className="sku-code">{loc.code}</code></td>
-                  <td>
-                    <span className="status-pill" style={{
-                      backgroundColor: "var(--color-bg-secondary)",
-                      color: "var(--color-text)",
-                      fontSize: "0.75rem",
-                    }}>
+                      <span className="admin-location-card-code">{loc.code}</span>
+                    </h4>
+                    <span className="admin-location-card-type">
                       {typeLabel(loc.locationType ?? "warehouse")}
                     </span>
-                  </td>
-                  <td className="text-muted" style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {loc.address || "—"}
-                  </td>
-                  <td>
-                    {meta.contactPerson && <div style={{ fontSize: "0.82rem" }}>{meta.contactPerson}</div>}
-                    {meta.phone && <div className="text-muted" style={{ fontSize: "0.75rem" }}>📞 {meta.phone}</div>}
-                    {meta.email && <div className="text-muted" style={{ fontSize: "0.75rem" }}>✉ {meta.email}</div>}
-                    {!meta.contactPerson && !meta.phone && !meta.email && <span className="text-muted">—</span>}
-                  </td>
-                  <td className="text-center">{loc.sortOrder ?? 0}</td>
-                  <td>
-                    <div style={{ display: "flex", gap: 4 }}>
-                      <button
-                        className="btn btn-sm btn-secondary"
-                        onClick={() => openEdit(loc)}
-                        title="Edit"
-                      >
-                        ✏️
-                      </button>
-                      <button
-                        className="btn btn-sm btn-secondary"
-                        onClick={() => handleDeactivate(loc.id)}
-                        title="Deactivate"
-                        style={{ color: "#ef4444" }}
-                      >
-                        🗑️
-                      </button>
+                  </div>
+                  <div className="admin-location-card-actions">
+                    <button className="btn btn-xs btn-secondary" onClick={() => openEdit(loc)} title="Edit">✏️</button>
+                    <button className="btn btn-xs btn-secondary" onClick={() => handleDeactivate(loc.id)} title="Deactivate" style={{ color: "#ef4444" }}>🗑️</button>
+                  </div>
+                </div>
+                <div className="admin-location-card-body">
+                  {loc.address && (
+                    <div className="admin-location-card-row">
+                      <span className="admin-location-card-row-icon">📍</span>
+                      <span>{loc.address}</span>
                     </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  )}
+                  {meta.contactPerson && (
+                    <div className="admin-location-card-row">
+                      <span className="admin-location-card-row-icon">👤</span>
+                      <span>{meta.contactPerson}</span>
+                    </div>
+                  )}
+                  {meta.phone && (
+                    <div className="admin-location-card-row">
+                      <span className="admin-location-card-row-icon">📞</span>
+                      <span>{meta.phone}</span>
+                    </div>
+                  )}
+                  {meta.email && (
+                    <div className="admin-location-card-row">
+                      <span className="admin-location-card-row-icon">✉️</span>
+                      <span>{meta.email}</span>
+                    </div>
+                  )}
+                  {!loc.address && !meta.contactPerson && !meta.phone && !meta.email && (
+                    <div className="admin-location-card-row" style={{ opacity: 0.5 }}>
+                      <span className="admin-location-card-row-icon">ℹ️</span>
+                      <span>No additional details</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
 
-      {/* Help text */}
-      <div className="text-muted" style={{ fontSize: "0.78rem", marginTop: 16, lineHeight: 1.5 }}>
-        <strong>Tip:</strong> Locations represent any point in your supply chain — warehouses, branches, shops,
-        production facilities, kitchens, dispatch centers, etc. Use location types to categorize them and
-        sort order to control display priority. All inventory movement is tracked per-location for AI analytics
-        and demand forecasting.
-      </div>
+      <TipBlock>
+        <strong>Locations</strong> represent any point in your supply chain — warehouses, branches, shops,
+        production facilities, kitchens, dispatch centers, etc. Use <strong>location types</strong> to categorize
+        them and <strong>sort order</strong> to control display priority. All inventory movement is tracked
+        per-location for AI analytics and demand forecasting.
+      </TipBlock>
     </div>
   );
 }

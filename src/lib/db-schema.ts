@@ -17,6 +17,46 @@
  */
 export const DB_SCHEMA_HASH = "manual-v2" as const;
 
+/**
+ * Slim analytics schema — ONLY the tables needed for sales/inventory analysis.
+ * ~60% smaller than DB_SCHEMA. Use in insights-analyzer and report-generator
+ * to stay within TPM rate limits (Tier 1 orgs: 30K TPM for gpt-4o).
+ *
+ * Omits: chat_sessions, chat_messages, agent_configs, saved_reports,
+ * prompt_templates, eval_results, routing_analytics, few_shot_examples,
+ * schedules, schedule_executions, agent_telemetry, tool_invocations,
+ * webhook_sources, webhook_events, attachments, custom_tools,
+ * notifications, audit_log, users, business_settings, tax_rules
+ */
+export const DB_SCHEMA_ANALYTICS = `PostgreSQL schema (analytics-relevant tables only):
+
+Tables:
+- categories(id uuid, name varchar, description text, parent_id uuid, sort_order int, is_active boolean)
+- products(id uuid, sku varchar, name varchar, description text, category_id uuid FK->categories, unit varchar, price numeric, cost_price numeric, tax_rate numeric, barcode varchar, is_consumable boolean, is_sellable boolean, is_active boolean, min_stock_level int, max_stock_level int, reorder_point int, created_at timestamptz)
+- warehouses(id uuid, name varchar, code varchar, is_active boolean, is_default boolean)
+- inventory(id uuid, product_id uuid FK->products, warehouse_id uuid FK->warehouses, quantity int, updated_at timestamptz)
+- inventory_transactions(id uuid, product_id uuid FK->products, warehouse_id uuid FK->warehouses, type varchar, quantity int, reference_type varchar, notes text, created_at timestamptz)
+- customers(id uuid, name varchar, email varchar, phone varchar, credit_limit numeric, balance numeric, is_active boolean)
+- order_statuses(id uuid, name varchar, label varchar, is_default boolean, is_final boolean)
+- orders(id uuid, order_number varchar, customer_id uuid FK->customers, status_id uuid FK->order_statuses, subtotal numeric, tax_amount numeric, discount_amount numeric, total_amount numeric, payment_method varchar, payment_status varchar, created_at timestamptz)
+- order_items(id uuid, order_id uuid FK->orders, item_type varchar, product_id uuid FK->products, service_id uuid FK->services, description text, quantity numeric, unit_price numeric, discount numeric, total_amount numeric, created_at timestamptz)
+- invoices(id uuid, invoice_number varchar, order_id uuid FK->orders, customer_id uuid FK->customers, total_amount numeric, paid_amount numeric, status varchar, due_date timestamptz)
+- payments(id uuid, invoice_id uuid FK->invoices, amount numeric, payment_method varchar, created_at timestamptz)
+- services(id uuid, service_code varchar, name varchar, category_id uuid FK->service_categories, base_price numeric, pricing_model varchar, is_active boolean)
+
+Key joins:
+- products.category_id -> categories.id
+- inventory.product_id -> products.id, inventory.warehouse_id -> warehouses.id
+- orders.customer_id -> customers.id, orders.status_id -> order_statuses.id
+- order_items.order_id -> orders.id, order_items.product_id -> products.id
+
+QUERY PATTERNS:
+- orders has status_id (uuid FK), NOT a 'status' column. Filter by status: JOIN order_statuses os ON o.status_id = os.id WHERE os.name = 'completed'
+- order_statuses.name values: pending, confirmed, processing, shipped, delivered, completed, cancelled, refunded
+- Revenue: SUM(o.total_amount) FROM orders o JOIN order_statuses os ON o.status_id = os.id WHERE os.name IN ('completed','delivered','shipped') AND o.created_at >= date
+- Date filter: ALWAYS use orders.created_at. NEVER use order_items.start_date (that's for service bookings only).
+- SQL dialect: PostgreSQL (INTERVAL, ILIKE, date_trunc, EXTRACT, STRING_AGG).` as const;
+
 export const DB_SCHEMA = `PostgreSQL database schema:
 
 Tables:

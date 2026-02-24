@@ -31,7 +31,7 @@ import { db } from "@db/index";
 import { sql } from "drizzle-orm";
 import { config } from "@lib/config";
 import { getModel } from "@lib/ai";
-import { DB_SCHEMA } from "@lib/db-schema";
+import { DB_SCHEMA_ANALYTICS } from "@lib/db-schema";
 import { validateReadOnlySQL } from "@lib/sql-safety";
 import { createCache, CACHE_NS, CACHE_TTL, reportKey } from "@lib/cache";
 import { maskPII } from "@lib/pii";
@@ -461,7 +461,7 @@ You have a fetch_data tool to retrieve data from the business database via SQL q
 SQL handles all data aggregation -- use SUM, COUNT, AVG, GROUP BY, window functions, JOINs, etc.
 You can call fetch_data MULTIPLE times to get different data sections.
 
-${DB_SCHEMA}
+${DB_SCHEMA_ANALYTICS}
 
 Report period: ${periodStr} (start: ${startStr}, end: ${endStr})
 Terminology: "${config.labels.product}" for products, "${config.labels.order}" for orders, "${config.labels.customer}" for customers.

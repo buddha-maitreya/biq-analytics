@@ -1037,12 +1037,14 @@ export async function executeSandbox(
       };
     }
 
-    // Set runtime (resolve aliases like "python" → "python:3.14")
-    runOpts.runtime = normalizeRuntime(runtime);
-
-    // Use snapshot for pre-installed dependencies (faster cold start)
+    // SDK contract: runtime and snapshot are MUTUALLY EXCLUSIVE.
+    // When using a snapshot, the snapshot's runtime is used automatically.
+    // Sending both causes "error validating the API input data".
     if (snapshotId) {
       runOpts.snapshot = snapshotId;
+      // Do NOT set runtime — snapshot determines it automatically
+    } else {
+      runOpts.runtime = normalizeRuntime(runtime);
     }
 
     // One-shot execution: creates sandbox, runs command, destroys sandbox

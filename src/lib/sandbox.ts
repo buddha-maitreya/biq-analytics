@@ -541,16 +541,26 @@ from decimal import Decimal
 from collections import Counter, defaultdict
 
 # ── Auto-bootstrap: install packages if not available ───────
-# When no snapshot is configured, use uv to install packages at runtime.
-# This adds ~6-10s to the first execution but ensures packages are available.
+# When using a snapshot, packages are in /home/agentuity/venv but NOT on sys.path.
+# We must add the venv site-packages to sys.path before any imports.
 def _ensure_packages():
-    """Install data science packages via uv if not already available."""
+    """Ensure data science packages are importable."""
+    import glob as _glob_bp
+    
+    # Step 1: Check known venv locations and add site-packages to sys.path
+    for venv_dir in ["/home/agentuity/venv", "/var/agentuity/venv"]:
+        site_pkgs = _glob_bp.glob(os.path.join(venv_dir, "lib", "python*", "site-packages"))
+        if site_pkgs and site_pkgs[0] not in sys.path:
+            sys.path.insert(0, site_pkgs[0])
+    
+    # Step 2: Verify packages are importable now
     try:
         import numpy
-        return  # Packages already available (snapshot or previous install)
+        return  # Packages available (from snapshot venv or previous install)
     except ImportError:
         pass
     
+    # Step 3: No snapshot — install packages at runtime (adds ~6-10s)
     venv_dir = "/var/agentuity/venv"
     venv_python = os.path.join(venv_dir, "bin", "python")
     
@@ -562,14 +572,14 @@ def _ensure_packages():
     # Install packages into the venv
     subprocess.run(
         ["uv", "pip", "install", "--python", venv_python,
-         "numpy", "pandas", "scipy", "scikit-learn", "statsmodels"],
+         "numpy", "pandas", "scipy", "scikit-learn", "statsmodels",
+         "matplotlib", "seaborn", "psycopg2-binary"],
         check=True, capture_output=True, timeout=120
     )
     
     # Add venv site-packages to sys.path so imports work
-    import glob
-    site_pkgs = glob.glob(os.path.join(venv_dir, "lib", "python*", "site-packages"))
-    if site_pkgs:
+    site_pkgs = _glob_bp.glob(os.path.join(venv_dir, "lib", "python*", "site-packages"))
+    if site_pkgs and site_pkgs[0] not in sys.path:
         sys.path.insert(0, site_pkgs[0])
 
 try:

@@ -161,6 +161,10 @@ Always consult these files when working with Agentuity-specific APIs.
 
 ## Deployment Rules
 
+### Git Commit & Push Rules
+- **Never auto-push when only `.md` files were edited.** If the only changed files are markdown (`.md`), Copilot must NOT initiate `git push`. Stage and commit if needed, but let the user push manually.
+- **Never include timelines** (weeks, months, dates, durations) in roadmap phases, implementation sequences, or any planning documentation. Phases are ordered by priority, not calendar time.
+
 ### No Markdown Files in Deployment Bundles
 **Never import `.md` files in any source code file** (agents, routes, services, libs, frontend). Markdown files exist in the repository for development reference only — they are **not runtime artifacts** and must never be bundled into deployed code.
 
@@ -213,6 +217,26 @@ wsl -d Ubuntu-24.04 -- bash -lc "cd ~/business-iq-enterprise && git pull && sour
 6. `git clone https://github.com/buddha-maitreya/business-iq-enterprise.git` — Clone project
 
 **Important:** Always `git pull` inside WSL before building to sync with latest changes pushed from Windows.
+
+### WSL Git Conflict — Lessons Learned
+
+**Problem:** Running `drizzle-kit generate` inside WSL creates local migration files (`*.sql` + `meta/_journal.json`) that only exist in the WSL filesystem. If the same migration is then regenerated from Windows (producing a different filename), committed, and pushed, the WSL repo ends up with **uncommitted local changes** to `_journal.json` that conflict with the incoming commit. `git pull` fails with `error: Your local changes would be overwritten by merge`.
+
+**Root cause:** Two separate filesystems (Windows `C:\` and WSL `~/`) each have their own git working tree. Running `drizzle-kit generate` on both creates divergent migration files that can't be reconciled by git.
+
+**Fix (run in WSL terminal):**
+```bash
+cd ~/business-iq-enterprise
+git checkout -- src/db/migrations/meta/_journal.json   # Discard local journal edits
+rm -f src/db/migrations/0008_messy_harrier.sql          # Remove orphaned WSL migration
+git pull                                                 # Now succeeds cleanly
+```
+
+**Prevention rules:**
+1. **NEVER run `drizzle-kit generate` in WSL** — always generate migrations from Windows PowerShell. The Windows workspace is the source of truth for schema changes.
+2. **NEVER run `drizzle-kit migrate` in WSL** — WSL has ETIMEDOUT connectivity issues to Neon Postgres. Always apply migrations from Windows PowerShell.
+3. **WSL is ONLY for `agentuity build` and `agentuity deploy`** — nothing else. No drizzle, no seed scripts, no schema work.
+4. If WSL gets into a dirty state, always `git checkout -- <file>` to discard local changes before `git pull`.
 
 ### Deployment Workflow (Primary — WSL)
 This is the **standard deployment process**. All builds and deploys run from WSL (Ubuntu 24.04) to avoid Windows path issues.

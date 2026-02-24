@@ -1,0 +1,39 @@
+{
+  "analytics_sandbox": {
+    "id": "sbx_29b867ff14cd347f9163b0f4d0905b61d4e28ce226ba1e635d9cdcdd2c86",
+    "name": "analytics-v2",
+    "runtime": "python:3.13",
+    "region": "use",
+    "created": "2026-02-24T06:10:00Z",
+    "status": "active",
+    "idle_timeout": "45m",
+    "network": true
+  },
+  "analytics_snapshot": {
+    "id": "snp_39ad8274d8de96e4ace2e0e95d1cad1c20d8fc04f57a608edf45f86ebd18",
+    "name": "analytics-snapshot-v2",
+    "tag": "latest",
+    "size_mb": 246.94,
+    "files": 23670,
+    "visibility": "private",
+    "created": "2026-02-24T06:15:49Z",
+    "packages": [
+      "pandas",
+      "numpy",
+      "scipy",
+      "scikit-learn",
+      "matplotlib",
+      "seaborn",
+      "plotly",
+      "statsmodels",
+      "prophet",
+      "lifetimes",
+      "mlxtend",
+      "squarify",
+      "pillow",
+      "openpyxl"
+    ]
+  },
+  "env_var": "ANALYTICS_SNAPSHOT_ID=snp_39ad8274d8de96e4ace2e0e95d1cad1c20d8fc04f57a608edf45f86ebd18",
+  "notes": "Sandbox may terminate after idle timeout. Snapshot persists indefinitely. To recreate sandbox from snapshot: agentuity cloud sandbox create --runtime python:3.13 --snapshot <snapshot_id> --name analytics-v3 --network --idle-timeout 45m"
+}

@@ -327,6 +327,31 @@ The sandbox supports Python, R, and other runtimes. Currently only `bun:1` is us
 - [ ] **Runtime selection** — let the LLM or config choose the best runtime for a task
 - [ ] **Per-analysis runtime** — store preferred runtime in the analysis type config
 
+### 4.5 Analytics Sandbox Quality Engineering
+
+**Status:** ✅ Complete
+
+Production-grade quality infrastructure for the Phase 10 Python analytics sandbox:
+
+- [x] **Code template library** — pre-built Python code templates stored in KV
+      (`analytics:templates:<action>`), keyed by analysis type. The data-science agent
+      retrieves templates and fills parameters instead of generating from scratch.
+      Dramatically reduces hallucination.
+- [x] **Python input validation** — `validate_input()` added to `main.py` dispatcher.
+      Validates column existence, numeric data types, minimum row counts, and date
+      column parsing before dispatching to any analytics module.
+- [x] **Execution metrics tracking** — `logAnalyticsMetrics()` records `durationMs`,
+      `cpuTimeMs`, `memoryByteSec`, `exitCode`, and `dataRowCount` per action type
+      in KV storage with 24h TTL. `getAnalyticsMetrics()` retrieves aggregated stats
+      for admin dashboard.
+- [x] **Output schema validation** — `validateAnalyticsOutput()` in `analytics.ts`
+      validates Python output structure: summary objects, chart base64 data/dimensions,
+      table column/row structure. Catches malformed output early.
+- [ ] **Canary execution** — run analytics on first 100 rows before full dataset.
+      If canary fails, abort without wasting resources on full execution.
+- [ ] **Output fingerprinting** — hash action + params + data, cache results in KV
+      with TTL. Return cached result for identical repeat queries.
+
 ---
 
 ## Phase 5 — Agent Code

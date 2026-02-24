@@ -1034,6 +1034,46 @@ export const chatMessages = pgTable(
 );
 
 // ============================================================
+// Analytics Configuration Tables
+// ============================================================
+
+/** Analytics Configs — per-algorithm-category settings configurable from the Admin Console.
+ *
+ *  Each row configures one analytics category (forecasting, classification,
+ *  customer, anomaly, charts, pricing). The `params` JSONB holds all tunable
+ *  algorithm parameters for that category. Defaults live in TypeScript
+ *  (`src/lib/analytics-defaults.ts`) — DB overrides are deep-merged at runtime.
+ *
+ *  Ships out-of-box with sensible defaults for every industry. Businesses tune
+ *  parameters (forecast horizon, service levels, anomaly sensitivity, etc.)
+ *  from the Admin Console without code changes.
+ */
+export const analyticsConfigs = pgTable(
+  "analytics_configs",
+  {
+    id: id(),
+    /** Category identifier: forecasting, classification, customer, anomaly, charts, pricing, inventory */
+    category: varchar("category", { length: 50 }).notNull().unique(),
+    /** Human-friendly label for the admin UI */
+    displayName: varchar("display_name", { length: 100 }).notNull(),
+    /** Description shown in admin UI — explains what this category does */
+    description: text("description"),
+    /** Master toggle — disables all algorithms in this category */
+    isEnabled: boolean("is_enabled").notNull().default(true),
+    /** Algorithm-specific tunable parameters (deep-merged with TS defaults) */
+    params: jsonb("params").$type<Record<string, unknown>>().notNull().default({}),
+    /** Auto-run schedule config (cron expression, frequency, last run, etc.) */
+    schedule: jsonb("schedule").$type<Record<string, unknown>>(),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_analytics_configs_category").on(t.category),
+    index("idx_analytics_configs_enabled").on(t.isEnabled),
+  ]
+);
+
+// ============================================================
 // Agent Configuration Tables
 // ============================================================
 

@@ -1,0 +1,3 @@
+"""
+Analytics Engine — Package root.
+"""

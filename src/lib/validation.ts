@@ -163,6 +163,15 @@ export const updateAgentConfigSchema = z.object({
   resetToDefaults: z.boolean().optional(),
 });
 
+// --- Analytics Configs ---
+export const updateAnalyticsConfigSchema = z.object({
+  displayName: z.string().max(100).optional(),
+  description: z.string().optional().nullable(),
+  isEnabled: z.boolean().optional(),
+  params: z.record(z.unknown()).optional(),
+  schedule: z.record(z.unknown()).optional().nullable(),
+});
+
 // --- Settings ---
 export const updateSettingsSchema = z.record(z.string());
 

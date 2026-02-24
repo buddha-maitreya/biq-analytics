@@ -51,3 +51,4 @@ export { default as attachmentRoutes } from "./attachments";
 export { default as approvalRoutes } from "./approvals";
 export { default as transferRoutes } from "./transfers";
 export { default as salesRoutes } from "./sales";
+export { default as analyticsConfigRoutes } from "./analytics-configs";

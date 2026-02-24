@@ -38,7 +38,7 @@ import { maskPII } from "@lib/pii";
 import { validateTextOutput } from "@lib/output-validation";
 import { createTokenTracker, DEFAULT_TOKEN_BUDGETS } from "@lib/tokens";
 import { SpanCollector, traced } from "@lib/tracing";
-import { getAgentConfigWithDefaults, type AgentConfigRow } from "@services/agent-configs";
+import { getAgentConfigWithDefaults } from "@services/agent-configs";
 import { getReportPromptForType, getReportTypes } from "@services/type-registry";
 import { saveReport } from "@services/reports";
 import type { AISettings } from "@services/settings";
@@ -93,46 +93,32 @@ const agent = createAgent("report-generator", {
   schema: { input: inputSchema, output: outputSchema },
 
   setup: async (): Promise<ReportConfig> => {
-    // Wrap in try/catch — if DB is unreachable on cold start, return safe
-    // defaults so the handler still runs (with degraded config) instead of
-    // crashing with "undefined is not an object (evaluating 'Y.config')".
-    try {
-      const agentConfig = await getAgentConfigWithDefaults("report-generator");
-      const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
-
-      return {
-        agentConfig,
-        maxSqlSteps: (cfg.maxSqlSteps as number) ?? 6,
-        defaultFormat: (cfg.defaultFormat as string) ?? "markdown",
-        temperature: agentConfig.temperature
-          ? parseFloat(agentConfig.temperature)
-          : undefined,
-      };
-    } catch (err) {
-      console.error("[report-generator] setup() failed, using defaults:", err);
-      return {
-        agentConfig: {
-          id: "fallback-setup",
-          agentName: "report-generator",
-          displayName: "The Writer",
-          description: "Professional report writer",
-          isActive: true,
-          modelOverride: null,
-          temperature: null,
-          maxSteps: 6,
-          timeoutMs: 30000,
-          customInstructions: null,
-          executionPriority: 2,
-          config: { defaultFormat: "markdown", maxSqlSteps: 6 },
-          metadata: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-        maxSqlSteps: 6,
-        defaultFormat: "markdown",
-        temperature: undefined,
-      };
-    }
+    // Static defaults only — no DB calls, cannot fail or timeout.
+    // Live config is loaded per-request in the handler via
+    // getAgentConfigWithDefaults() (60s memory cache, infallible
+    // fallback to AGENT_DEFAULTS if DB is unreachable).
+    return {
+      agentConfig: {
+        id: "",
+        agentName: "report-generator",
+        displayName: "The Writer",
+        description: "Professional report writer",
+        isActive: true,
+        modelOverride: null,
+        temperature: null,
+        maxSteps: 6,
+        timeoutMs: 30000,
+        customInstructions: null,
+        executionPriority: 2,
+        config: { defaultFormat: "markdown", maxSqlSteps: 6 },
+        metadata: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      maxSqlSteps: 6,
+      defaultFormat: "markdown",
+      temperature: undefined,
+    };
   },
 
   shutdown: async (_app, _config) => {
@@ -146,45 +132,14 @@ const agent = createAgent("report-generator", {
     // Phase 1.10: Telemetry collector
     const collector = new SpanCollector("report-generator");
 
-    // Defensive: ctx.config can be undefined if setup() threw (DB issue, cold start race, etc.)
-    // ────────────────────────────────────────────────────────────
-    // Runtime Config & Fallbacks
-    // ────────────────────────────────────────────────────────────
-
-    // NOTE: Do NOT shadow the `config` import from @lib/config — it provides
-    // labels, companyName, currency used throughout this handler.
-    const runtimeConfig = (ctx.config ?? {}) as Partial<ReportConfig>;
-
-    // Destructure with safe defaults — if ctx.config is undefined (setup() wasn't
-    // called or runtime skipped it), maxSqlSteps would be undefined → Vercel AI SDK
-    // defaults maxSteps to 1 → LLM gets one step → reports silently fail.
-    const {
-      agentConfig: rawAgentConfig,
-      maxSqlSteps = 6,
-      defaultFormat = "markdown",
-      temperature,
-    } = runtimeConfig;
-
-    // Fallback if agentConfig is missing (which can happen even if ctx.config exists)
-    const fallbackAgentConfig: AgentConfigRow = {
-      id: "fallback-generated",
-      agentName: "report-generator",
-      displayName: "The Writer",
-      description: null,
-      isActive: true,
-      modelOverride: null,
-      temperature: null,
-      maxSteps: 6,
-      timeoutMs: 30000,
-      customInstructions: null,
-      executionPriority: 2,
-      config: { defaultFormat: "markdown", maxSqlSteps: 6 },
-      metadata: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    const agentConfig = rawAgentConfig ?? fallbackAgentConfig;
+    // ── Load live agent config (infallible — 60s cache, AGENT_DEFAULTS fallback) ──
+    const agentConfig = await getAgentConfigWithDefaults("report-generator");
+    const cfgJson = (agentConfig.config ?? {}) as Record<string, unknown>;
+    const maxSqlSteps = (cfgJson.maxSqlSteps as number) ?? 6;
+    const defaultFormat = (cfgJson.defaultFormat as string) ?? "markdown";
+    const temperature = agentConfig.temperature
+      ? parseFloat(agentConfig.temperature)
+      : undefined;
 
     // Phase 7.5: Token budget tracker
     const tokenTracker = createTokenTracker();

@@ -55,55 +55,37 @@ const agent = createAgent("data-science", {
   schema: { input: inputSchema, output: outputSchema },
 
   setup: async (): Promise<DataScienceConfig> => {
-    try {
-      const agentConfig = await getAgentConfigWithDefaults("data-science");
-      const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
-
-      return {
-        agentConfig,
-        maxSteps: agentConfig.maxSteps ?? 8,
-        recentMessageCount:
-          (cfg.recentMessageCount as number) ?? DEFAULT_RECENT_MESSAGE_COUNT,
-        compressionThreshold:
-          (cfg.compressionThreshold as number) ?? DEFAULT_COMPRESSION_THRESHOLD,
-        compressionModel: (cfg.compressionModel as string) ?? "gpt-4o-mini",
-        sandboxTimeoutMs: (cfg.sandboxTimeoutMs as number) ?? 30_000,
-        modelId: agentConfig.modelOverride ?? "gpt-4o",
-        temperature: agentConfig.temperature
-          ? parseFloat(agentConfig.temperature)
-          : undefined,
-        routingExamples: cfg.routingExamples as any[] | undefined,
-      };
-    } catch (err) {
-      console.error("[data-science] setup() failed, using defaults:", err);
-      return {
-        agentConfig: {
-          id: "fallback-setup",
-          agentName: "data-science",
-          displayName: "The Brain",
-          description: "Central orchestrator",
-          isActive: true,
-          modelOverride: null,
-          temperature: null,
-          maxSteps: 8,
-          timeoutMs: 30000,
-          customInstructions: null,
-          executionPriority: 1,
-          config: {},
-          metadata: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
+    // Static defaults only — no DB calls, cannot fail or timeout.
+    // Live config is loaded per-request in the handler via
+    // getAgentConfigWithDefaults() (60s memory cache, infallible
+    // fallback to AGENT_DEFAULTS if DB is unreachable).
+    return {
+      agentConfig: {
+        id: "",
+        agentName: "data-science",
+        displayName: "The Brain",
+        description: "Central orchestrator",
+        isActive: true,
+        modelOverride: null,
+        temperature: null,
         maxSteps: 8,
-        recentMessageCount: DEFAULT_RECENT_MESSAGE_COUNT,
-        compressionThreshold: DEFAULT_COMPRESSION_THRESHOLD,
-        compressionModel: "gpt-4o-mini",
-        sandboxTimeoutMs: 30_000,
-        modelId: "gpt-4o",
-        temperature: undefined,
-        routingExamples: undefined,
-      };
-    }
+        timeoutMs: 60000,
+        customInstructions: null,
+        executionPriority: 0,
+        config: { enableSandbox: true, compressionThreshold: 20 },
+        metadata: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      maxSteps: 8,
+      recentMessageCount: DEFAULT_RECENT_MESSAGE_COUNT,
+      compressionThreshold: DEFAULT_COMPRESSION_THRESHOLD,
+      compressionModel: "gpt-4o-mini",
+      sandboxTimeoutMs: 30_000,
+      modelId: "gpt-4o",
+      temperature: undefined,
+      routingExamples: undefined,
+    };
   },
 
   shutdown: async (_app, _config) => {
@@ -134,24 +116,15 @@ const agent = createAgent("data-science", {
     // Phase 1.10: Telemetry collector
     const collector = new SpanCollector("data-science", input.sessionId);
 
-    // Defensive: ctx.config can be undefined if setup() threw (DB issue, cold start race)
-    if (!ctx.config) {
-      ctx.logger.error("Data science agent config is undefined — setup() likely failed");
-      return {
-        text: "I'm temporarily unable to process your request — the system configuration could not be loaded. Please try again in a moment.",
-        toolCalls: [],
-      };
-    }
-
-    const {
-      agentConfig,
-      maxSteps,
-      recentMessageCount,
-      sandboxTimeoutMs,
-      modelId,
-      temperature,
-      routingExamples,
-    } = ctx.config;
+    // ── Load live agent config (infallible — 60s cache, AGENT_DEFAULTS fallback) ──
+    const agentConfig = await getAgentConfigWithDefaults("data-science");
+    const cfgJson = (agentConfig.config ?? {}) as Record<string, unknown>;
+    const maxSteps = agentConfig.maxSteps ?? 8;
+    const recentMessageCount = (cfgJson.recentMessageCount as number) ?? DEFAULT_RECENT_MESSAGE_COUNT;
+    const sandboxTimeoutMs = (cfgJson.sandboxTimeoutMs as number) ?? 30_000;
+    const modelId = agentConfig.modelOverride ?? "gpt-4o";
+    const temperature = agentConfig.temperature ? parseFloat(agentConfig.temperature) : undefined;
+    const routingExamples = cfgJson.routingExamples as any[] | undefined;
 
     // Phase 7.5: Token budget tracker
     const tokenTracker = createTokenTracker();

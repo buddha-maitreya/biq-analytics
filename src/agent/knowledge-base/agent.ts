@@ -26,7 +26,7 @@ import { maskPII } from "@lib/pii";
 import { validateTextOutput } from "@lib/output-validation";
 import { createTokenTracker, DEFAULT_TOKEN_BUDGETS } from "@lib/tokens";
 import { SpanCollector, traced } from "@lib/tracing";
-import { getAgentConfigWithDefaults, type AgentConfigRow } from "@services/agent-configs";
+import { getAgentConfigWithDefaults } from "@services/agent-configs";
 import {
   DocMetadata,
   DocIndexEntry,
@@ -49,47 +49,32 @@ const agent = createAgent("knowledge-base", {
   schema: { input: inputSchema, output: outputSchema },
 
   setup: async (): Promise<KnowledgeBaseConfig> => {
-    // Wrap in try/catch — if the DB is unreachable, return safe defaults
-    // so the agent can still handle requests (with degraded config).
-    try {
-      const agentConfig = await getAgentConfigWithDefaults("knowledge-base");
-      const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
-
-      return {
-        agentConfig,
-        topK: (cfg.topK as number) ?? 5,
-        similarityThreshold: (cfg.similarityThreshold as number) ?? 0.7,
-        temperature: agentConfig.temperature
-          ? parseFloat(agentConfig.temperature)
-          : undefined,
-      };
-    } catch (err) {
-      // DB likely unreachable — return minimal defaults so the handler
-      // can still run (it will use fallback config values).
-      console.error("[knowledge-base] setup() failed, using defaults:", err);
-      return {
-        agentConfig: {
-          id: "",
-          agentName: "knowledge-base",
-          displayName: "The Librarian",
-          description: "Document retrieval specialist",
-          isActive: true,
-          modelOverride: null,
-          temperature: null,
-          maxSteps: 3,
-          timeoutMs: 15000,
-          customInstructions: null,
-          executionPriority: 3,
-          config: { topK: 5, similarityThreshold: 0.7 },
-          metadata: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-        topK: 5,
-        similarityThreshold: 0.7,
-        temperature: undefined,
-      };
-    }
+    // Static defaults only — no DB calls, cannot fail or timeout.
+    // Live config is loaded per-request in the handler via
+    // getAgentConfigWithDefaults() (60s memory cache, infallible
+    // fallback to AGENT_DEFAULTS if DB is unreachable).
+    return {
+      agentConfig: {
+        id: "",
+        agentName: "knowledge-base",
+        displayName: "The Librarian",
+        description: "Document retrieval specialist",
+        isActive: true,
+        modelOverride: null,
+        temperature: null,
+        maxSteps: 3,
+        timeoutMs: 15000,
+        customInstructions: null,
+        executionPriority: 3,
+        config: { topK: 5, similarityThreshold: 0.7 },
+        metadata: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      topK: 5,
+      similarityThreshold: 0.7,
+      temperature: undefined,
+    };
   },
 
   shutdown: async (_app, _config) => {
@@ -103,36 +88,14 @@ const agent = createAgent("knowledge-base", {
     // Phase 1.10: Telemetry collector
     const collector = new SpanCollector("knowledge-base");
 
-    if (!ctx.config) {
-      ctx.logger.warn("ctx.config undefined — app setup may have failed");
-      return {
-        success: false,
-        answer: "Knowledge base unavailable — configuration not loaded. Please retry.",
-        error: "Agent setup() failed — ctx.config is undefined. Check agent_configs table and database connectivity.",
-        errorStage: "setup",
-      };
-    }
-
-    const { topK, similarityThreshold, temperature } = ctx.config;
-    // Guard: agentConfig may be undefined if ctx.config was set to a partial
-    // object (e.g., runtime serialization issue). Use safe defaults.
-    const agentConfig = ctx.config.agentConfig ?? {
-      id: "",
-      agentName: "knowledge-base",
-      displayName: "The Librarian",
-      description: "Document retrieval specialist",
-      isActive: true,
-      modelOverride: null,
-      temperature: null,
-      maxSteps: 3,
-      timeoutMs: 15000,
-      customInstructions: null,
-      executionPriority: 3,
-      config: { topK: 5, similarityThreshold: 0.7 },
-      metadata: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    } satisfies AgentConfigRow;
+    // ── Load live agent config (infallible — 60s cache, AGENT_DEFAULTS fallback) ──
+    const agentConfig = await getAgentConfigWithDefaults("knowledge-base");
+    const cfgJson = (agentConfig.config ?? {}) as Record<string, unknown>;
+    const topK = (cfgJson.topK as number) ?? 5;
+    const similarityThreshold = (cfgJson.similarityThreshold as number) ?? 0.7;
+    const temperature = agentConfig.temperature
+      ? parseFloat(agentConfig.temperature)
+      : undefined;
 
     switch (input.action) {
       // ─── RAG Query ────────────────────────────────────────

@@ -158,37 +158,30 @@ const agent = createAgent("document-scanner", {
   schema: { input: inputSchema, output: outputSchema },
 
   setup: async (): Promise<DocumentScannerConfig> => {
-    try {
-      const agentConfig = await getAgentConfigWithDefaults("document-scanner");
-      return {
-        agentConfig,
-        temperature: agentConfig.temperature
-          ? parseFloat(agentConfig.temperature)
-          : 0, // Low temperature for accurate extraction
-      };
-    } catch (err) {
-      console.error("[document-scanner] setup() failed, using defaults:", err);
-      return {
-        agentConfig: {
-          id: "fallback-setup",
-          agentName: "document-scanner",
-          displayName: "The Scanner",
-          description: "Document processing specialist",
-          isActive: true,
-          modelOverride: null,
-          temperature: null,
-          maxSteps: 3,
-          timeoutMs: 30000,
-          customInstructions: null,
-          executionPriority: 4,
-          config: {},
-          metadata: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-        temperature: 0,
-      };
-    }
+    // Static defaults only — no DB calls, cannot fail or timeout.
+    // Live config is loaded per-request in the handler via
+    // getAgentConfigWithDefaults() (60s memory cache, infallible
+    // fallback to AGENT_DEFAULTS if DB is unreachable).
+    return {
+      agentConfig: {
+        id: "",
+        agentName: "document-scanner",
+        displayName: "The Scanner",
+        description: "Document processing specialist",
+        isActive: true,
+        modelOverride: null,
+        temperature: null,
+        maxSteps: 4,
+        timeoutMs: 30000,
+        customInstructions: null,
+        executionPriority: 4,
+        config: { supportedModes: ["barcode", "stock-sheet", "invoice"] },
+        metadata: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      temperature: 0,
+    };
   },
 
   shutdown: async (_app, _config) => {
@@ -199,25 +192,11 @@ const agent = createAgent("document-scanner", {
     ctx.state.set("startedAt", Date.now());
     ctx.logger.info("[SCANNER:1] Handler invoked", { mode: input.mode, hasImageUrl: !!input.imageUrl, hasImageData: !!input.imageData, imageDataLen: input.imageData?.length, imageUrlPrefix: input.imageUrl?.slice(0, 80) });
 
-    if (!ctx.config) {
-      ctx.logger.warn("[SCANNER:1] ctx.config undefined — app setup may have failed");
-      return {
-        success: false,
-        mode: input.mode,
-        error: "Document scanner unavailable — configuration not loaded. Please retry.",
-      };
-    }
-
-    const { agentConfig, temperature } = ctx.config;
-
-    if (!agentConfig) {
-      ctx.logger.warn("[SCANNER:1] agentConfig undefined within ctx.config");
-      return {
-        success: false,
-        mode: input.mode,
-        error: "Document scanner unavailable — agent configuration missing. Please retry.",
-      };
-    }
+    // ── Load live agent config (infallible — 60s cache, AGENT_DEFAULTS fallback) ──
+    const agentConfig = await getAgentConfigWithDefaults("document-scanner");
+    const temperature = agentConfig.temperature
+      ? parseFloat(agentConfig.temperature)
+      : 0; // Low temperature for accurate extraction
 
     ctx.logger.info("[SCANNER:2] Config loaded", { modelOverride: agentConfig.modelOverride, temperature, hasCustomInstructions: !!agentConfig.customInstructions });
 

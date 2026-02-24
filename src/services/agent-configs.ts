@@ -168,7 +168,15 @@ export async function getAgentConfigWithDefaults(agentName: string): Promise<Age
   const cached = memoryCache.get<AgentConfigRow>(cacheKey);
   if (cached) return cached;
 
-  const row = await getAgentConfig(agentName);
+  // DB call — wrapped in try/catch so a connectivity issue (cold start,
+  // network blip) falls through to the synthetic defaults below instead
+  // of propagating an exception to every caller.
+  let row: AgentConfigRow | null = null;
+  try {
+    row = await getAgentConfig(agentName);
+  } catch {
+    // DB unreachable — fall through to synthetic AGENT_DEFAULTS
+  }
   if (row) {
     memoryCache.set(cacheKey, row, 60);
     return row;

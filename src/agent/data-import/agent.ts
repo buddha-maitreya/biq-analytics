@@ -92,21 +92,14 @@ const agent = createAgent("data-import", {
   schema: { input: inputSchema, output: outputSchema },
 
   setup: async (): Promise<DataImportConfig> => {
-    try {
-      const agentConfig = await getAgentConfigWithDefaults("data-import");
-      const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
-
-      return {
-        maxBatchSize: (cfg.maxBatchSize as number) ?? 1000,
-        defaultTimeout: (cfg.defaultTimeoutMs as number) ?? 30_000,
-      };
-    } catch (err) {
-      console.error("[data-import] setup() failed, using defaults:", err);
-      return {
-        maxBatchSize: 1000,
-        defaultTimeout: 30_000,
-      };
-    }
+    // Static defaults only — no DB calls, cannot fail or timeout.
+    // Live config is loaded per-request in the handler via
+    // getAgentConfigWithDefaults() (60s memory cache, infallible
+    // fallback to AGENT_DEFAULTS if DB is unreachable).
+    return {
+      maxBatchSize: 1000,
+      defaultTimeout: 30_000,
+    };
   },
 
   shutdown: async (_app, _config) => {
@@ -117,20 +110,10 @@ const agent = createAgent("data-import", {
   handler: async (ctx, input) => {
     const startTime = Date.now();
 
-    if (!ctx.config) {
-      ctx.logger.warn("ctx.config undefined — app setup may have failed");
-      return {
-        success: false,
-        importType: input.importType,
-        recordsProcessed: 0,
-        recordsCreated: 0,
-        recordsUpdated: 0,
-        recordsSkipped: 0,
-        errors: [{ row: 0, message: "Import unavailable — configuration not loaded. Please retry." }],
-        durationMs: Date.now() - startTime,
-        dryRun: input.dryRun,
-      };
-    }
+    // ── Load live agent config (infallible — 60s cache, AGENT_DEFAULTS fallback) ──
+    const importAgentConfig = await getAgentConfigWithDefaults("data-import");
+    const cfgJson = (importAgentConfig.config ?? {}) as Record<string, unknown>;
+    const defaultTimeout = (cfgJson.defaultTimeoutMs as number) ?? 30_000;
 
     ctx.logger.info("Data import started", {
       importType: input.importType,
@@ -166,7 +149,7 @@ const agent = createAgent("data-import", {
           const response = await fetch(input.source.url, {
             method: input.source.method,
             headers: input.source.headers,
-            signal: AbortSignal.timeout(ctx.config.defaultTimeout),
+            signal: AbortSignal.timeout(defaultTimeout),
           });
           if (!response.ok) {
             return errorResult(input, startTime, `API returned ${response.status}`);

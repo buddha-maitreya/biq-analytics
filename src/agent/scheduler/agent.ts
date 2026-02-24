@@ -29,7 +29,7 @@ import {
   failExecution,
   markScheduleRun,
 } from "@services/scheduler";
-import { getAgentConfigWithDefaults } from "@services/agent-configs";
+// import { getAgentConfigWithDefaults } from "@services/agent-configs"; // Available if handler needs live config
 import { runAllEvals } from "@api/eval-cron";
 import { db, notifications, users } from "@db/index";
 import { eq, sql } from "drizzle-orm";
@@ -264,21 +264,14 @@ const scheduler = createAgent("scheduler", {
   schema: { input: inputSchema, output: outputSchema },
 
   setup: async (): Promise<SchedulerConfig> => {
-    try {
-      const agentConfig = await getAgentConfigWithDefaults("scheduler");
-      const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
-
-      return {
-        maxRetries: (cfg.maxRetries as number) ?? 3,
-        defaultTimeoutMs: (cfg.defaultTimeoutMs as number) ?? 60_000,
-      };
-    } catch (err) {
-      console.error("[scheduler] setup() failed, using defaults:", err);
-      return {
-        maxRetries: 3,
-        defaultTimeoutMs: 60_000,
-      };
-    }
+    // Static defaults only — no DB calls, cannot fail or timeout.
+    // Live config is loaded per-request in the handler via
+    // getAgentConfigWithDefaults() (60s memory cache, infallible
+    // fallback to AGENT_DEFAULTS if DB is unreachable).
+    return {
+      maxRetries: 3,
+      defaultTimeoutMs: 60_000,
+    };
   },
 
   shutdown: async (_app, _config) => {

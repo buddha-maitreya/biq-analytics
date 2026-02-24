@@ -59,55 +59,37 @@ const agent = createAgent("insights-analyzer", {
   schema: { input: inputSchema, output: outputSchema },
 
   setup: async (): Promise<InsightsConfig> => {
-    try {
-      const agentConfig = await getAgentConfigWithDefaults("insights-analyzer");
-      const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
-
-      return {
-        agentConfig,
-        sandboxTimeoutMs: (cfg.sandboxTimeoutMs as number) ?? 30_000,
-        structuringModel: (cfg.structuringModel as string) ?? "gpt-4o-mini",
-        maxSteps: agentConfig.maxSteps ?? 5,
-        temperature: agentConfig.temperature
-          ? parseFloat(agentConfig.temperature)
-          : undefined,
-        sandboxSnapshotId: cfg.sandboxSnapshotId as string | undefined,
-        sandboxRuntime: cfg.sandboxRuntime as string | undefined,
-        sandboxDeps: cfg.sandboxDeps as string[] | undefined,
-        sandboxMemory: (cfg.sandboxMemoryMb as number)
-          ? `${cfg.sandboxMemoryMb}MB`
-          : undefined,
-      };
-    } catch (err) {
-      console.error("[insights-analyzer] setup() failed, using defaults:", err);
-      return {
-        agentConfig: {
-          id: "fallback-setup",
-          agentName: "insights-analyzer",
-          displayName: "The Analyst",
-          description: "Statistical analysis specialist",
-          isActive: true,
-          modelOverride: null,
-          temperature: null,
-          maxSteps: 5,
-          timeoutMs: 30000,
-          customInstructions: null,
-          executionPriority: 3,
-          config: {},
-          metadata: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-        sandboxTimeoutMs: 30_000,
-        structuringModel: "gpt-4o-mini",
+    // Static defaults only — no DB calls, cannot fail or timeout.
+    // Live config is loaded per-request in the handler via
+    // getAgentConfigWithDefaults() (60s memory cache, infallible
+    // fallback to AGENT_DEFAULTS if DB is unreachable).
+    return {
+      agentConfig: {
+        id: "",
+        agentName: "insights-analyzer",
+        displayName: "The Analyst",
+        description: "Statistical analysis specialist",
+        isActive: true,
+        modelOverride: null,
+        temperature: null,
         maxSteps: 5,
-        temperature: undefined,
-        sandboxSnapshotId: undefined,
-        sandboxRuntime: undefined,
-        sandboxDeps: undefined,
-        sandboxMemory: undefined,
-      };
-    }
+        timeoutMs: 45000,
+        customInstructions: null,
+        executionPriority: 1,
+        config: { structuringModel: "gpt-4o-mini", sandboxMemoryMb: 256, sandboxTimeoutMs: 30000 },
+        metadata: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      sandboxTimeoutMs: 30_000,
+      structuringModel: "gpt-4o-mini",
+      maxSteps: 5,
+      temperature: undefined,
+      sandboxSnapshotId: undefined,
+      sandboxRuntime: undefined,
+      sandboxDeps: undefined,
+      sandboxMemory: undefined,
+    };
   },
 
   shutdown: async (_app, _config) => {
@@ -139,26 +121,20 @@ const agent = createAgent("insights-analyzer", {
       return cached;
     }
 
-    const {
-      agentConfig,
-      sandboxTimeoutMs,
-      maxSteps,
-      temperature,
-      sandboxSnapshotId,
-      sandboxRuntime,
-      sandboxDeps,
-      sandboxMemory,
-    } = ctx.config ?? {} as any;
-
-    if (!ctx.config || !agentConfig) {
-      ctx.logger.error("Insights analyzer config is undefined — setup() likely failed");
-      return {
-        analysisType: input.analysis,
-        generatedAt: new Date().toISOString(),
-        insights: [],
-        summary: "Analysis is temporarily unavailable — the system configuration could not be loaded. Please try again.",
-      };
-    }
+    // ── Load live agent config (infallible — 60s cache, AGENT_DEFAULTS fallback) ──
+    const agentConfig = await getAgentConfigWithDefaults("insights-analyzer");
+    const cfgJson = (agentConfig.config ?? {}) as Record<string, unknown>;
+    const sandboxTimeoutMs = (cfgJson.sandboxTimeoutMs as number) ?? 30_000;
+    const maxSteps = agentConfig.maxSteps ?? 5;
+    const temperature = agentConfig.temperature
+      ? parseFloat(agentConfig.temperature)
+      : undefined;
+    const sandboxSnapshotId = cfgJson.sandboxSnapshotId as string | undefined;
+    const sandboxRuntime = cfgJson.sandboxRuntime as string | undefined;
+    const sandboxDeps = cfgJson.sandboxDeps as string[] | undefined;
+    const sandboxMemory = (cfgJson.sandboxMemoryMb as number)
+      ? `${cfgJson.sandboxMemoryMb}MB`
+      : undefined;
 
     // Access app-level AI settings from ctx.app (loaded once in app.ts setup)
     const appState = ctx.app as unknown as { aiSettings?: AISettings } | undefined;

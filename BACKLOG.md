@@ -1,0 +1,41 @@
+Pending features:
+User can upload document in the chat UI and the data populates automatically in relevant tables
+User can run approvals from the chat UI
+The chat UI can engage user on any pending actions 
+The chat UI greets and welcomes user by their name
+The chat UI to be conscious of the position and role of the user and therefore customize actionable items accordingly whenever needed
+The chat UI can run predictive analytics - i will updates the metrics for these
+
+
+Enable order creation
+Enter inventory to update in the system real time
+When adding item to products
+	-Should have option to specify warehouse
+	-Should map to next higher-up for approval
+	-Should automatically - as a default - pick warehouse or location the signed in user is located
+Reports section: include all formats - powerpoint, Excel (just data) and PDF/word
+	-Focus on formatting
+	-Include charts (elegant charts)
+Implement email generation - Generate AI Draft
+For documents that are uploaded by staff as summary on business status for the day
+	-Uploads to relevant table
+	-Routes to their supervisor
+	-Used to further train the AI model
+Agent Configuration
+	-Configure agent behavior, models, temperature, and specializations
+Evaluation Dashboard
+	-Monitor AI response quality with automated evaluations
+Observability & Logs
+	-Monitor system health, logs, and performance metrics: Timeline
+Approval workflow - implement fully so that its working by EOW
+Reminder - test if report settings are functional
+Business profile settings - enable logo upload
+Explore:
+	-KRA etims integration
+	-MPESA
+	-Paystack
+RFID scanner capability (explore)
+Operations:
+	-add button to download reports in excel (just data without narration)
+	-add date filters, product, category filters
+	-add warehouse when adding new product (check if necessary)

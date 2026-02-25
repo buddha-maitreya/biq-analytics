@@ -14,7 +14,9 @@ router.get("/orders", async (c) => {
     limit: c.req.query("limit"),
   });
   const customerId = c.req.query("customerId");
-  const result = await svc.listOrders(params, customerId);
+  const startDate  = c.req.query("startDate");
+  const endDate    = c.req.query("endDate");
+  const result = await svc.listOrders(params, customerId, { startDate, endDate });
   return c.json(result);
 });
 

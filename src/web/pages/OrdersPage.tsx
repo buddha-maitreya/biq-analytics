@@ -11,11 +11,23 @@ type SortDir = "asc" | "desc";
 
 export default function OrdersPage({ config }: OrdersPageProps) {
   const [page, setPage] = useState(1);
-  const { data, isLoading, refetch } = useAPI<any>(`GET /api/orders?page=${page}&limit=100`);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const dateQ = `${dateFrom ? `&startDate=${dateFrom}` : ""}${dateTo ? `&endDate=${dateTo}` : ""}`;
+  const { data, isLoading, refetch } = useAPI<any>(`GET /api/orders?page=${page}&limit=50${dateQ}`);
   const [statusFilter, setStatusFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("createdAt");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  const handleDownload = () => {
+    const p = new URLSearchParams();
+    if (dateFrom) p.set("startDate", dateFrom);
+    if (dateTo)   p.set("endDate",   dateTo);
+    const a = document.createElement("a");
+    a.href = `/api/export/orders?${p}`;
+    a.click();
+  };
 
   const orders: any[] = data?.data ?? [];
 
@@ -104,6 +116,9 @@ export default function OrdersPage({ config }: OrdersPageProps) {
             {summary.grandCount} {config.labels.orderPlural.toLowerCase()} · {config.currency} {fmt(summary.grandTotal)} total
           </span>
         </div>
+        <button className="btn btn-secondary" onClick={handleDownload} title="Download visible date range as Excel">
+          ↓ Excel
+        </button>
       </div>
 
       {/* Summary Cards */}
@@ -152,8 +167,28 @@ export default function OrdersPage({ config }: OrdersPageProps) {
         </div>
       )}
 
-      {/* Search Bar */}
+      {/* Date Filter + Search Bar */}
       <div className="toolbar">
+        <div className="date-range-filter">
+          <input
+            type="date"
+            className="date-input"
+            value={dateFrom}
+            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+            title="From date"
+          />
+          <span className="date-sep">–</span>
+          <input
+            type="date"
+            className="date-input"
+            value={dateTo}
+            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+            title="To date"
+          />
+          {(dateFrom || dateTo) && (
+            <button className="search-clear" onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}>✕</button>
+          )}
+        </div>
         <div className="search-box">
           <span className="search-icon">🔍</span>
           <input

@@ -1,5 +1,5 @@
 import { db, invoices, payments, orders } from "@db/index";
-import { eq, sql, desc } from "drizzle-orm";
+import { eq, sql, desc, and, gte, lte } from "drizzle-orm";
 import { config } from "@lib/config";
 import { createInvoiceSchema, recordPaymentSchema } from "@lib/validation";
 import { NotFoundError } from "@lib/errors";
@@ -137,13 +137,25 @@ export async function getInvoice(id: string) {
 
 export async function listInvoices(
   params: PaginationParams,
-  filters?: { customerId?: string; status?: string }
+  filters?: { customerId?: string; status?: string; startDate?: string; endDate?: string }
 ) {
-  const where = filters?.customerId
-    ? eq(invoices.customerId, filters.customerId)
-    : filters?.status
-      ? eq(invoices.status, filters.status)
-      : undefined;
+  const conditions: any[] = [];
+  if (filters?.customerId) conditions.push(eq(invoices.customerId, filters.customerId));
+  if (filters?.status)     conditions.push(eq(invoices.status, filters.status));
+  if (filters?.startDate) {
+    const d = new Date(filters.startDate);
+    if (!isNaN(d.getTime())) conditions.push(gte(invoices.createdAt, d));
+  }
+  if (filters?.endDate) {
+    const d = new Date(filters.endDate);
+    d.setHours(23, 59, 59, 999);
+    if (!isNaN(d.getTime())) conditions.push(lte(invoices.createdAt, d));
+  }
+
+  const where =
+    conditions.length === 0 ? undefined :
+    conditions.length === 1 ? conditions[0] :
+    and(...conditions);
 
   const items = await db.query.invoices.findMany({
     where,

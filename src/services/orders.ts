@@ -8,7 +8,7 @@ import {
   inventoryTransactions,
   warehouses,
 } from "@db/index";
-import { eq, sql, and, asc, desc } from "drizzle-orm";
+import { eq, sql, and, asc, desc, gte, lte } from "drizzle-orm";
 import { config } from "@lib/config";
 import {
   createOrderSchema,
@@ -190,11 +190,25 @@ export async function getOrder(id: string) {
 
 export async function listOrders(
   params: PaginationParams,
-  customerId?: string
+  customerId?: string,
+  opts?: { startDate?: string; endDate?: string }
 ) {
-  const where = customerId
-    ? eq(orders.customerId, customerId)
-    : undefined;
+  const conditions: any[] = [];
+  if (customerId) conditions.push(eq(orders.customerId, customerId));
+  if (opts?.startDate) {
+    const d = new Date(opts.startDate);
+    if (!isNaN(d.getTime())) conditions.push(gte(orders.createdAt, d));
+  }
+  if (opts?.endDate) {
+    const d = new Date(opts.endDate);
+    d.setHours(23, 59, 59, 999);
+    if (!isNaN(d.getTime())) conditions.push(lte(orders.createdAt, d));
+  }
+
+  const where =
+    conditions.length === 0 ? undefined :
+    conditions.length === 1 ? conditions[0] :
+    and(...conditions);
 
   const items = await db.query.orders.findMany({
     where,
@@ -204,13 +218,10 @@ export async function listOrders(
     orderBy: [desc(orders.createdAt)],
   });
 
-  const countWhere = customerId
-    ? eq(orders.customerId, customerId)
-    : undefined;
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)` })
     .from(orders)
-    .where(countWhere);
+    .where(where);
 
   return paginate(items, Number(count), params);
 }

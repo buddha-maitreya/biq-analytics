@@ -13,12 +13,26 @@ export default function SalesPage({ config }: SalesPageProps) {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [branchFilter, setBranchFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
-  const searchParam = search ? `&search=${encodeURIComponent(search)}` : "";
-  const branchParam = branchFilter !== "all" ? `&warehouseId=${branchFilter}` : "";
+  const searchParam  = search       ? `&search=${encodeURIComponent(search)}`       : "";
+  const branchParam  = branchFilter !== "all" ? `&warehouseId=${branchFilter}` : "";
+  const dateFromParam = dateFrom    ? `&startDate=${dateFrom}`                      : "";
+  const dateToParam   = dateTo      ? `&endDate=${dateTo}`                          : "";
   const { data, isLoading, refetch } = useAPI<any>(
-    `GET /api/sales?page=${page}&limit=100${searchParam}${branchParam}`
+    `GET /api/sales?page=${page}&limit=50${searchParam}${branchParam}${dateFromParam}${dateToParam}`
   );
+
+  const handleDownload = () => {
+    const p = new URLSearchParams();
+    if (dateFrom)               p.set("startDate",  dateFrom);
+    if (dateTo)                 p.set("endDate",    dateTo);
+    if (branchFilter !== "all") p.set("warehouseId", branchFilter);
+    const a = document.createElement("a");
+    a.href = `/api/export/sales?${p}`;
+    a.click();
+  };
 
   const salesData: any[] = data?.data ?? [];
 
@@ -118,6 +132,9 @@ export default function SalesPage({ config }: SalesPageProps) {
             {summary.totalCount} transactions · KES {fmt(summary.totalRevenue)} total revenue
           </span>
         </div>
+        <button className="btn btn-secondary" onClick={handleDownload} title="Download as Excel">
+          ↓ Excel
+        </button>
       </div>
 
       {/* Summary Cards */}
@@ -169,6 +186,26 @@ export default function SalesPage({ config }: SalesPageProps) {
 
       {/* Search Bar */}
       <div className="toolbar">
+        <div className="date-range-filter">
+          <input
+            type="date"
+            className="date-input"
+            value={dateFrom}
+            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+            title="From date"
+          />
+          <span className="date-sep">–</span>
+          <input
+            type="date"
+            className="date-input"
+            value={dateTo}
+            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+            title="To date"
+          />
+          {(dateFrom || dateTo) && (
+            <button className="search-clear" onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}>✕</button>
+          )}
+        </div>
         <div className="search-box">
           <span className="search-icon">🔍</span>
           <input

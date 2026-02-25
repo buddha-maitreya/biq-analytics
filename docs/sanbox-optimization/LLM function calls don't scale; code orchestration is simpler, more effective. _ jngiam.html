@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<!-- saved from url=(0043)https://jngiam.bearblog.dev/mcp-large-data/ -->
+<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+  
+  <title>LLM function calls don't scale; code orchestration is simpler, more effective. | jngiam</title>
+  <link rel="canonical" href="https://jngiam.bearblog.dev/mcp-large-data/">
+  
+    
+
+    <meta name="jngiam" content="look-for-the-bear-necessities">
+
+    <!-- Primary Meta Tags -->
+<meta name="title" content="LLM function calls don&#39;t scale; code orchestration is simpler, more effective.">
+<meta name="description" content="
+
+One common practice for working with MCP tools calls is to put the outputs from a tool back into the LLM as a message, and ask the LLM for the next step. ...">
+
+<!-- Open Graph / Facebook -->
+<meta property="og:site_name" content="jngiam">
+<meta property="og:title" content="LLM function calls don&#39;t scale; code orchestration is simpler, more effective.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://jngiam.bearblog.dev/mcp-large-data/">
+<meta property="og:description" content="
+
+One common practice for working with MCP tools calls is to put the outputs from a tool back into the LLM as a message, and ask the LLM for the next step. ...">
+<meta property="og:image" content="https://bear-images.sfo2.cdn.digitaloceanspaces.com/herman-1683556668-0.png">
+
+
+<!-- Twitter -->
+<meta property="twitter:card" content="summary">
+<meta property="twitter:url" content="https://jngiam.bearblog.dev/mcp-large-data/">
+<meta property="twitter:title" content="LLM function calls don&#39;t scale; code orchestration is simpler, more effective.">
+<meta property="twitter:description" content="
+
+One common practice for working with MCP tools calls is to put the outputs from a tool back into the LLM as a message, and ask the LLM for the next step. ...">
+<meta property="twitter:image" content="https://bear-images.sfo2.cdn.digitaloceanspaces.com/herman-1683556668-0.png">
+
+
+
+<!-- Microdata -->
+<script type="application/ld+json">
+  {
+    "@context": "http://schema.org",
+    "@type": "article",
+    "name": "LLM function calls don&#x27;t scale; code orchestration is simpler, more effective.",
+    "headline": "LLM function calls don&#x27;t scale; code orchestration is simpler, more effective.",
+    "url": "https://jngiam.bearblog.dev/mcp-large-data/",
+    "description": "
+
+One common practice for working with MCP tools calls is to put the outputs from a tool back into the LLM as a message, and ask the LLM for the next step. ...",
+    "image": "https://bear-images.sfo2.cdn.digitaloceanspaces.com/herman-1683556668-0.png"
+  }
+</script>
+    <link rel="alternate" type="application/atom+xml" href="https://jngiam.bearblog.dev/feed/" title="jngiam">
+    <link rel="alternate" type="application/rss+xml" href="https://jngiam.bearblog.dev/feed/?type=rss" title="jngiam">
+
+  
+    
+
+    
+    
+  
+  
+  
+    
+        <link rel="shortcut icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns=&#39;http://www.w3.org/2000/svg&#39;%20viewBox=&#39;0%200%20100%20100&#39;%3E%3Ctext%20y=&#39;.9em&#39;%20font-size=&#39;90&#39;%3E%F0%9F%90%BC%3C/text%3E%3C/svg%3E">
+    
+
+
+
+  <style>
+      
+      
+    
+:root {
+    --width: 720px;
+    --font-main: Verdana, sans-serif;
+    --font-secondary: Verdana, sans-serif;
+    --font-scale: 1em;
+    --background-color: #fff;
+    --heading-color: #222;
+    --text-color: #444;
+    --link-color: #3273dc;
+    --visited-color:  #8b6fcb;
+    --code-background-color: #f2f2f2;
+    --code-color: #222;
+    --blockquote-color: #222;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --background-color: #01242e;
+        --heading-color: #eee;
+        --text-color: #ddd;
+        --link-color: #8cc2dd;
+        --visited-color:  #8b6fcb;
+        --code-background-color: #000;
+        --code-color: #ddd;
+        --blockquote-color: #ccc;
+    }
+}
+
+body {
+    font-family: var(--font-secondary);
+    font-size: var(--font-scale);
+    margin: auto;
+    padding: 20px;
+    max-width: var(--width);
+    text-align: left;
+    background-color: var(--background-color);
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    line-height: 1.5;
+    color: var(--text-color);
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-main);
+    color: var(--heading-color);
+}
+
+a {
+    color: var(--link-color);
+    cursor: pointer;
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline; 
+}
+
+nav a {
+    margin-right: 8px;
+}
+
+strong, b {
+    color: var(--heading-color);
+}
+
+button {
+    margin: 0;
+    cursor: pointer;
+}
+
+time {
+ 	font-family: monospace;
+  	font-style: normal;
+  	font-size: 15px;
+}
+
+main {
+    line-height: 1.6;
+}
+
+table {
+    width: 100%;
+}
+
+hr {
+    border: 0;
+    border-top: 1px dashed;
+}
+
+img {
+    max-width: 100%;
+}
+
+code {
+    font-family: monospace;
+    padding: 2px;
+    background-color: var(--code-background-color);
+    color: var(--code-color);
+    border-radius: 3px;
+}
+
+blockquote {
+    border-left: 1px solid #999;
+    color: var(--code-color);
+    padding-left: 20px;
+    font-style: italic;
+}
+
+footer {
+    padding: 25px 0;
+    text-align: center;
+}
+
+.title:hover {
+    text-decoration: none;
+}
+
+.title h1 {
+    font-size: 1.5em;
+}
+
+.inline {
+    width: auto !important;
+}
+
+.highlight, .code {
+    padding: 1px 15px;
+    background-color: var(--code-background-color);
+    color: var(--code-color);
+    border-radius: 3px;
+    margin-block-start: 1em;
+    margin-block-end: 1em;
+    overflow-x: auto;
+}
+
+/* blog post list */
+ul.blog-posts {
+    list-style-type: none;
+    padding: unset;
+}
+
+ul.blog-posts li {
+    display: flex;
+}
+
+ul.blog-posts li span {
+    flex: 0 0 130px;
+}
+
+ul.blog-posts li a:visited {
+    color: var(--visited-color);
+}
+    .upvote-button {
+        padding: 0;
+        margin: 0;
+        border: 0;
+        background-color: inherit;
+        color: inherit;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+    .upvote-button.upvoted {
+        color: salmon;
+    }
+    .upvote-count {
+        margin-top: -3px;
+    }
+
+      
+  </style>
+</head>
+
+<body class="post " onload="(function() { document.cookie = `timezone=${Intl.DateTimeFormat().resolvedOptions().timeZone};path=/`; })()">
+  
+  <header>
+    <a class="title" href="https://jngiam.bearblog.dev/">
+      <h1>
+        jngiam
+      </h1>
+    </a>
+    <nav>
+      <p><a href="https://jngiam.bearblog.dev/">Home</a> <a href="https://jngiam.bearblog.dev/blog/">Blog</a></p>
+
+    </nav>
+  </header>
+  <main>
+    
+
+    
+
+    
+        <h1>LLM function calls don't scale; code orchestration is simpler, more effective.</h1>
+
+        <p>
+            <i>
+                <time datetime="2025-05-20T15:25Z">20 May, 2025</time>
+            </i>
+        </p>
+    
+
+    <p><em>TL;DR: Giving LLMs the full output of tool calls is costly and slow. Output schemas will enable us to get structured data, so we can let the LLM orchestrate processing with generated code. Tool calling in code is simplifying and effective.</em></p>
+<hr>
+<p>One common practice for working with MCP tools calls is to put the outputs from a tool back into the LLM as a message, and ask the LLM for the next step. The hope here is that the model figures out how to interpret the data, and identify the correct next action to take.</p>
+<p>This can work beautifully when the amount of data is small, but we found that when we tried MCP servers with real-world data, it quickly breaks down.</p>
+<h3 id="mcp-in-the-real-world">MCP in the real-world</h3><p>We use Linear and Intercom at our company. We connected to their latest official MCP servers released last week to understand how they were returning tool calls.</p>
+<p>It turns out that both servers returned large JSON blobs in their text content. These appeared to be similar to their APIs, with the exception that the text content did not come with any pre-defined schemas. This meant that the only reasonable way to parse them was to have the LLM interpret the data.</p>
+<p><img src="./LLM function calls don&#39;t scale; code orchestration is simpler, more effective. _ jngiam_files/linear json blob.png" alt="Linear MCP returns list of issues as a big JSON blob"></p>
+<p>These JSON blobs are huge! When we asked Linear's MCP to list issues in our project, the tool call defaulted to returning only 50 issues, ~70k characters corresponding to ~25k tokens.</p>
+<p><img src="./LLM function calls don&#39;t scale; code orchestration is simpler, more effective. _ jngiam_files/Screenshot 2025-05-20 at 8.38.56 AM.png" alt="ID fields become lots of tokens"></p>
+<p>The JSON contains lots of <code>id</code> fields that take up many tokens, and are not semantically meaningful.</p>
+<p>When using Claude with MCPs, it seems that the entire JSON blob gets sent back to the model verbatim.</p>
+<p>This approach quickly runs into issues. For example, if we wanted to get the AI to sort all the issues by due date and display them, it would need to reproduce all the issues verbatim as output tokens! It'd be slow, costly, and could potentially miss data.</p>
+<p>The data in our issues also often contained a lot of distracting information: steps to reproduce an issue, errors, maybe even prompts a user used, or instructions to follow up with a user. The model could fail to emit some of these data accurately, or even worse, deviate from the original instructions.</p>
+<h3 id="data-vs-orchestration">Data vs Orchestration</h3><p>The core problem here is that we're confounding orchestration and data processing together in the same chat thread.</p>
+<p>The "multi-agent" approach tries to address this by spinning up another chat thread ("agent") to focus only on the data processing piece. It performs better when carefully tuned, but it's still awkward when our data is already well structured.</p>
+<p>If the MCP servers are already returning data in a JSON format, it seems much more natural to parse the data, and instead operate on the structured data. Back to our sorting example, rather than asking the LLM to reproduce the outputs directly, we could instead run a <code>sort</code> operation on the data, and return the new array. No hallucinations and this scales to any size of inputs.</p>
+<h3 id="code-execution-as-data-processing">Code execution as data processing</h3><p>This sounds oddly familiar as we already have code interpreters with AI. When we start to bring code execution as a fundamental way to process data from MCP tools (<a href="https://machinelearning.apple.com/research/codeact">Code Act</a>, <a href="https://huggingface.co/blog/smolagents">Smol Agents</a>), this opens the door to scalable ways for AI models to work.</p>
+<p><strong>Variables as memory.</strong> Instead of having an external memory system, the LLM can use variables (system memory) to store any data. Storing a memory is assigning a value to a variable, peeking at the variable is printing it, and the model can choose to pass the variable as an argument when calling another function. Even better, if the language used is well-typed, the model also leverages the schema.</p>
+<p><strong>Tool chaining.</strong> Code can orchestrate multiple function calls: performing them in parallel or taking the outputs from one or more calls and using them as inputs into another. The dependencies between the function calls are implicitly represented via the computation graph the code represents. Importantly, the LLM is not required to regurgitate the data, and we have guarantees of completeness.</p>
+<p><strong>Scalable processing.</strong> Transforming large amounts of data is naturally possible with code. The model can choose to use loops, or lean on libraries such as NumPy or pandas for large data transformations.</p>
+<p>Code can also call other LLMs under the hood: you can have the LLM write code that calls LLMs for unstructured data processing (LLM-inception).</p>
+<h3 id="is-mcp-ready">Is MCP ready?</h3><p>MCP specs already define input schemas, and they’ve just introduced  <a href="https://github.com/modelcontextprotocol/modelcontextprotocol/pull/371">output schemas</a>.</p>
+<p>Once output schemas are widespread, we expect them to unlock use cases on large datasets: building custom dashboards, creating weekly reports on tickets completed, or having the autonomous agents monitor and nudge stalled issues forward.</p>
+<h3 id="what-makes-code-execution-hard">What makes code execution hard?</h3><p>The challenge now shifts to the MCP client side. Most execution environments today run in a tightly controlled sandbox; security is paramount as we're dealing with user-/AI-generated code.</p>
+<p>Allowing an execution environment to also access MCPs, tools, and user data requires careful design to where API keys are stored, and how tools are exposed.</p>
+<p>In our designs, we created sandboxed environments that are keyed with specific API access, the models are provided with documentation on how to call these APIs such that they are able send/retrieve information without ever seeing secrets.</p>
+<p>Most execution environments are stateful (e.g., they may rely on running Jupyter kernels for each user session). This is hard to manage and expensive if users expect to be able to come back to AI task sessions later. A stateless-but-persistent execution environment is paramount for long running (multi-day) task sessions.</p>
+<p>These constraints are creating what we think is a new category of runtimes - "AI runtimes" that use LLMs to orchestrate and perform tasks. We're still in the early phases of working out all the details for this code-execution approach, and we'd love feedback from anyone tackling similar problems. If you're interested in our approach, you can head to <a href="https://lutra.ai/">Lutra</a> to give it a try.</p>
+<hr>
+<p>Subscribe to my blog via <a href="https://jngiam.bearblog.dev/subscribe/">email</a> or <a href="https://jngiam.bearblog.dev/feed/">RSS feed</a>.</p>
+
+
+    
+
+    
+        
+
+        
+            <form id="upvote-form" action="https://jngiam.bearblog.dev/upvote/" method="post" style="display: inline">
+    <small>
+        <input hidden="" name="uid" value="MoKypQqIwwNKCLTYPNcQ" style="display:none">
+        <input hidden="" name="title" value="LLM function calls don&#39;t scale; code orchestration is simpler, more effective." style="display:none">
+
+        <button class="upvote-button" title="Toast this post">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" class="css-i6dzq1">
+                <polyline points="17 11 12 6 7 11"></polyline>
+                <polyline points="17 18 12 13 7 18"></polyline>
+            </svg>
+            <small class="upvote-count">67</small>
+        </button>
+    </small>        
+</form>
+
+<script>
+    const $upvoteButton = document.querySelector('.upvote-button');
+
+    fetch('/upvote-info/MoKypQqIwwNKCLTYPNcQ/').then(response => response.json()).then(data => {
+        document.querySelector('.upvote-count').innerText = data.upvote_count;
+        if (data.upvoted) {
+            $upvoteButton.disabled = true
+            $upvoteButton.style.color = "salmon"
+            $upvoteButton.title = "Toasted"
+        }
+    });
+
+    let moved = false;
+    let pageLoaded = Date.now();
+
+    document.addEventListener('touchmove', () => moved = true);
+    document.addEventListener('mousemove', () => moved = true);
+
+    document.querySelector('#upvote-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+
+        if (moved) {
+            document.querySelector('input[name="title"]').value = "";
+        }
+        if (Date.now() - pageLoaded < 2000 || !moved) {
+            return;
+        }
+
+        fetch(e.target.action, {
+            method: 'post',
+            body: new FormData(e.target),
+        });
+        
+        $upvoteButton.disabled = true
+        $upvoteButton.style.color = "salmon"
+        $upvoteButton.title = "Toasted"
+        const upvoteCount = document.querySelector('.upvote-count')
+        upvoteCount.innerHTML = `${(parseInt(upvoteCount.innerHTML.split(" ")[0]) + 1)}`
+    });
+</script>
+        
+
+        
+            <script>
+            window.addEventListener("load", () => {
+                if (navigator.webdriver !== true) {
+                    const sendHit = score => {
+                        const params = new URLSearchParams({
+                            blog: "jngiam",
+                            token: "MoKypQqIwwNKCLTYPNcQ",
+                            referrer: document.referrer.includes("jngiam.bearblog.dev") ? "" : document.referrer,
+                            title: "",
+                            score: score
+                        });
+                        new Image().src = `/hit/?${params.toString()}`;
+                    };
+
+                    document.addEventListener('touchmove', () => sendHit(100), { once: true });
+                    document.addEventListener('mousemove', () => sendHit(100), { once: true });
+                }
+            });
+            </script>
+        
+    
+
+
+  </main>
+  <footer style="padding:25px 0;">
+    
+    
+    <span>
+        Powered by <a href="https://bearblog.dev/">Bear <span role="img" class="bear" aria-label="ASCII bear logo">ʕ•ᴥ•ʔ</span></a>
+    </span>
+
+  </footer>
+
+  
+  <script>
+        (() => {
+          "use strict";
+          const times = document.querySelectorAll('time');
+          const format_string = "d M, Y" || "d M, Y"
+
+          times.forEach(time => {
+              time.innerText = formatDate(time.dateTime, format_string)
+          });
+
+          function formatDate(dateStr, formatStr) {
+            const date = new Date(dateStr);
+            const day = date.getDate();
+            const month = date.getMonth();
+            const year = date.getFullYear();
+            const weekday = date.getDay();
+            const hours = date.getHours();
+            const minutes = date.getMinutes();
+            const monthsFull = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+            const monthsShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const daysFull = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            const daysShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            
+            function getOrdinal(n) {
+                const s = ['th', 'st', 'nd', 'rd'];
+                const v = n % 100;
+                return s[(v - 20) % 10] || s[v] || s[0];
+            }
+            
+            const map = {
+                'd': () => day.toString().padStart(2, '0'),
+                'm': () => (month + 1).toString().padStart(2, '0'),
+                'Y': () => year.toString(),
+                'y': () => year.toString().slice(-2),
+                'F': () => monthsFull[month],
+                'j': () => day.toString(),
+                'D': () => daysShort[weekday],
+                'l': () => daysFull[weekday],
+                'S': () => getOrdinal(day),
+                'M': () => monthsShort[month],
+                'H': () => hours.toString().padStart(2, '0'),
+                'h': () => {
+                    let h = hours % 12;
+                    h = h === 0 ? 12 : h;
+                    return h.toString().padStart(2, '0');
+                },
+                'g': () => {
+                    let h = hours % 12;
+                    return h === 0 ? '12' : h.toString();
+                },
+                'i': () => minutes.toString().padStart(2, '0'),
+                'a': () => hours < 12 ? 'am' : 'pm',
+                'A': () => hours < 12 ? 'AM' : 'PM',
+            };
+            
+            let result = '';
+            for (let char of formatStr) {
+                result += map[char] ? map[char]() : char;
+            }
+            return result;
+        }
+        })();
+    </script>
+    
+
+</body></html>

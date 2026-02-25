@@ -825,6 +825,23 @@ ${analysisCode.split("\n").map((line) => `        ${line}`).join("\n")}
         if isinstance(__result, dict) and '_CHARTS' in dir() and _CHARTS:
             __result['_charts'] = _CHARTS
         print(json.dumps(__result, cls=AnalysisEncoder))
+    else:
+        # Function returned None (no explicit return or empty data path).
+        # Always produce stdout so the caller can distinguish "no data" from "crash".
+        __fallback = {
+            "insights": [{
+                "title": "Insufficient Data",
+                "severity": "info",
+                "description": "The analysis script executed successfully but returned no results. This usually means the database has insufficient data for this analysis type or timeframe.",
+                "recommendation": "Try a wider timeframe (e.g. 60 or 90 days) or verify that sales/order data exists in the system.",
+                "confidence": 0.1
+            }],
+            "summary": "Analysis completed but found insufficient data to generate insights.",
+            "_confidence": {"sampleSize": 0, "completeness": 0, "timeSpanDays": 0}
+        }
+        if '_CHARTS' in dir() and _CHARTS:
+            __fallback['_charts'] = _CHARTS
+        print(json.dumps(__fallback, cls=AnalysisEncoder))
 except Exception as e:
     import traceback
     print(f"Analysis error: {e}", file=sys.stderr)
@@ -1108,6 +1125,25 @@ export async function executeSandbox(
       parsed = JSON.parse(lastLine);
     } catch {
       parsed = stdout;
+    }
+
+    // Guard: if stdout was empty and exitCode 0, the script produced no output.
+    // This may indicate a sandbox infrastructure issue or silent script failure.
+    if (!parsed && parsed !== 0 && parsed !== false) {
+      return {
+        success: false,
+        stdout,
+        stderr: stderr || undefined,
+        exitCode,
+        dataRowCount,
+        error: stderr
+          ? `Sandbox script produced no output. Stderr: ${stderr.slice(0, 500)}`
+          : "Sandbox script produced no output. The script may not have returned a result, or the sandbox encountered a silent failure.",
+        errorType: "runtime" as const,
+        errorHint: "Ensure the analysis function explicitly returns a dict with 'insights' and 'summary' keys. Check that data exists for the requested timeframe.",
+        explanation,
+        runtime,
+      };
     }
 
     // Extract _charts from parsed result (injected by save_chart() in Python)

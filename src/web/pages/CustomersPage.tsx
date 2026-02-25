@@ -30,7 +30,7 @@ const emptyForm = { name: "", email: "", phone: "", address: "", taxId: "", note
 
 export default function CustomersPage({ config }: CustomersPageProps) {
   const [page, setPage] = useState(1);
-  const { data, isLoading, refetch } = useAPI<any>(`GET /api/customers?page=${page}&limit=100`);
+  const { data, isLoading, refetch } = useAPI<any>(`GET /api/customers?page=${page}&limit=50`);
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -203,6 +203,12 @@ export default function CustomersPage({ config }: CustomersPageProps) {
     }
   };
 
+  const handleDownload = () => {
+    const a = document.createElement("a");
+    a.href = "/api/export/customers";
+    a.click();
+  };
+
   // ── Render ──────────────────────────────────────────────────
   return (
     <div className="page">
@@ -212,9 +218,14 @@ export default function CustomersPage({ config }: CustomersPageProps) {
           <h2>{labelPlural}</h2>
           <p className="text-muted">Manage your {labelPlural.toLowerCase()} and track engagement</p>
         </div>
-        <button className="btn btn-primary" onClick={openCreate}>
-          + New {label}
-        </button>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <button className="btn btn-secondary" onClick={handleDownload} title="Download as Excel">
+            ↓ Excel
+          </button>
+          <button className="btn btn-primary" onClick={openCreate}>
+            + New {label}
+          </button>
+        </div>
       </div>
 
       {/* Summary cards */}

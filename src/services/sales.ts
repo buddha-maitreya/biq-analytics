@@ -1,5 +1,5 @@
 import { db, sales, products, warehouses } from "@db/index";
-import { eq, sql, desc, asc, and, ilike, or } from "drizzle-orm";
+import { eq, sql, desc, asc, and, ilike, or, gte, lte } from "drizzle-orm";
 import { type PaginationParams, paginate, offset } from "@lib/pagination";
 
 /** Generate sequential sale number */
@@ -10,10 +10,10 @@ async function nextSaleNumber(): Promise<string> {
   return `SLE-${String(Number(count) + 1).padStart(6, "0")}`;
 }
 
-/** List sales with pagination, optional search & warehouse filter */
+/** List sales with pagination, optional search, warehouse & date filter */
 export async function listSales(
   params: PaginationParams,
-  opts?: { search?: string; warehouseId?: string }
+  opts?: { search?: string; warehouseId?: string; startDate?: string; endDate?: string }
 ) {
   const { limit } = params;
   const skip = offset(params);
@@ -44,6 +44,15 @@ export async function listSales(
   }
   if (opts?.warehouseId) {
     conditions.push(eq(sales.warehouseId, opts.warehouseId));
+  }
+  if (opts?.startDate) {
+    const d = new Date(opts.startDate);
+    if (!isNaN(d.getTime())) conditions.push(gte(sales.saleDate, d));
+  }
+  if (opts?.endDate) {
+    const d = new Date(opts.endDate);
+    d.setHours(23, 59, 59, 999);
+    if (!isNaN(d.getTime())) conditions.push(lte(sales.saleDate, d));
   }
 
   if (conditions.length > 0) {

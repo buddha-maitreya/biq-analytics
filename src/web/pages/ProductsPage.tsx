@@ -11,7 +11,7 @@ type SortDir = "asc" | "desc";
 
 export default function ProductsPage({ config }: ProductsPageProps) {
   const [page, setPage] = useState(1);
-  const { data, isLoading, refetch } = useAPI<any>(`GET /api/products?page=${page}&limit=100`);
+  const { data, isLoading, refetch } = useAPI<any>(`GET /api/products?page=${page}&limit=50`);
   const { data: catData } = useAPI<any>("GET /api/categories");
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");
@@ -27,6 +27,12 @@ export default function ProductsPage({ config }: ProductsPageProps) {
     unit: config.labels.unitDefault,
     categoryId: "",
   });
+
+  const handleDownload = () => {
+    const a = document.createElement("a");
+    a.href = "/api/export/products";
+    a.click();
+  };
 
   const categories: any[] = catData?.data ?? [];
   const products: any[] = data?.data ?? [];
@@ -115,9 +121,14 @@ export default function ProductsPage({ config }: ProductsPageProps) {
             {products.length} {config.labels.productPlural.toLowerCase()} across {categorySummary.length} categories
           </span>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowForm(!showForm)}>
-          + New {config.labels.product}
-        </button>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <button className="btn btn-secondary" onClick={handleDownload} title="Download all products as Excel">
+            ↓ Excel
+          </button>
+          <button className="btn btn-primary" onClick={() => setShowForm(!showForm)}>
+            + New {config.labels.product}
+          </button>
+        </div>
       </div>
 
       {/* Category Summary Cards */}

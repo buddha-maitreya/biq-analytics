@@ -474,17 +474,34 @@ Write the complete Python script now.`;
         ...(charts.length > 0 ? { charts } : {}),
       };
     } else {
-      // Sandbox failed even after retry — return minimal fallback result
+      // Sandbox failed or returned empty result
+      ctx.logger.warn("Sandbox execution did not produce a usable result", {
+        success: sandboxResult.success,
+        hasResult: !!sandboxResult.result,
+        hasError: !!sandboxResult.error,
+        errorType: sandboxResult.errorType,
+        error: sandboxResult.error?.slice(0, 500),
+        stderr: sandboxResult.stderr?.slice(0, 300),
+        exitCode: sandboxResult.exitCode,
+        stdoutLength: sandboxResult.stdout?.length ?? 0,
+      });
+
       const fallbackMsg = sandboxResult.error
         ? `Analysis encountered an error: ${sandboxResult.error.slice(0, 300)}`
-        : "Analysis could not be completed. Please try again.";
+        : sandboxResult.success
+          ? "The analysis ran but returned no data. This usually means insufficient sales or order data exists for the requested timeframe. Try a wider timeframe or verify data has been imported."
+          : "Analysis could not be completed. The sandbox may be temporarily unavailable. Please try again in a few minutes.";
+
+      const severity: "info" | "warning" = sandboxResult.success ? "info" : "warning";
 
       parsed = {
         insights: [{
-          title: "Analysis Error",
-          severity: "warning" as const,
+          title: sandboxResult.success ? "Insufficient Data" : "Analysis Error",
+          severity,
           description: fallbackMsg,
-          recommendation: "Try with a different analysis type or shorter timeframe.",
+          recommendation: sandboxResult.success
+            ? "Try a wider timeframe (60 or 90 days) or ensure sales data has been imported into the system."
+            : "Try with a different analysis type or shorter timeframe. If the issue persists, check the sandbox configuration.",
           confidence: 0.1,
         }] as InsightItem[],
         summary: fallbackMsg,

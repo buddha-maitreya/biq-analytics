@@ -141,7 +141,10 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
 
   // ── List tab state ──
   const [page, setPage] = useState(1);
-  const { data, isLoading, refetch } = useAPI<any>(`GET /api/invoices?page=${page}&limit=200`);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const dateQ = `${dateFrom ? `&startDate=${dateFrom}` : ""}${dateTo ? `&endDate=${dateTo}` : ""}`;
+  const { data, isLoading, refetch } = useAPI<any>(`GET /api/invoices?page=${page}&limit=50${dateQ}`);
   const [statusFilter, setStatusFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("invoiceNumber");
@@ -230,6 +233,16 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
 
     return list;
   }, [enriched, search, statusFilter, sortKey, sortDir]);
+
+  const handleDownload = () => {
+    const p = new URLSearchParams();
+    if (dateFrom) p.set("startDate", dateFrom);
+    if (dateTo)   p.set("endDate",   dateTo);
+    if (statusFilter !== "all") p.set("status", statusFilter);
+    const a = document.createElement("a");
+    a.href = `/api/export/invoices?${p}`;
+    a.click();
+  };
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -338,6 +351,13 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
           </span>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button
+            className="btn btn-secondary"
+            onClick={handleDownload}
+            title="Download as Excel"
+          >
+            ↓ Excel
+          </button>
           <button
             className="btn btn-primary"
             onClick={() => invoiceFileRef.current?.click()}
@@ -448,8 +468,28 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
         </div>
       )}
 
-      {/* Search Bar */}
+      {/* Date Filter + Search Bar */}
       <div className="toolbar">
+        <div className="date-range-filter">
+          <input
+            type="date"
+            className="date-input"
+            value={dateFrom}
+            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+            title="From date"
+          />
+          <span className="date-sep">–</span>
+          <input
+            type="date"
+            className="date-input"
+            value={dateTo}
+            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+            title="To date"
+          />
+          {(dateFrom || dateTo) && (
+            <button className="search-clear" onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}>✕</button>
+          )}
+        </div>
         <div className="search-box">
           <span className="search-icon">🔍</span>
           <input

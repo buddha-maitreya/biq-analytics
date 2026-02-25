@@ -13,9 +13,11 @@ router.get("/sales", async (c) => {
     page: c.req.query("page"),
     limit: c.req.query("limit"),
   });
-  const search = c.req.query("search");
+  const search      = c.req.query("search");
   const warehouseId = c.req.query("warehouseId");
-  const result = await svc.listSales(params, { search, warehouseId });
+  const startDate   = c.req.query("startDate");
+  const endDate     = c.req.query("endDate");
+  const result = await svc.listSales(params, { search, warehouseId, startDate, endDate });
   return c.json(result);
 });
 

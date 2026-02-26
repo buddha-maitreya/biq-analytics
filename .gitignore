@@ -28,6 +28,9 @@ src/db/migrations/meta/
 .DS_Store
 Thumbs.db
 
+# Saved webpage assets (browser _files/ folders)
+docs/sanbox-optimization/**/*_files/
+
 # Demo CSV data
 demo/data/
 

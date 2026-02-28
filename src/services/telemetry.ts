@@ -12,6 +12,7 @@
 
 import { eq, desc, sql, gte, and, lte } from "drizzle-orm";
 import { db, agentTelemetry } from "@db/index";
+import { dbRows } from "@db/rows";
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -177,7 +178,7 @@ export async function getAgentPerformanceSummary(
     ORDER BY total_invocations DESC
   `);
 
-  return (rows as unknown as any[]).map((r) => ({
+  return dbRows(rows).map((r) => ({
     agentName: r.agent_name,
     totalInvocations: r.total_invocations ?? 0,
     avgDurationMs: r.avg_duration_ms,
@@ -213,7 +214,7 @@ export async function getSpanBreakdown(
     ORDER BY total_spans DESC
   `);
 
-  return (rows as unknown as any[]).map((r) => ({
+  return dbRows(rows).map((r) => ({
     agentName: r.agent_name,
     spanType: r.span_type,
     totalSpans: r.total_spans ?? 0,
@@ -246,7 +247,7 @@ export async function getSpanTimeline(
     ORDER BY hour
   `);
 
-  return (rows as unknown as any[]).map((r) => ({
+  return dbRows(rows).map((r) => ({
     hour: r.hour?.toISOString?.() ?? String(r.hour),
     count: r.count ?? 0,
     errorCount: r.error_count ?? 0,

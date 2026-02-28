@@ -9,6 +9,7 @@
 
 import { eq, desc, sql, gte, and } from "drizzle-orm";
 import { db, routingAnalytics } from "@db/index";
+import { dbRows } from "@db/rows";
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -164,7 +165,7 @@ export async function getRoutingSummary(
     .where(sinceDate)
     .groupBy(routingAnalytics.strategy);
 
-  const toolUsage: ToolUsageSummary[] = (toolRows as unknown as any[]).map((r: any) => ({
+  const toolUsage: ToolUsageSummary[] = dbRows(toolRows).map((r: any) => ({
     toolName: r.tool_name,
     totalUses: r.total_uses,
     avgLatencyMs: r.avg_latency_ms ? Number(r.avg_latency_ms) : null,

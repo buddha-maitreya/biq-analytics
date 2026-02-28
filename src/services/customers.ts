@@ -1,4 +1,5 @@
 import { db, customers } from "@db/index";
+import { dbRows } from "@db/rows";
 import { eq, ilike, sql, desc } from "drizzle-orm";
 import { config } from "@lib/config";
 import { createCustomerSchema, updateCustomerSchema } from "@lib/validation";
@@ -70,7 +71,7 @@ export async function listCustomers(params: PaginationParams) {
  * totalSpent, orderCount, firstOrderDate, lastOrderDate
  */
 export async function listCustomersEnriched(params: PaginationParams) {
-  const rows_ = await db.execute(
+  const rows_ = dbRows(await db.execute(
     sql`SELECT
           c.*,
           COALESCE(s.total_spent, 0)  AS total_spent,
@@ -91,7 +92,7 @@ export async function listCustomersEnriched(params: PaginationParams) {
         ORDER BY c.created_at DESC
         LIMIT ${params.limit}
         OFFSET ${offset(params)}`
-  ) as unknown as any[];
+  ));
 
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)` })

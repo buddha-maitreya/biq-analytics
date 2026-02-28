@@ -8,6 +8,7 @@
 
 import { eq, desc, sql, gte, and, lte } from "drizzle-orm";
 import { db, toolInvocations } from "@db/index";
+import { dbRows } from "@db/rows";
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -180,7 +181,7 @@ export async function getToolUsageStats(since?: Date): Promise<ToolUsageStats[]>
     ORDER BY total_calls DESC
   `);
 
-  return (rows as unknown as any[]).map((r) => ({
+  return dbRows(rows).map((r) => ({
     toolName: r.tool_name,
     totalCalls: r.total_calls ?? 0,
     successCount: r.success_count ?? 0,
@@ -218,7 +219,7 @@ export async function getToolTrends(
     ORDER BY date, call_count DESC
   `);
 
-  return (rows as unknown as any[]).map((r) => ({
+  return dbRows(rows).map((r) => ({
     date: r.date?.toISOString?.()?.slice(0, 10) ?? String(r.date),
     toolName: r.tool_name,
     callCount: r.call_count ?? 0,
@@ -250,14 +251,14 @@ export async function getToolDashboard(since?: Date): Promise<ToolAnalyticsDashb
     `),
   ]);
 
-  const totals = (totalsResult as unknown as any[])[0] ?? {};
+  const totals = dbRows(totalsResult)[0] ?? {};
 
   return {
     totalCalls: totals.total_calls ?? 0,
     totalErrors: totals.total_errors ?? 0,
     avgDurationMs: totals.avg_duration_ms,
     toolStats,
-    agentBreakdown: (agentRows as unknown as any[]).map((r) => ({
+    agentBreakdown: dbRows(agentRows).map((r) => ({
       agentName: r.agent_name,
       toolName: r.tool_name,
       calls: r.calls ?? 0,

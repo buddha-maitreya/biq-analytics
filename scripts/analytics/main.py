@@ -170,7 +170,21 @@ def main():
             sys.exit(1)
 
         result = run(data, params, chart_config)
-        print(json.dumps(result, default=str))
+
+        # Sanitize NaN/Infinity → None before JSON serialization.
+        # Python json.dumps outputs bare NaN/Infinity by default which
+        # is invalid JSON for JavaScript's JSON.parse.
+        def sanitize(obj):
+            import math
+            if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+                return None
+            if isinstance(obj, dict):
+                return {k: sanitize(v) for k, v in obj.items()}
+            if isinstance(obj, (list, tuple)):
+                return [sanitize(v) for v in obj]
+            return obj
+
+        print(json.dumps(sanitize(result), default=str))
 
     except Exception as e:
         import traceback

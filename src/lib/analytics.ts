@@ -350,15 +350,21 @@ export async function runAnalytics(
 
     let parsed: Record<string, unknown>;
     try {
-      // main.py outputs a single JSON line to stdout
-      const lines = stdout.split("\n");
-      const lastLine = lines[lines.length - 1];
-      parsed = JSON.parse(lastLine);
-    } catch {
+      // main.py outputs a single JSON line to stdout.
+      // Filter empty lines and grab the last real line.
+      const lines = stdout.split("\n").filter((l) => l.trim());
+      const lastLine = lines[lines.length - 1] ?? "";
+      // Python json.dumps outputs bare NaN / Infinity tokens that are
+      // invalid JSON in JavaScript. Sanitize them to null before parsing.
+      const sanitized = lastLine
+        .replace(/\bNaN\b/g, "null")
+        .replace(/\b-?Infinity\b/g, "null");
+      parsed = JSON.parse(sanitized);
+    } catch (parseErr) {
       return {
         success: false,
         error: "Failed to parse analytics output as JSON",
-        traceback: stdout,
+        traceback: stdout.slice(0, 2000),
         meta,
       };
     }

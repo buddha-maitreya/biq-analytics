@@ -70,7 +70,7 @@ export async function listCustomers(params: PaginationParams) {
  * totalSpent, orderCount, firstOrderDate, lastOrderDate
  */
 export async function listCustomersEnriched(params: PaginationParams) {
-  const rows = await db.execute(
+  const rows_ = await db.execute(
     sql`SELECT
           c.*,
           COALESCE(s.total_spent, 0)  AS total_spent,
@@ -91,14 +91,14 @@ export async function listCustomersEnriched(params: PaginationParams) {
         ORDER BY c.created_at DESC
         LIMIT ${params.limit}
         OFFSET ${offset(params)}`
-  ) as any[];
+  ) as unknown as any[];
 
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)` })
     .from(customers)
     .where(eq(customers.isActive, true));
 
-  return paginate(rows, Number(count), params);
+  return paginate(rows_, Number(count), params);
 }
 
 export async function searchCustomers(term: string, limit = 20) {

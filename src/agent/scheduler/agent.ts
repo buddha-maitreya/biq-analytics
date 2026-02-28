@@ -154,7 +154,7 @@ async function executeAlertTask(
       ORDER BY i.quantity ASC
       LIMIT 50
     `);
-    alertCount = (lowStockProducts as any[]).length;
+    alertCount = (lowStockProducts as unknown as any[]).length;
     details = { metric, threshold, productsAffected: alertCount };
 
     // Create notifications for admins if there are alerts
@@ -181,7 +181,7 @@ async function executeAlertTask(
       WHERE status IN ('sent', 'overdue')
         AND due_date < NOW()
     `);
-    const row = (overdueInvoices as any[])[0];
+    const row = (overdueInvoices as unknown as any[])[0];
     alertCount = row?.overdue_count ?? 0;
     details = {
       metric,

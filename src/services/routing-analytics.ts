@@ -164,7 +164,7 @@ export async function getRoutingSummary(
     .where(sinceDate)
     .groupBy(routingAnalytics.strategy);
 
-  const toolUsage: ToolUsageSummary[] = (toolRows as any[]).map((r: any) => ({
+  const toolUsage: ToolUsageSummary[] = (toolRows as unknown as any[]).map((r: any) => ({
     toolName: r.tool_name,
     totalUses: r.total_uses,
     avgLatencyMs: r.avg_latency_ms ? Number(r.avg_latency_ms) : null,

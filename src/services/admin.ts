@@ -360,17 +360,17 @@ export function getRBACConfig() {
 export async function getDashboardStats() {
   // Run all 4 count queries in parallel instead of sequentially
   const [products_, orders_, customers_, revenue_] = await Promise.all([
-    db.execute(sql`SELECT count(*) as "productCount" FROM products WHERE is_active = true`) as Promise<any[]>,
-    db.execute(sql`SELECT count(*) as "orderCount" FROM orders`) as Promise<any[]>,
-    db.execute(sql`SELECT count(*) as "customerCount" FROM customers WHERE is_active = true`) as Promise<any[]>,
-    db.execute(sql`SELECT COALESCE(sum(total_amount), 0) as "totalRevenue" FROM orders`) as Promise<any[]>,
+    db.execute(sql`SELECT count(*) as "productCount" FROM products WHERE is_active = true`) as Promise<unknown> as Promise<any[]>,
+    db.execute(sql`SELECT count(*) as "orderCount" FROM orders`) as Promise<unknown> as Promise<any[]>,
+    db.execute(sql`SELECT count(*) as "customerCount" FROM customers WHERE is_active = true`) as Promise<unknown> as Promise<any[]>,
+    db.execute(sql`SELECT COALESCE(sum(total_amount), 0) as "totalRevenue" FROM orders`) as Promise<unknown> as Promise<any[]>,
   ]);
 
   return {
-    productCount: Number(products_[0].productCount),
-    orderCount: Number(orders_[0].orderCount),
-    customerCount: Number(customers_[0].customerCount),
-    totalRevenue: Number(revenue_[0].totalRevenue),
+    productCount: Number(products_[0]?.productCount),
+    orderCount: Number(orders_[0]?.orderCount),
+    customerCount: Number(customers_[0]?.customerCount),
+    totalRevenue: Number(revenue_[0]?.totalRevenue),
   };
 }
 
@@ -452,7 +452,7 @@ export async function getDashboardChartData(startDate?: string, endDate?: string
           WHERE created_at >= ${startISO} AND created_at <= ${endISO}
           GROUP BY TO_CHAR(created_at, 'YYYY-MM-DD')
           ORDER BY date ASC`
-    ) as Promise<any[]>,
+    ) as Promise<unknown> as Promise<any[]>,
 
     // 2. Revenue by order status (pie chart)
     db.execute(
@@ -467,7 +467,7 @@ export async function getDashboardChartData(startDate?: string, endDate?: string
           WHERE o.created_at >= ${startISO} AND o.created_at <= ${endISO}
           GROUP BY os.name, os.label, os.color
           ORDER BY revenue DESC`
-    ) as Promise<any[]>,
+    ) as Promise<unknown> as Promise<any[]>,
 
     // 3. Inventory by category (bar chart)
     db.execute(
@@ -482,7 +482,7 @@ export async function getDashboardChartData(startDate?: string, endDate?: string
           WHERE p.is_active = true
           GROUP BY c.name
           ORDER BY total_value DESC`
-    ) as Promise<any[]>,
+    ) as Promise<unknown> as Promise<any[]>,
 
     // 4. Invoice receivables
     db.execute(
@@ -496,7 +496,7 @@ export async function getDashboardChartData(startDate?: string, endDate?: string
           WHERE created_at >= ${startISO} AND created_at <= ${endISO}
           GROUP BY status
           ORDER BY total_billed DESC`
-    ) as Promise<any[]>,
+    ) as Promise<unknown> as Promise<any[]>,
 
     // 5. Top customers by revenue
     db.execute(
@@ -510,7 +510,7 @@ export async function getDashboardChartData(startDate?: string, endDate?: string
           GROUP BY cu.name
           ORDER BY revenue DESC
           LIMIT 10`
-    ) as Promise<any[]>,
+    ) as Promise<unknown> as Promise<any[]>,
 
     // 6. Top selling products
     db.execute(
@@ -526,7 +526,7 @@ export async function getDashboardChartData(startDate?: string, endDate?: string
           GROUP BY p.name, p.sku
           ORDER BY revenue DESC
           LIMIT 10`
-    ) as Promise<any[]>,
+    ) as Promise<unknown> as Promise<any[]>,
 
     // 7. Low stock count
     db.execute(
@@ -535,7 +535,7 @@ export async function getDashboardChartData(startDate?: string, endDate?: string
           INNER JOIN products p ON i.product_id = p.id
           WHERE i.quantity <= COALESCE(p.reorder_point, p.min_stock_level, 0)
             AND COALESCE(p.reorder_point, p.min_stock_level, 0) > 0`
-    ) as Promise<any>,
+    ) as Promise<unknown> as Promise<any>,
 
     // 8. Payment collection
     db.execute(
@@ -545,7 +545,7 @@ export async function getDashboardChartData(startDate?: string, endDate?: string
             COALESCE(SUM(CASE WHEN i.status IN ('sent', 'draft', 'overdue') THEN i.total_amount - i.paid_amount ELSE 0 END), 0) as unpaid
           FROM invoices i
           WHERE i.created_at >= ${startISO} AND i.created_at <= ${endISO}`
-    ) as Promise<any[]>,
+    ) as Promise<unknown> as Promise<any[]>,
   ]);
 
   const lowStockCount = (lowStockResult as any)[0]?.lowStockCount ?? 0;

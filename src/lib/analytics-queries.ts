@@ -51,7 +51,7 @@ async function fetchDailySales(range: DateRange): Promise<Record<string, unknown
     GROUP BY DATE(s.sale_date)
     ORDER BY date
   `);
-  return result as Record<string, unknown>[];
+  return result as unknown as Record<string, unknown>[];
 }
 
 /** Product-level revenue & quantity for ABC-XYZ classification */
@@ -75,7 +75,7 @@ async function fetchProductMetrics(range: DateRange): Promise<Record<string, unk
     GROUP BY s.product_id, s.product_name, s.sku, s.category
     ORDER BY total_revenue DESC
   `);
-  return result as Record<string, unknown>[];
+  return result as unknown as Record<string, unknown>[];
 }
 
 /** Customer purchase history for RFM segmentation */
@@ -93,7 +93,7 @@ async function fetchCustomerPurchases(range: DateRange): Promise<Record<string, 
       AND s.customer_id IS NOT NULL
     ORDER BY s.customer_id, s.sale_date
   `);
-  return result as Record<string, unknown>[];
+  return result as unknown as Record<string, unknown>[];
 }
 
 /** Customer transaction frequency data for CLV modeling */
@@ -115,7 +115,7 @@ async function fetchCustomerTransactions(range: DateRange): Promise<Record<strin
     HAVING COUNT(*) >= 2
     ORDER BY monetary DESC
   `);
-  return result as Record<string, unknown>[];
+  return result as unknown as Record<string, unknown>[];
 }
 
 /** Co-purchase data for bundle/association analysis */
@@ -136,7 +136,7 @@ async function fetchCoPurchases(range: DateRange): Promise<Record<string, unknow
       AND oi.product_id IS NOT NULL
     ORDER BY oi.order_id, p.name
   `);
-  return result as Record<string, unknown>[];
+  return result as unknown as Record<string, unknown>[];
 }
 
 /** Transaction-level data for anomaly detection */
@@ -160,7 +160,7 @@ async function fetchTransactions(range: DateRange): Promise<Record<string, unkno
       AND s.sale_date <= ${range.end}::date
     ORDER BY s.sale_date DESC
   `);
-  return result as Record<string, unknown>[];
+  return result as unknown as Record<string, unknown>[];
 }
 
 /** Inventory + expected vs actual for shrinkage detection */
@@ -195,7 +195,7 @@ async function fetchInventoryWithTransactions(range: DateRange): Promise<Record<
     WHERE p.is_active = true
     ORDER BY p.name
   `);
-  return result as Record<string, unknown>[];
+  return result as unknown as Record<string, unknown>[];
 }
 
 /** Safety stock calculation data — daily demand + lead times */
@@ -220,7 +220,7 @@ async function fetchDemandData(range: DateRange): Promise<Record<string, unknown
              p.cost_price, p.min_stock_level, p.reorder_point
     ORDER BY s.product_id, date
   `);
-  return result as Record<string, unknown>[];
+  return result as unknown as Record<string, unknown>[];
 }
 
 /** Chart data — scatter (margin vs volume) */
@@ -246,7 +246,7 @@ async function fetchMarginVolumeData(range: DateRange): Promise<Record<string, u
     GROUP BY s.product_id, s.product_name, s.category
     ORDER BY revenue DESC
   `);
-  return result as Record<string, unknown>[];
+  return result as unknown as Record<string, unknown>[];
 }
 
 /** Category-level revenue for treemap */
@@ -263,7 +263,7 @@ async function fetchCategoryRevenue(range: DateRange): Promise<Record<string, un
     GROUP BY s.category
     ORDER BY revenue DESC
   `);
-  return result as Record<string, unknown>[];
+  return result as unknown as Record<string, unknown>[];
 }
 
 /** Warehouse/region performance for geo map */
@@ -282,7 +282,7 @@ async function fetchRegionalPerformance(range: DateRange): Promise<Record<string
     GROUP BY s.warehouse_name
     ORDER BY revenue DESC
   `);
-  return result as Record<string, unknown>[];
+  return result as unknown as Record<string, unknown>[];
 }
 
 // ────────────────────────────────────────────────────────────

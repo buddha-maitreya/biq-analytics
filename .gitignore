@@ -10,6 +10,16 @@ dist/
 # Prevent Windows path issues in cloud build
 src/generated/*.ts
 
+# Prevent Agentuity CLI bug: dotted filenames in src/web/public/ generate
+# invalid TypeScript in src/generated/routes.ts (unquoted property names).
+# Only subdirectories (e.g. icons/) are safe. No top-level dotted files.
+src/web/public/*.js
+src/web/public/*.json
+src/web/public/*.ts
+src/web/public/*.css
+src/web/public/*.html
+src/web/public/*.map
+
 # Environment
 .env
 .env.local

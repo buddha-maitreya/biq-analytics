@@ -69,7 +69,38 @@ function getAllSourceFiles(dir: string, extensions = [".ts", ".tsx", ".js", ".js
 }
 
 // ---------------------------------------------------------------------------
-// Check 1: TypeScript type checking
+// Check 1: No dotted files in src/web/public/ (Agentuity CLI bug guard)
+// ---------------------------------------------------------------------------
+
+async function checkNoDottedPublicFiles(): Promise<CheckResult> {
+	const start = Date.now();
+	const errors: string[] = [];
+	const warnings: string[] = [];
+
+	console.log("\n[1/7] Checking for dotted files in src/web/public/...");
+
+	const publicDir = join(SRC, "web", "public");
+	if (existsSync(publicDir)) {
+		const entries = readdirSync(publicDir, { withFileTypes: true });
+		for (const entry of entries) {
+			if (entry.isFile() && entry.name.includes(".")) {
+				errors.push(
+					`src/web/public/${entry.name} — files with dots in src/web/public/ break the Agentuity CLI route type generator. ` +
+					`The CLI generates unquoted property names (e.g. \`manifest.json:\`) which is invalid TypeScript. ` +
+					`Move this file's content to a .ts constant in src/lib/ and serve via an app.ts route instead. ` +
+					`See src/lib/pwa-assets.ts for the pattern.`
+				);
+			}
+		}
+	}
+
+	const passed = errors.length === 0;
+	console.log(passed ? "  ✓ No dotted files in src/web/public/" : `  ✗ ${errors.length} dotted file(s) found — these WILL break deployment`);
+	return { name: "No dotted public files", passed, errors, warnings, duration: Date.now() - start };
+}
+
+// ---------------------------------------------------------------------------
+// Check 2: TypeScript type checking
 // ---------------------------------------------------------------------------
 
 async function checkTypeScript(): Promise<CheckResult> {
@@ -77,7 +108,7 @@ async function checkTypeScript(): Promise<CheckResult> {
 	const errors: string[] = [];
 	const warnings: string[] = [];
 
-	console.log("\n[1/6] TypeScript type checking...");
+	console.log("\n[2/7] TypeScript type checking...");
 
 	const proc = Bun.spawn(["bunx", "tsc", "--noEmit", "--skipLibCheck", "--pretty", "false"], {
 		cwd: ROOT,
@@ -119,7 +150,7 @@ async function checkNoMarkdownImports(): Promise<CheckResult> {
 	const errors: string[] = [];
 	const warnings: string[] = [];
 
-	console.log("\n[2/6] Checking for .md file imports...");
+	console.log("\n[3/7] Checking for .md file imports...");
 
 	const sourceFiles = getAllSourceFiles(SRC);
 	const mdImportPattern = /(?:import|require)\s*\(?\s*['"`]([^'"`]*\.md)['"`]\s*\)?/g;
@@ -147,7 +178,7 @@ async function checkAgentStructure(): Promise<CheckResult> {
 	const errors: string[] = [];
 	const warnings: string[] = [];
 
-	console.log("\n[3/6] Validating agent file structure...");
+	console.log("\n[4/7] Validating agent file structure...");
 
 	if (!existsSync(AGENT_DIR)) {
 		errors.push("src/agent/ directory does not exist");
@@ -194,7 +225,7 @@ async function checkDependencies(): Promise<CheckResult> {
 	const errors: string[] = [];
 	const warnings: string[] = [];
 
-	console.log("\n[4/6] Checking dependencies...");
+	console.log("\n[5/7] Checking dependencies...");
 
 	const nodeModules = join(ROOT, "node_modules");
 	if (!existsSync(nodeModules)) {
@@ -245,7 +276,7 @@ async function checkAgentuityConfig(): Promise<CheckResult> {
 	const errors: string[] = [];
 	const warnings: string[] = [];
 
-	console.log("\n[5/6] Validating agentuity.json...");
+	console.log("\n[6/7] Validating agentuity.json...");
 
 	const configPath = join(ROOT, "agentuity.json");
 	if (!existsSync(configPath)) {
@@ -284,7 +315,7 @@ async function checkBuild(): Promise<CheckResult> {
 	const errors: string[] = [];
 	const warnings: string[] = [];
 
-	console.log("\n[6/6] Running full build test...");
+	console.log("\n[7/7] Running full build test...");
 
 	// On Windows, use the build wrapper (scripts/build.ts) which has a file watcher
 	// that fixes backslash paths in real-time as the CLI generates files.
@@ -338,6 +369,7 @@ async function main() {
 
 	// Run all checks
 	const checks = [
+		checkNoDottedPublicFiles,
 		checkTypeScript,
 		checkNoMarkdownImports,
 		checkAgentStructure,

@@ -303,6 +303,7 @@ const ACTION_QUERY_MAP: Record<AnalyticsAction, (range: DateRange) => Promise<Re
   "chart.waterfall": fetchCategoryRevenue,
   "chart.forecast": fetchDailySales,
   "chart.geo_map": fetchRegionalPerformance,
+  "chart.render": async () => [], // chart.render uses data from params.charts, not DB queries
   // Forecasting
   "forecast.prophet": fetchDailySales,
   "forecast.arima": fetchDailySales,

@@ -2176,6 +2176,15 @@ function extractChartBlocks(content: string): { content: string; charts: ChartSp
 }
 
 /**
+ * Public wrapper for extractChartBlocks — used by the Python-first chart
+ * pipeline to extract chart specs from markdown BEFORE calling exportReport(),
+ * so they can be rendered via Python/matplotlib instead of Vega-Lite.
+ */
+export function extractChartBlocksFromContent(content: string): { content: string; charts: ChartSpec[] } {
+  return extractChartBlocks(content);
+}
+
+/**
  * Export a report to a binary format, store in S3, and return a download URL.
  *
  * @param input - Report content, title, and desired format

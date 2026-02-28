@@ -51,6 +51,7 @@ export type AnalyticsAction =
   | "chart.waterfall"
   | "chart.forecast"
   | "chart.geo_map"
+  | "chart.render"
   // Forecasting
   | "forecast.prophet"
   | "forecast.arima"

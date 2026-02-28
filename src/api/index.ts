@@ -57,4 +57,3 @@ export { default as analyticsConfigRoutes } from "./analytics-configs";
 export { default as predictiveAnalyticsRoutes } from "./predictive-analytics";
 export { default as exportRoutes } from "./export";
 export { default as ingestionRoutes } from "./ingestions";
-export { default as pwaRoutes } from "./pwa";

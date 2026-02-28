@@ -24,6 +24,8 @@ import insightsAnalyzer from "@agent/insights-analyzer";
 import reportGenerator from "@agent/report-generator";
 import knowledgeBase from "@agent/knowledge-base";
 import { exportReport, type ExportFormat, type PreRenderedImage } from "@lib/report-export";
+import { renderChartsViaPython, isPythonChartsAvailable } from "@lib/python-charts";
+import { extractChartBlocksFromContent } from "@lib/report-export";
 import { getModel } from "@lib/ai";
 import { db, attachments as attachmentsTable } from "@db/index";
 import { eq } from "drizzle-orm";
@@ -232,6 +234,7 @@ export const analyzeTrendsTool = tool({
         analysisType: result.analysisType,
         summary: result.summary,
         insights: result.insights,
+        charts: result.charts,
         generatedAt: result.generatedAt,
       };
     } catch (err) {
@@ -657,7 +660,18 @@ export const scanDocumentTool = tool({
   },
 });
 
-export const exportReportTool = tool({
+/**
+ * Factory: creates the export report tool with optional sandbox API
+ * for Python-first chart rendering.
+ *
+ * When sandboxApi is provided, chart specs extracted from markdown content
+ * are rendered via Python/matplotlib (enterprise-grade) instead of Vega-Lite.
+ * Falls back to Vega-Lite if sandbox is unavailable or Python rendering fails.
+ */
+export function createExportReportTool(
+  sandboxApi?: { run: (opts: Record<string, unknown>) => Promise<any> }
+) {
+  return tool({
   description:
     "Export data or a report to a downloadable file. Supports PDF, Excel (XLSX), Word (DOCX), and PowerPoint (PPTX). " +
     "Use when the user asks to download, export, save as PDF/Excel/Word/PowerPoint, or compile conversation data into a document. " +
@@ -667,7 +681,8 @@ export const exportReportTool = tool({
     "3) Conclusion with key observations and a recommended action plan. " +
     "For data-heavy exports, prefer Excel. For presentations, use PowerPoint. For printable reports, use PDF. For editable reports, use Word. " +
     "CHARTS: If you have analytics results from run_predictive_analytics that include charts, pass them via the analyticsCharts parameter " +
-    "so they are embedded in the exported document alongside any Vega-Lite charts generated from the report content.",
+    "so they are embedded in the exported document. Charts embedded in markdown content (```chart blocks) are automatically rendered " +
+    "via the enterprise Python/matplotlib pipeline for high-quality output.",
   parameters: z.object({
     content: z
       .string()
@@ -701,26 +716,51 @@ export const exportReportTool = tool({
       .optional()
       .describe(
         "Pre-rendered chart images from Python analytics (run_predictive_analytics results). " +
-        "Pass the charts array from PredictiveAnalyticsResult directly. These will be embedded in the export alongside any Vega-Lite charts."
+        "Pass the charts array from PredictiveAnalyticsResult directly. These will be embedded in the export alongside any charts in the report content."
       ),
   }),
   execute: async ({ content, title, format, subtitle, preparedBy, analyticsCharts }): Promise<ExportReportResult> => {
     try {
-      // Convert analyticsCharts to PreRenderedImage format
-      const preRenderedImages: PreRenderedImage[] | undefined = analyticsCharts?.map((c) => ({
+      // Start with any explicitly passed analytics charts
+      const preRenderedImages: PreRenderedImage[] = (analyticsCharts ?? []).map((c) => ({
         title: c.title,
         data: c.data,
         width: c.width,
         height: c.height,
       }));
 
+      let cleanContent = content;
+
+      // ── Python-first chart rendering ──────────────────────
+      // Extract chart specs from markdown, render via Python/matplotlib,
+      // then pass cleaned content (chart blocks removed) to exportReport.
+      // This means exportReport() won't find any chart blocks to render
+      // via Vega-Lite — all charts come through Python.
+      if (sandboxApi && isPythonChartsAvailable()) {
+        try {
+          const { content: stripped, charts: chartSpecs } = extractChartBlocksFromContent(content);
+          if (chartSpecs.length > 0) {
+            const pythonCharts = await renderChartsViaPython(sandboxApi, chartSpecs);
+            if (pythonCharts.length > 0) {
+              preRenderedImages.push(...pythonCharts);
+              cleanContent = stripped; // Remove chart blocks — they're now pre-rendered
+            }
+            // If Python rendering returned 0 charts (failure), keep original content
+            // so exportReport() falls back to Vega-Lite rendering
+          }
+        } catch (err) {
+          console.error("[export_report] Python chart rendering failed, falling back to Vega-Lite:", err);
+          // Keep original content — Vega-Lite will handle charts
+        }
+      }
+
       const result = await exportReport({
-        content,
+        content: cleanContent,
         title,
         format: format as ExportFormat,
         subtitle,
         preparedBy,
-        preRenderedImages,
+        preRenderedImages: preRenderedImages.length > 0 ? preRenderedImages : undefined,
       });
       return {
         downloadUrl: result.downloadUrl,
@@ -733,7 +773,8 @@ export const exportReportTool = tool({
       return agentError("Report Export", err);
     }
   },
-});
+  });
+}
 
 // ────────────────────────────────────────────────────────────
 // run_predictive_analytics — Pre-built Python analytics modules

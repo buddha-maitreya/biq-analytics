@@ -11,7 +11,7 @@ import {
   generateReportTool,
   searchKnowledgeTool,
   scanDocumentTool,
-  exportReportTool,
+  createExportReportTool,
   createPredictiveAnalyticsTool,
 } from "./specialists";
 import { createRunAnalysisTool } from "./sandbox";
@@ -38,12 +38,13 @@ export type {
 
 /**
  * Static tools map (sandbox-independent, safe to reuse across requests).
+ * NOTE: export_report is no longer here — it's created per-request in
+ * getAllTools() to inject the sandbox API for Python chart rendering.
  */
 export const sharedTools = {
   query_database: queryDatabaseTool,
   analyze_trends: analyzeTrendsTool,
   generate_report: generateReportTool,
-  export_report: exportReportTool,
   search_knowledge: searchKnowledgeTool,
   scan_document: scanDocumentTool,
   get_business_snapshot: getBusinessSnapshotTool,
@@ -78,6 +79,8 @@ export async function getAllTools(
     ...sharedTools,
     // Use cached snapshot when KV is available
     ...(kv ? { get_business_snapshot: createCachedSnapshotTool(kv) } : {}),
+    // Export report — always available, uses sandbox for Python chart rendering when possible
+    export_report: createExportReportTool(sandboxOpts?.sandboxApi),
     // Pre-built predictive analytics (ALWAYS available when sandbox is configured)
     ...(sandboxOpts?.sandboxApi
       ? {

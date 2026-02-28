@@ -114,6 +114,14 @@ def main():
 
     # Dispatch to the right module
     try:
+        # ── chart.render bypasses normal validation ──────────
+        # (chart data is in params.charts, not in the 'data' arg)
+        if action == 'chart.render':
+            from charts.render_chart import run
+            result = run(data, params, chart_config)
+            print(json.dumps(result, default=str))
+            sys.exit(0)
+
         # ── Input Validation (before dispatch) ───────────────
         validation_error = validate_input(action, data)
         if validation_error:

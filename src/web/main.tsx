@@ -19,7 +19,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker
-      .register("/api/sw.js", { scope: "/" })
+      .register("/sw.js", { scope: "/" })
       .then((registration) => {
         // Check for updates periodically (every 60 minutes)
         setInterval(() => registration.update(), 60 * 60 * 1000);

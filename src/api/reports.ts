@@ -5,7 +5,8 @@ import { errorMiddleware } from "@lib/errors";
 import { sessionMiddleware, getAppUser } from "@lib/auth";
 import { dynamicRateLimit } from "@lib/rate-limit";
 import { listReports, getReportById, deleteReport, getReportDownloadUrl } from "@services/reports";
-import { exportReport, type ExportFormat, EXPORT_FORMATS, tempExportCache } from "@lib/report-export";
+import { exportReport, type ExportFormat, EXPORT_FORMATS, tempExportCache, extractChartBlocksFromContent } from "@lib/report-export";
+import { renderChartsViaPython, isPythonChartsAvailable } from "@lib/python-charts";
 
 // ── Request schema ────────────────────────────────────────
 export const generateReportSchema = s.object({
@@ -167,12 +168,33 @@ reports.post("/reports/export",
   const user = getAppUser(c);
 
   try {
+    // ── Python-first chart rendering ──────────────────────
+    let exportContent = content;
+    let preRenderedImages: Array<{ title: string; data: string; width?: number; height?: number }> | undefined;
+
+    if (isPythonChartsAvailable()) {
+      try {
+        const sandboxApi = c.var.sandbox;
+        const { content: stripped, charts: chartSpecs } = extractChartBlocksFromContent(content);
+        if (chartSpecs.length > 0 && sandboxApi) {
+          const pythonCharts = await renderChartsViaPython(sandboxApi, chartSpecs);
+          if (pythonCharts.length > 0) {
+            preRenderedImages = pythonCharts;
+            exportContent = stripped;
+          }
+        }
+      } catch (err) {
+        console.error("[reports/export] Python chart rendering failed, falling back to Vega-Lite:", err);
+      }
+    }
+
     const result = await exportReport({
-      content,
+      content: exportContent,
       title,
       format: format as ExportFormat,
       subtitle,
       preparedBy: user?.name ?? undefined,
+      preRenderedImages,
     });
 
     return c.json({ data: result });
@@ -203,12 +225,33 @@ reports.post("/reports/:id/export", async (c) => {
   if (!report) return c.json({ error: "Report not found" }, 404);
   const user = getAppUser(c);
 
+  // ── Python-first chart rendering for saved reports ──────
+  let exportContent = report.content;
+  let preRenderedImages: Array<{ title: string; data: string; width?: number; height?: number }> | undefined;
+
+  if (isPythonChartsAvailable()) {
+    try {
+      const sandboxApi = c.var.sandbox;
+      const { content: stripped, charts: chartSpecs } = extractChartBlocksFromContent(report.content);
+      if (chartSpecs.length > 0 && sandboxApi) {
+        const pythonCharts = await renderChartsViaPython(sandboxApi, chartSpecs);
+        if (pythonCharts.length > 0) {
+          preRenderedImages = pythonCharts;
+          exportContent = stripped;
+        }
+      }
+    } catch (err) {
+      console.error("[reports/:id/export] Python chart rendering failed, falling back to Vega-Lite:", err);
+    }
+  }
+
   const result = await exportReport({
-    content: report.content,
+    content: exportContent,
     title: report.title,
     format,
     subtitle: report.reportType,
     preparedBy: user?.name ?? undefined,
+    preRenderedImages,
   });
 
   return c.json({ data: result });

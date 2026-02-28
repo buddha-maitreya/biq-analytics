@@ -5,6 +5,7 @@ import {
 } from "@agentuity/runtime";
 import { getAISettings } from "@services/settings";
 import type { AISettings } from "@services/settings";
+import { PWA_MANIFEST, SERVICE_WORKER_SCRIPT } from "@lib/pwa-assets";
 
 /**
  * Agentuity application entry point.
@@ -122,6 +123,36 @@ const app = await createApp({
       uptimeMinutes: Math.round(uptimeMs / 60_000),
     });
   },
+});
+
+// ────────────────────────────────────────────────────────────
+// PWA routes — served at root level (no auth middleware)
+//
+// These must NOT live in src/web/public/ because the Agentuity CLI
+// generates unquoted property names for dotted filenames in
+// src/generated/routes.ts, breaking the TypeScript typecheck.
+// Registering here (step 4 in the generated app lifecycle) puts
+// these routes on the shared Hono router before API routes and
+// the serveStatic catch-all, so they respond first.
+// ────────────────────────────────────────────────────────────
+
+app.router.get("/manifest.json", (c) => {
+  return new Response(JSON.stringify(PWA_MANIFEST), {
+    headers: {
+      "Content-Type": "application/manifest+json; charset=utf-8",
+      "Cache-Control": "public, max-age=86400",
+    },
+  });
+});
+
+app.router.get("/sw.js", (c) => {
+  return new Response(SERVICE_WORKER_SCRIPT, {
+    headers: {
+      "Content-Type": "application/javascript; charset=utf-8",
+      "Service-Worker-Allowed": "/",
+      "Cache-Control": "no-cache",
+    },
+  });
 });
 
 export default app;

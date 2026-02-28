@@ -669,7 +669,7 @@ export const scanDocumentTool = tool({
  * Falls back to Vega-Lite if sandbox is unavailable or Python rendering fails.
  */
 export function createExportReportTool(
-  sandboxApi?: { run: (opts: Record<string, unknown>) => Promise<any> }
+  sandboxApi?: Pick<import("@agentuity/core").SandboxService, "run">
 ) {
   return tool({
   description:

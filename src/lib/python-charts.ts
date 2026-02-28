@@ -17,22 +17,9 @@
 
 import type { ChartSpec } from "@lib/charts";
 import type { PreRenderedImage } from "@lib/report-export";
+import type { SandboxRunOptions, SandboxRunResult, SandboxService } from "@agentuity/core";
 import { getAnalyticsFiles } from "@lib/analytics-scripts";
 import { getAnalyticsConfig } from "@services/analytics-configs";
-
-/** Sandbox API shape (same as analytics.ts) */
-type SandboxApi = {
-  run: (opts: Record<string, unknown>) => Promise<SandboxRunResult>;
-};
-
-/** Subset of SandboxRunResult we consume */
-interface SandboxRunResult {
-  sandboxId: string;
-  exitCode: number;
-  durationMs: number;
-  stdout: string;
-  stderr: string;
-}
 
 /**
  * Render an array of ChartSpec objects through Python/matplotlib.
@@ -46,7 +33,7 @@ interface SandboxRunResult {
  * @returns Array of pre-rendered images, or empty array on failure
  */
 export async function renderChartsViaPython(
-  sandboxApi: SandboxApi,
+  sandboxApi: Pick<SandboxService, "run">,
   chartSpecs: ChartSpec[],
   options?: {
     /** Override chart styling config */
@@ -115,7 +102,7 @@ export async function renderChartsViaPython(
 
   // ── Execute in sandbox ────────────────────────────────────
   try {
-    const result: SandboxRunResult = await sandboxApi.run({
+    const result = await sandboxApi.run({
       command: {
         exec: ["python3", "main.py"],
         files: commandFiles,

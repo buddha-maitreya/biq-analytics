@@ -63,12 +63,7 @@ export type AnalyticsAction =
   | "classify.bundles"
   // Anomaly Detection
   | "anomaly.transactions"
-  | "anomaly.shrinkage"
-  | "anomaly.pricing"
-  // Pricing Intelligence
-  | "pricing.elasticity"
-  | "pricing.markdown"
-  | "pricing.dynamic";
+  | "anomaly.shrinkage";
 
 /**
  * Map action prefixes to their analytics category for config lookup.
@@ -84,7 +79,6 @@ const ACTION_TO_CATEGORY: Record<string, AnalyticsCategory> = {
   "forecast.": "forecasting",
   "classify.": "customer", // RFM, CLV, bundles = customer analytics
   "anomaly.": "anomaly",
-  "pricing.": "pricing",
 };
 
 /** Resolve an action to its analytics category */
@@ -539,7 +533,7 @@ export async function runClassification(
 /** Run anomaly detection */
 export async function runAnomalyDetection(
   sandboxApi: Parameters<typeof runAnalytics>[0],
-  type: "transactions" | "shrinkage" | "pricing",
+  type: "transactions" | "shrinkage",
   data: Record<string, unknown>[],
   params?: Record<string, unknown>,
   kv?: KVStore

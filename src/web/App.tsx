@@ -170,7 +170,7 @@ export default function App() {
       case "invoices":
         return <InvoicesPage config={cfg} />;
       case "assistant":
-        return <AssistantPage config={cfg} />;
+        return <AssistantPage config={cfg} onOpenSidebar={() => setSidebarOpen(true)} />;
       case "reports":
         return <ReportsPage config={cfg} />;
       case "approvals":
@@ -197,7 +197,7 @@ export default function App() {
         mobileOpen={sidebarOpen}
         onCloseMobile={() => setSidebarOpen(false)}
       />
-      <main className="main-content">
+      <main className="main-content" data-page={page}>
         <InstallPrompt />
         <UpdateToast />
         {/* Top bar — mobile hamburger + theme toggle (always top-right) */}

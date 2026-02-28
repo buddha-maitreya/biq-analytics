@@ -28,7 +28,6 @@ MIN_ROWS = {
     'forecast.': 14,
     'classify.': 5,
     'anomaly.': 10,
-    'pricing.': 5,
 }
 
 REQUIRED_COLUMNS = {
@@ -158,14 +157,6 @@ def main():
             from anomaly.isolation_forest import run
         elif action == 'anomaly.shrinkage':
             from anomaly.shrinkage import run
-        elif action == 'anomaly.pricing':
-            from anomaly.price_anomaly import run
-        elif action == 'pricing.elasticity':
-            from pricing.elasticity import run
-        elif action == 'pricing.markdown':
-            from pricing.markdown import run
-        elif action == 'pricing.dynamic':
-            from pricing.dynamic import run
         else:
             print(json.dumps({"error": f"Unknown action: {action}"}))
             sys.exit(1)

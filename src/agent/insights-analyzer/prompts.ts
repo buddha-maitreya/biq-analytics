@@ -23,7 +23,7 @@ export function getAnalysisPrompt(analysis: string, timeframeDays: number): stri
 
     "anomaly-detection": injectLabels(`Perform ANOMALY DETECTION analysis:
 - Fetch daily {{ORDER_LABEL}} volumes, revenue, and per-{{PRODUCT_LABEL}} sales data for the last ${timeframeDays} days
-- Write Python to compute: z-scores via scipy.stats.zscore() for daily volumes/revenue, IQR analysis for pricing outliers (DF.quantile), volume spike detection
+- Write Python to compute: z-scores via scipy.stats.zscore() for daily volumes/revenue, IQR analysis for outliers (DF.quantile), volume spike detection
 - Use IsolationForest from sklearn for multivariate anomaly detection if sufficient data
 - Flag any data point with |z-score| > 2 as anomalous
 - Return structured anomaly data with severity ratings, directions (spike/drop), and affected entities`),

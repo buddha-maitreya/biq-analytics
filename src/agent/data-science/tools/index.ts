@@ -12,6 +12,7 @@ import {
   searchKnowledgeTool,
   scanDocumentTool,
   exportReportTool,
+  createPredictiveAnalyticsTool,
 } from "./specialists";
 import { createRunAnalysisTool } from "./sandbox";
 import { buildDynamicTools } from "./custom";
@@ -32,6 +33,7 @@ export type {
   SearchKnowledgeResult,
   ScanDocumentResult,
   ExportReportResult,
+  PredictiveAnalyticsResult,
 } from "./types";
 
 /**
@@ -76,8 +78,13 @@ export async function getAllTools(
     ...sharedTools,
     // Use cached snapshot when KV is available
     ...(kv ? { get_business_snapshot: createCachedSnapshotTool(kv) } : {}),
+    // Pre-built predictive analytics (ALWAYS available when sandbox is configured)
     ...(sandboxOpts?.sandboxApi
       ? {
+          run_predictive_analytics: createPredictiveAnalyticsTool(
+            sandboxOpts.sandboxApi,
+            kv
+          ),
           run_analysis: createRunAnalysisTool(
             sandboxOpts.sandboxApi,
             sandboxOpts.sandboxTimeoutMs,

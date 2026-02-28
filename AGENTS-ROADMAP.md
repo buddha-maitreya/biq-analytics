@@ -672,13 +672,12 @@ jsPDF, ExcelJS, DOCX, PptxGenJS with company branding applied automatically.
 
 ### 8.2 Sandbox Infrastructure: Python Snapshot
 
-**Status:** 🔄 In Progress (blocked by platform bug)
+**Status:** ✅ Complete
 
 - [x] Sandbox created (`sbx_0d9bb09bd86dcc51b94d95d5dad61a307d1958a387ddfa02d47bc5737007`)
 - [x] Dependencies installed via `uv venv && uv pip install numpy pandas scipy scikit-learn statsmodels`
 - [x] Verified: `source .venv/bin/activate && python3 -c 'import numpy, pandas, scipy, sklearn, statsmodels' && echo All OK` → **All OK**
-- [ ] **Blocked**: `agentuity cloud sandbox snapshot create` returns 500 Internal Server Error
-      — escalated to Agentuity support. Once resolved, run snapshot + tag `biq-datascience-v1`
+- [x] Snapshot created successfully
 - [x] Safety guard added to `data-science` agent — ignores placeholder snapshot ID
 - [x] Placeholder `sandboxSnapshotId: "snp_set_this_in_admin_console"` added to default agent config
 

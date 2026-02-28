@@ -1040,7 +1040,7 @@ export const chatMessages = pgTable(
 /** Analytics Configs — per-algorithm-category settings configurable from the Admin Console.
  *
  *  Each row configures one analytics category (forecasting, classification,
- *  customer, anomaly, charts, pricing). The `params` JSONB holds all tunable
+ *  customer, anomaly, charts). The `params` JSONB holds all tunable
  *  algorithm parameters for that category. Defaults live in TypeScript
  *  (`src/lib/analytics-defaults.ts`) — DB overrides are deep-merged at runtime.
  *
@@ -1052,7 +1052,7 @@ export const analyticsConfigs = pgTable(
   "analytics_configs",
   {
     id: id(),
-    /** Category identifier: forecasting, classification, customer, anomaly, charts, pricing, inventory */
+    /** Category identifier: forecasting, classification, customer, anomaly, charts, inventory */
     category: varchar("category", { length: 50 }).notNull().unique(),
     /** Human-friendly label for the admin UI */
     displayName: varchar("display_name", { length: 100 }).notNull(),
@@ -1124,6 +1124,102 @@ export const agentConfigs = pgTable(
     index("idx_agent_configs_name").on(t.agentName),
     index("idx_agent_configs_active").on(t.isActive),
     index("idx_agent_configs_priority").on(t.executionPriority),
+  ]
+);
+
+// ============================================================
+// POS Integration Tables
+// ============================================================
+
+/**
+ * POS Transactions — idempotency log and audit trail for external POS events.
+ * NOT a replacement for `orders` — this is the raw inbound event log that
+ * links to the order created from it.
+ */
+export const posTransactions = pgTable(
+  "pos_transactions",
+  {
+    id: id(),
+    /** Vendor identifier: "mpesa", "ikhokha", "itax", "generic", "custom" */
+    posVendor: varchar("pos_vendor", { length: 50 }).notNull(),
+    /** External transaction ID — idempotency key from the POS system */
+    posTxId: varchar("pos_tx_id", { length: 255 }).notNull(),
+    /** Event type: "sale", "return", "batch", "catalog_push" */
+    eventType: varchar("event_type", { length: 30 }).notNull().default("sale"),
+    /** Raw payload as received from the POS */
+    posPayload: jsonb("pos_payload").$type<Record<string, unknown>>(),
+    /** Processing status: "received", "processed", "duplicate", "failed", "returned" */
+    status: varchar("status", { length: 30 }).notNull().default("received"),
+    /** The order created from this event (null until processed) */
+    orderId: uuid("order_id").references(() => orders.id),
+    /** Which branch/location this event belongs to */
+    warehouseId: uuid("warehouse_id").references(() => warehouses.id),
+    /** POS vendor config used to process this event */
+    vendorConfigId: uuid("vendor_config_id").references(() => posVendorConfigs.id),
+    /** Error message if processing failed */
+    errorMessage: text("error_message"),
+    /** When the event was successfully processed */
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    /** Number of items in the payload */
+    itemCount: integer("item_count"),
+    /** Total amount from the POS payload */
+    totalAmount: numeric("total_amount", { precision: 12, scale: 2 }),
+    /** Payment method from the POS */
+    paymentMethod: varchar("payment_method", { length: 50 }),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    uniqueIndex("idx_pos_tx_vendor_txid").on(t.posVendor, t.posTxId),
+    index("idx_pos_tx_status").on(t.status),
+    index("idx_pos_tx_order").on(t.orderId),
+    index("idx_pos_tx_warehouse").on(t.warehouseId),
+    index("idx_pos_tx_vendor").on(t.posVendor),
+    index("idx_pos_tx_event_type").on(t.eventType),
+    index("idx_pos_tx_created").on(t.createdAt),
+  ]
+);
+
+/**
+ * POS Vendor Configs — per-vendor webhook configuration.
+ * Each deployment can have multiple POS vendors feeding data.
+ */
+export const posVendorConfigs = pgTable(
+  "pos_vendor_configs",
+  {
+    id: id(),
+    /** Vendor identifier: "mpesa", "ikhokha", "itax", "generic", "custom" */
+    vendor: varchar("vendor", { length: 50 }).notNull(),
+    /** Human-readable name (e.g. "Main Branch M-Pesa", "Shop 2 iKhokha") */
+    displayName: varchar("display_name", { length: 255 }).notNull(),
+    /** Whether this config is active */
+    isActive: boolean("is_active").notNull().default(true),
+    /** Authentication type: "hmac", "bearer", "basic", "none" */
+    authType: varchar("auth_type", { length: 30 }).notNull().default("none"),
+    /** HMAC key, bearer token, or basic auth password */
+    authSecret: text("auth_secret"),
+    /** Header name containing the signature (for HMAC auth) */
+    signatureHeader: varchar("signature_header", { length: 100 }),
+    /** Maps vendor fields → our PosTransaction fields (JSONB) */
+    fieldMapping: jsonb("field_mapping").$type<Record<string, string>>(),
+    /** Outbound webhook URL for bidirectional sync (push catalog back to POS) */
+    webhookUrl: text("webhook_url"),
+    /** Default warehouse for sales from this vendor */
+    defaultWarehouseId: uuid("default_warehouse_id").references(() => warehouses.id),
+    /** Vendor-specific settings (e.g., M-Pesa shortcode, till number) */
+    settings: jsonb("settings").$type<Record<string, unknown>>(),
+    /** Last time this vendor successfully synced */
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    /** Error count since last successful sync */
+    errorCount: integer("error_count").notNull().default(0),
+    /** Total transactions processed through this config */
+    totalTransactions: integer("total_transactions").notNull().default(0),
+    metadata: metadata(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("idx_pos_vendor_configs_vendor").on(t.vendor),
+    index("idx_pos_vendor_configs_active").on(t.isActive),
   ]
 );
 
@@ -2299,4 +2395,29 @@ export const productRequestsRelations = relations(productRequests, ({ one }) => 
     fields: [productRequests.deciderId],
     references: [users.id],
   }),
+}));
+
+// ── POS Relations ────────────────────────────────────────────
+
+export const posTransactionsRelations = relations(posTransactions, ({ one }) => ({
+  order: one(orders, {
+    fields: [posTransactions.orderId],
+    references: [orders.id],
+  }),
+  warehouse: one(warehouses, {
+    fields: [posTransactions.warehouseId],
+    references: [warehouses.id],
+  }),
+  vendorConfig: one(posVendorConfigs, {
+    fields: [posTransactions.vendorConfigId],
+    references: [posVendorConfigs.id],
+  }),
+}));
+
+export const posVendorConfigsRelations = relations(posVendorConfigs, ({ one, many }) => ({
+  defaultWarehouse: one(warehouses, {
+    fields: [posVendorConfigs.defaultWarehouseId],
+    references: [warehouses.id],
+  }),
+  transactions: many(posTransactions),
 }));

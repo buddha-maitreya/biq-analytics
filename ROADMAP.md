@@ -109,25 +109,32 @@ Business IQ Enterprise will **never** include a built-in Point-of-Sale system. P
 **What we don't build:** POS terminals, receipt printers, cash drawer drivers, card readers, offline queues, or any hardware integration.
 
 ### 7.2 POS Webhook Endpoints
-- [ ] `POST /api/pos/webhook` — Receive sale/refund events from external POS
-- [ ] `POST /api/pos/sync` — Bulk import historical POS transactions
-- [ ] `GET /api/pos/connections` — List configured POS integrations
-- [ ] `PUT /api/pos/connections/:id` — Update POS connection settings (API key, webhook URL)
+- [x] `POST /api/pos/ingest/:vendor` — Receive sale events from external POS (per-vendor auth)
+- [x] `POST /api/pos/ingest/:vendor/batch` — Bulk import POS transactions
+- [x] `POST /api/pos/return/:vendor` — Receive refund/return events from external POS
+- [x] `GET /api/pos/connections` — List configured POS integrations
+- [x] `PUT /api/pos/connections/:id` — Update POS connection settings
+- [x] `GET /api/pos/stock` — Stock query endpoint for POS systems
+- [x] `GET /api/pos/catalog` — Product catalog endpoint for POS systems
+- [x] `POST /api/pos/catalog/push` — Push catalog to all active POS vendors
 
 ### 7.3 POS Integration Schema
-- [ ] `pos_connections` — id, provider (Square/Lightspeed/Vend/Custom), apiKey, webhookSecret, warehouseId, status, lastSync
-- [ ] `pos_transactions` — id, connectionId, externalId, orderId, amount, currency, paymentMethod, rawPayload (JSONB), receivedAt
+- [x] `pos_vendor_configs` — id, vendor, displayName, isActive, authType, authSecret, signatureHeader, fieldMapping (JSONB), webhookUrl, defaultWarehouseId, settings (JSONB), lastSyncAt, errorCount, totalTransactions, metadata, timestamps
+- [x] `pos_transactions` — id, posVendor, posTxId, eventType, posPayload (JSONB), status, orderId, warehouseId, vendorConfigId, errorMessage, processedAt, itemCount, totalAmount, paymentMethod, metadata, timestamps
 
 ### 7.4 Data Flow
-- [ ] Incoming POS sale → create order + order items + deduct inventory
-- [ ] Payment method mapping (POS provider's payment types → Business IQ's)
-- [ ] Duplicate detection via `externalId` (idempotent webhook processing)
-- [ ] Error queue for failed transaction imports (retry with backoff)
+- [x] Incoming POS sale → normalize via vendor adapter → create order + order items + deduct inventory
+- [x] Vendor adapter layer with dynamic field mapping (generic adapter) + M-Pesa Daraja C2B adapter
+- [x] Duplicate detection via unique `(pos_vendor, pos_tx_id)` index (idempotent processing)
+- [x] Error handling with status tracking (pending → processed / failed) and vendor error counts
+- [x] Low-stock alert checks after every POS sale ingestion
+- [x] Return/refund processing with inventory restoration
 
 ### 7.5 Admin Console — POS Connections Tab
-- [ ] Add/edit POS connection (provider, API key, webhook secret, assigned warehouse)
-- [ ] Test connection button (ping provider API)
-- [ ] Connection status dashboard (last sync time, error count, transaction volume)
+- [x] Add/edit POS connection (vendor type, display name, auth type/secret, webhook URL, default warehouse)
+- [x] Connection list with active toggle, edit, and delete actions
+- [x] Connection stats dashboard (total transactions, processed, failed, active vendor count)
+- [x] Webhook URL display with copy-to-clipboard for vendor configuration
 
 ---
 
@@ -217,8 +224,7 @@ A unified Python analytics library running in Agentuity sandboxes via `ctx.sandb
 │  │   └── bundles.py           (Apriori/FP-Growth association rules)          │
 │  └── anomaly/                                                                │
 │      ├── isolation_forest.py  (transaction anomaly detection)                │
-│      ├── shrinkage.py         (inventory discrepancy detection)              │
-│      └── price_anomaly.py     (flag out-of-band pricing)                     │
+│      └── shrinkage.py         (inventory discrepancy detection)              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -283,8 +289,6 @@ def main():
         from anomaly.isolation_forest import run
     elif action == "anomaly.shrinkage":
         from anomaly.shrinkage import run
-    elif action == "anomaly.pricing":
-        from anomaly.price_anomaly import run
     else:
         print(json.dumps({"error": f"Unknown action: {action}"}))
         sys.exit(1)
@@ -324,7 +328,7 @@ type AnalyticsAction =
   | "chart.pareto" | "chart.forecast" | "chart.waterfall"
   | "forecast.prophet" | "forecast.arima" | "forecast.safety_stock"
   | "classify.abc_xyz" | "classify.rfm" | "classify.clv" | "classify.bundles"
-  | "anomaly.transactions" | "anomaly.shrinkage" | "anomaly.pricing";
+  | "anomaly.transactions" | "anomaly.shrinkage";
 
 interface AnalyticsRequest {
   action: AnalyticsAction;
@@ -393,13 +397,8 @@ Algorithms that no other inventory/sales management system in Kenya offers:
 - [ ] **Economic Order Quantity (EOQ)** — optimal order quantity factoring holding cost, ordering cost, demand rate
 - [ ] **ABC-XYZ inventory classification** — categorize products by revenue contribution (ABC) × demand predictability (XYZ)
 
-#### Pricing Intelligence
-- [ ] **Price elasticity estimation** — measure how quantity demanded responds to price changes per product
-- [ ] **Dynamic pricing recommendations** — suggest optimal prices based on demand curves and margin targets
-- [ ] **Bundle detection** — Apriori/FP-Growth association rule mining to identify frequently co-purchased products
-- [ ] **Markdown optimization** — when to discount slow-moving stock, by how much, to maximize recovery
-
 #### Customer Analytics
+- [ ] **Bundle detection** — Apriori/FP-Growth association rule mining to identify frequently co-purchased products
 - [ ] **RFM segmentation** — Recency, Frequency, Monetary clustering with automatic labels (Champions, At-Risk, Hibernating)
 - [ ] **Customer Lifetime Value (CLV)** — BG/NBD + Gamma-Gamma probabilistic models (`lifetimes` library)
 - [ ] **Churn prediction** — gradient boosting classifier identifying customers likely to stop buying
@@ -408,7 +407,6 @@ Algorithms that no other inventory/sales management system in Kenya offers:
 #### Anomaly Detection
 - [ ] **Transaction anomaly detection** — Isolation Forest on transaction patterns (unusually large sales, suspicious refunds)
 - [ ] **Inventory shrinkage detection** — statistical detection of stock discrepancies beyond normal variance
-- [ ] **Price anomaly alerts** — flag sales significantly below/above normal price bands
 
 #### Operational Intelligence
 - [ ] **Sales velocity scoring** — rank products by sales velocity × margin
@@ -531,11 +529,9 @@ Phase 10c — Customer Intelligence:
   ├── Bundle detection (association rules)
   └── Integration with Data Science Assistant
 
-Phase 10d — Anomaly Detection & Pricing:
+Phase 10d — Anomaly Detection:
   ├── Transaction anomaly detection (Isolation Forest)
   ├── Shrinkage detection
-  ├── Price elasticity estimation
-  ├── Dynamic pricing recommendations
   └── Alerting pipeline → notifications → SSE push
 
 Phase 10e — Sandbox Optimization:

@@ -1229,6 +1229,35 @@ textarea {
   cursor: pointer;
   color: var(--color-text-muted);
   padding: 4px;
+  line-height: 1;
+}
+.chat-sidebar-toggle svg {
+  display: block;
+}
+
+/* Navigation hamburger inside chat header (mobile only) */
+.chat-nav-toggle {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  width: 36px;
+  height: 36px;
+  padding: 8px 7px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  cursor: pointer;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.chat-nav-toggle span {
+  display: block;
+  width: 100%;
+  height: 2px;
+  background: var(--color-text);
+  border-radius: 2px;
 }
 
 /* -- Connection status dot -- */
@@ -2215,7 +2244,19 @@ textarea {
   }
 
   .chat-sidebar-toggle {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .chat-nav-toggle {
+    display: flex;
+  }
+
+  /* Hide duplicate mobile-header when assistant page is active —
+     the chat-header provides its own nav hamburger + title */
+  .main-content[data-page="assistant"] .mobile-header {
+    display: none !important;
   }
 
   .message-bubble {
@@ -11180,4 +11221,345 @@ a, button, input, select, textarea, [role="button"], .nav-item, .btn {
 .admin-stat-card[role="button"]:hover {
   transform: translateY(-3px);
   box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   REPORTS PAGE — TABS & PREDICTIVE ANALYTICS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Tab switcher ── */
+.reports-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  border-bottom: 2px solid var(--color-border);
+  padding-bottom: 0;
+}
+
+.reports-tab {
+  padding: 10px 20px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: -2px;
+}
+
+.reports-tab:hover {
+  color: var(--text-primary);
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.reports-tab.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* ── Analytics section ── */
+.predictive-analytics-section {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ── Category groups ── */
+.analytics-category-group {
+  margin-bottom: 4px;
+}
+
+.analytics-category-header {
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding-left: 10px;
+  border-left: 3px solid var(--color-primary);
+  margin: 0 0 10px 0;
+  color: var(--text-primary);
+}
+
+/* ── Type selection grid ── */
+.analytics-type-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.analytics-type-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px;
+  background: var(--card-bg, #fff);
+  border: 1.5px solid var(--color-border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.analytics-type-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
+  transform: translateY(-1px);
+}
+
+.analytics-type-card.active {
+  border-color: var(--color-primary);
+  background: rgba(59, 130, 246, 0.06);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.analytics-type-icon {
+  font-size: 1.5rem;
+}
+
+.analytics-type-label {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.analytics-type-desc {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+/* ── Run panel ── */
+.analytics-run-panel {
+  padding: 20px;
+}
+
+.analytics-run-header {
+  margin-bottom: 16px;
+}
+
+.analytics-run-config {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.analytics-config-field {
+  flex: 1;
+  min-width: 200px;
+}
+
+.analytics-date-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.analytics-pill {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  background: none;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: var(--text-secondary);
+}
+
+.analytics-pill:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.analytics-pill.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.analytics-run-btn {
+  min-width: 160px;
+  height: 42px;
+}
+
+/* ── Results ── */
+.analytics-results {
+  padding: 20px;
+}
+
+.analytics-results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* ── Summary metric cards ── */
+.analytics-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.analytics-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+  background: rgba(59, 130, 246, 0.04);
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+}
+
+.analytics-summary-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.analytics-summary-value {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+/* ── Charts ── */
+.analytics-charts {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.analytics-chart-container {
+  text-align: center;
+}
+
+.analytics-chart-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0 0 8px 0;
+  color: var(--text-primary);
+}
+
+.analytics-chart-img {
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: #fff;
+}
+
+/* ── Data table ── */
+.analytics-table-wrap {
+  overflow-x: auto;
+  margin-top: 16px;
+}
+
+.analytics-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.analytics-data-table th {
+  background: rgba(59, 130, 246, 0.06);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: capitalize;
+  color: var(--text-secondary);
+  border-bottom: 2px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.analytics-data-table td {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--text-primary);
+}
+
+.analytics-data-table tbody tr:hover {
+  background: rgba(59, 130, 246, 0.03);
+}
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .analytics-type-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-run-config {
+    flex-direction: column;
+  }
+
+  .analytics-date-pills {
+    justify-content: flex-start;
+  }
+
+  .analytics-summary-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .reports-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* ── Predictive Analytics ToolCallCard (chat UI) ── */
+
+.tool-predictive-analytics {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tool-pa-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.tool-pa-stat {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.tool-pa-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.tool-pa-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: rgba(59, 130, 246, 0.04);
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+}
+
+.tool-pa-summary-label {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.tool-pa-summary-value {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-word;
 }

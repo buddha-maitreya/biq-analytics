@@ -10,7 +10,7 @@ interface AdminPageProps {
   onSaved?: () => void;
 }
 
-type AdminTab = "users" | "approvals" | "locations" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools" | "model" | "agents" | "prompts" | "evals" | "examples" | "scheduler" | "observability" | "reports" | "analytics";
+type AdminTab = "users" | "approvals" | "locations" | "statuses" | "tax" | "knowledge" | "settings" | "ai" | "tools" | "model" | "agents" | "prompts" | "evals" | "examples" | "scheduler" | "observability" | "reports" | "analytics" | "pos";
 
 /* ---------- Sub-types ---------- */
 interface RBACConfig {
@@ -163,6 +163,7 @@ const NAV_SECTIONS: NavSection[] = [
       { key: "approvals", label: "Approval Workflows", icon: "✅" },
       { key: "reports", label: "Reports", icon: "📄" },
       { key: "analytics", label: "Analytics", icon: "📊" },
+      { key: "pos", label: "POS Connections", icon: "💳" },
     ],
   },
   {
@@ -200,6 +201,7 @@ const TAB_TITLES: Record<AdminTab, string> = {
   statuses: "Order Statuses",
   tax: "Tax Rules",
   settings: "Business Profile",
+  pos: "POS Connections",
 };
 
 const TAB_DESCRIPTIONS: Record<AdminTab, string> = {
@@ -221,6 +223,7 @@ const TAB_DESCRIPTIONS: Record<AdminTab, string> = {
   statuses: "Define order lifecycle statuses and transitions",
   tax: "Configure tax rules and compliance settings",
   settings: "Company branding, payment providers, and system configuration",
+  pos: "Manage external POS integrations, vendor connections, and transaction monitoring",
 };
 
 /* ---------- Reusable FormField wrapper ---------- */
@@ -333,6 +336,7 @@ export default function AdminPage({ config, onSaved }: AdminPageProps) {
           {tab === "observability" && <ObservabilityTab />}
           {tab === "reports" && <ReportSettingsTab />}
           {tab === "analytics" && <AnalyticsSettingsTab />}
+          {tab === "pos" && <PosConnectionsTab />}
           {tab === "settings" && <SettingsTab config={config} onSaved={onSaved} />}
         </div>
       </div>
@@ -6314,6 +6318,362 @@ function LocationsTab({ config }: { config: AppConfig }) {
         production facilities, kitchens, dispatch centers, etc. Use <strong>location types</strong> to categorize
         them and <strong>sort order</strong> to control display priority. All inventory movement is tracked
         per-location for AI analytics and demand forecasting.
+      </TipBlock>
+    </div>
+  );
+}
+
+/* ===== POS CONNECTIONS TAB ===== */
+interface PosConnection {
+  id: string;
+  vendor: string;
+  displayName: string;
+  isActive: boolean;
+  authType: string;
+  authSecret?: string;
+  signatureHeader?: string;
+  fieldMapping?: Record<string, string>;
+  webhookUrl?: string;
+  defaultWarehouseId?: string;
+  settings?: Record<string, unknown>;
+  lastSyncAt?: string;
+  errorCount: number;
+  totalTransactions: number;
+  createdAt: string;
+}
+
+interface PosStats {
+  totalTransactions: number;
+  processed: number;
+  failed: number;
+  duplicates: number;
+  activeVendors: number;
+  totalVendors: number;
+  vendors: Array<{
+    id: string;
+    vendor: string;
+    displayName: string;
+    isActive: boolean;
+    lastSyncAt?: string;
+    errorCount: number;
+    totalTransactions: number;
+  }>;
+}
+
+function PosConnectionsTab() {
+  const [connections, setConnections] = useState<PosConnection[]>([]);
+  const [stats, setStats] = useState<PosStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<PosConnection | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  // Form state
+  const [vendor, setVendor] = useState("generic");
+  const [displayName, setDisplayName] = useState("");
+  const [authType, setAuthType] = useState("none");
+  const [authSecret, setAuthSecret] = useState("");
+  const [signatureHeader, setSignatureHeader] = useState("");
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [isActive, setIsActive] = useState(true);
+
+  const loadData = useCallback(async () => {
+    try {
+      const [connRes, statsRes] = await Promise.all([
+        fetch("/api/pos/connections"),
+        fetch("/api/pos/stats"),
+      ]);
+      if (connRes.ok) {
+        const connData = await connRes.json();
+        setConnections(connData.data ?? []);
+      }
+      if (statsRes.ok) {
+        const statsData = await statsRes.json();
+        setStats(statsData.data ?? null);
+      }
+    } catch {
+      setError("Failed to load POS data");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const resetForm = () => {
+    setVendor("generic");
+    setDisplayName("");
+    setAuthType("none");
+    setAuthSecret("");
+    setSignatureHeader("");
+    setWebhookUrl("");
+    setIsActive(true);
+    setEditing(null);
+    setShowForm(false);
+    setError("");
+  };
+
+  const openEdit = (conn: PosConnection) => {
+    setEditing(conn);
+    setVendor(conn.vendor);
+    setDisplayName(conn.displayName);
+    setAuthType(conn.authType);
+    setAuthSecret(conn.authSecret ?? "");
+    setSignatureHeader(conn.signatureHeader ?? "");
+    setWebhookUrl(conn.webhookUrl ?? "");
+    setIsActive(conn.isActive);
+    setShowForm(true);
+  };
+
+  const handleSave = async () => {
+    if (!displayName.trim()) {
+      setError("Display name is required");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const body = {
+        vendor,
+        displayName: displayName.trim(),
+        authType,
+        authSecret: authSecret || null,
+        signatureHeader: signatureHeader || null,
+        webhookUrl: webhookUrl || null,
+        isActive,
+      };
+
+      const url = editing ? `/api/pos/connections/${editing.id}` : "/api/pos/connections";
+      const method = editing ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? `Failed to ${editing ? "update" : "create"} connection`);
+      }
+
+      resetForm();
+      await loadData();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this POS connection? This cannot be undone.")) return;
+    try {
+      await fetch(`/api/pos/connections/${id}`, { method: "DELETE" });
+      await loadData();
+    } catch {
+      setError("Failed to delete connection");
+    }
+  };
+
+  const handleToggle = async (conn: PosConnection) => {
+    try {
+      await fetch(`/api/pos/connections/${conn.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: !conn.isActive }),
+      });
+      await loadData();
+    } catch {
+      setError("Failed to toggle connection");
+    }
+  };
+
+  if (loading) return <div className="admin-loading">Loading POS data...</div>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      {/* Stats Overview */}
+      {stats && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+          <div className="admin-stat-card">
+            <div className="admin-stat-value">{stats.totalTransactions}</div>
+            <div className="admin-stat-label">Total Transactions</div>
+          </div>
+          <div className="admin-stat-card">
+            <div className="admin-stat-value" style={{ color: "var(--color-success, #22c55e)" }}>{stats.processed}</div>
+            <div className="admin-stat-label">Processed</div>
+          </div>
+          <div className="admin-stat-card">
+            <div className="admin-stat-value" style={{ color: "var(--color-error, #ef4444)" }}>{stats.failed}</div>
+            <div className="admin-stat-label">Failed</div>
+          </div>
+          <div className="admin-stat-card">
+            <div className="admin-stat-value">{stats.activeVendors} / {stats.totalVendors}</div>
+            <div className="admin-stat-label">Active Vendors</div>
+          </div>
+        </div>
+      )}
+
+      {/* Error */}
+      {error && (
+        <div style={{ padding: "10px 14px", background: "var(--color-error-bg, #fef2f2)", color: "var(--color-error, #ef4444)", borderRadius: 8, fontSize: "0.85rem" }}>
+          {error}
+        </div>
+      )}
+
+      {/* Actions */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 600 }}>Vendor Connections</h3>
+        <button
+          className="admin-btn admin-btn-primary"
+          onClick={() => { resetForm(); setShowForm(true); }}
+        >
+          + Add Connection
+        </button>
+      </div>
+
+      {/* Add/Edit Form */}
+      {showForm && (
+        <div style={{ padding: 20, background: "var(--color-surface, #f8f9fa)", borderRadius: 12, border: "1px solid var(--color-border, #e5e7eb)" }}>
+          <h4 style={{ margin: "0 0 16px", fontSize: "0.95rem" }}>{editing ? "Edit" : "New"} POS Connection</h4>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <FormField label="Vendor Type">
+              <select value={vendor} onChange={(e) => {
+                const v = e.target.value;
+                setVendor(v);
+                // Auto-configure auth defaults for known vendors
+                if (v === "paystack") {
+                  setAuthType("hmac");
+                  setSignatureHeader("x-paystack-signature");
+                } else if (v === "mpesa") {
+                  setAuthType("none"); // M-Pesa uses IP whitelisting
+                  setSignatureHeader("");
+                }
+              }} className="admin-input">
+                <option value="generic">Generic REST</option>
+                <option value="paystack">Paystack (Visa/Mastercard)</option>
+                <option value="mpesa">M-Pesa (Daraja C2B)</option>
+                <option value="ikhokha">iKhokha</option>
+                <option value="itax">iTax POS</option>
+                <option value="custom">Custom</option>
+              </select>
+            </FormField>
+            <FormField label="Display Name">
+              <input className="admin-input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="e.g. Main Branch M-Pesa" />
+            </FormField>
+            <FormField label="Auth Type">
+              <select value={authType} onChange={(e) => setAuthType(e.target.value)} className="admin-input">
+                <option value="none">None (open)</option>
+                <option value="hmac">HMAC Signature</option>
+                <option value="bearer">Bearer Token</option>
+                <option value="basic">Basic Auth</option>
+              </select>
+            </FormField>
+            {authType !== "none" && (
+              <FormField label={authType === "hmac" ? "HMAC Secret" : authType === "bearer" ? "Bearer Token" : "username:password"}>
+                <input className="admin-input" type="password" value={authSecret} onChange={(e) => setAuthSecret(e.target.value)} placeholder="Secret or token" />
+              </FormField>
+            )}
+            {authType === "hmac" && (
+              <FormField label="Signature Header">
+                <input className="admin-input" value={signatureHeader} onChange={(e) => setSignatureHeader(e.target.value)} placeholder="x-signature (default)" />
+              </FormField>
+            )}
+            <FormField label="Outbound Webhook URL" hint="For bidirectional catalog sync">
+              <input className="admin-input" value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} placeholder="https://pos-vendor.com/api/catalog" />
+            </FormField>
+          </div>
+          {vendor === "paystack" && (
+            <div style={{ marginTop: 12, padding: "10px 14px", background: "var(--color-info-bg, #eff6ff)", borderRadius: 8, fontSize: "0.82rem", lineHeight: 1.6 }}>
+              <strong>💳 Paystack Setup:</strong>
+              <br />1. Get your <strong>Secret Key</strong> from <a href="https://dashboard.paystack.com/#/settings/developers" target="_blank" rel="noopener noreferrer">Paystack Dashboard → Settings → API Keys</a>
+              <br />2. Paste it as the <strong>HMAC Secret</strong> above
+              <br />3. In Paystack Dashboard → Settings → Webhooks, set the URL to: <code>POST /api/pos/ingest/paystack</code>
+              <br />4. Send cart items in <code>metadata.items[]</code> (with <code>sku</code>, <code>name</code>, <code>quantity</code>, <code>amount</code> in kobo) for itemized sales
+              <br />Card brand (Visa/Mastercard) and last 4 digits are auto-captured from the payment authorization.
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
+              <span style={{ fontSize: "0.85rem" }}>Active</span>
+            </label>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            <button className="admin-btn admin-btn-primary" onClick={handleSave} disabled={saving}>
+              {saving ? "Saving..." : editing ? "Update" : "Create"}
+            </button>
+            <button className="admin-btn" onClick={resetForm}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Connections List */}
+      {connections.length === 0 ? (
+        <div style={{ padding: 40, textAlign: "center", opacity: 0.6, fontSize: "0.9rem" }}>
+          No POS connections configured yet. Add one to start receiving sale data from external POS systems.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {connections.map((conn) => (
+            <div
+              key={conn.id}
+              style={{
+                padding: "14px 18px",
+                background: "var(--color-surface, #fff)",
+                borderRadius: 10,
+                border: "1px solid var(--color-border, #e5e7eb)",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                opacity: conn.isActive ? 1 : 0.6,
+              }}
+            >
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontWeight: 600 }}>{conn.displayName}</span>
+                  <span style={{
+                    fontSize: "0.72rem",
+                    padding: "2px 8px",
+                    borderRadius: 12,
+                    background: conn.isActive ? "var(--color-success-bg, #f0fdf4)" : "var(--color-muted-bg, #f3f4f6)",
+                    color: conn.isActive ? "var(--color-success, #22c55e)" : "var(--color-muted, #9ca3af)",
+                  }}>
+                    {conn.isActive ? "Active" : "Inactive"}
+                  </span>
+                  <span style={{ fontSize: "0.72rem", padding: "2px 8px", borderRadius: 12, background: "#eff6ff", color: "#3b82f6" }}>
+                    {conn.vendor}
+                  </span>
+                </div>
+                <div style={{ fontSize: "0.78rem", color: "var(--color-text-secondary, #6b7280)", display: "flex", gap: 16 }}>
+                  <span>Auth: {conn.authType}</span>
+                  <span>Transactions: {conn.totalTransactions}</span>
+                  {conn.errorCount > 0 && <span style={{ color: "var(--color-error, #ef4444)" }}>Errors: {conn.errorCount}</span>}
+                  {conn.lastSyncAt && <span>Last sync: {new Date(conn.lastSyncAt).toLocaleString()}</span>}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button className="admin-btn admin-btn-sm" onClick={() => handleToggle(conn)} title={conn.isActive ? "Disable" : "Enable"}>
+                  {conn.isActive ? "⏸" : "▶️"}
+                </button>
+                <button className="admin-btn admin-btn-sm" onClick={() => openEdit(conn)} title="Edit">✏️</button>
+                <button className="admin-btn admin-btn-sm admin-btn-danger" onClick={() => handleDelete(conn.id)} title="Delete">🗑️</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Webhook URL Info */}
+      <TipBlock>
+        <strong>POS Integration URLs:</strong> External POS systems send sale events to:
+        <br /><code>POST /api/pos/ingest/&#123;vendor&#125;</code> — single sale
+        <br /><code>POST /api/pos/ingest/&#123;vendor&#125;/batch</code> — batch sync
+        <br /><code>POST /api/pos/return/&#123;vendor&#125;</code> — returns/refunds
+        <br /><code>GET /api/pos/stock?warehouse=&#123;code&#125;</code> — query stock levels
+        <br />Replace <code>&#123;vendor&#125;</code> with the vendor type (e.g., <code>paystack</code>, <code>mpesa</code>, <code>generic</code>).
+        <br />Each vendor connection can have its own auth method (HMAC, Bearer, Basic, or None).
       </TipBlock>
     </div>
   );

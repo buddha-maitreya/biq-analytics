@@ -31,6 +31,8 @@ import {
 } from "@services/scheduler";
 // import { getAgentConfigWithDefaults } from "@services/agent-configs"; // Available if handler needs live config
 import { runAllEvals } from "@api/eval-cron";
+import { runAnalytics, type AnalyticsAction } from "@lib/analytics";
+import { getAnalyticsData, getDefaultRange, PREDICTIVE_ANALYTICS_TYPES } from "@lib/analytics-queries";
 import { db, notifications, users } from "@db/index";
 import { eq, sql } from "drizzle-orm";
 
@@ -49,7 +51,7 @@ const inputSchema = s.object({
   scheduleId: s.string().describe("ID of the schedule to execute (UUID)"),
   /** Task type determines the execution strategy */
   taskType: s
-    .enum(["report", "insight", "alert", "cleanup", "eval", "custom"])
+    .enum(["report", "insight", "alert", "cleanup", "eval", "analytics", "custom"])
     .describe("Type of scheduled task"),
   /** Task-specific configuration */
   taskConfig: s
@@ -256,6 +258,106 @@ async function executeEvalTask(
   };
 }
 
+/**
+ * Execute a pre-built predictive analytics module.
+ *
+ * taskConfig:
+ *   action:     AnalyticsAction (e.g. "forecast.prophet", "classify.abc_xyz")
+ *   periodDays: Number of days of data to analyze (default: action-specific)
+ *   params:     Optional parameter overrides for the module
+ *
+ * The scheduler runs this on a cron schedule (e.g., weekly forecasts,
+ * daily anomaly detection) and the results can be stored/notified.
+ */
+async function executeAnalyticsTask(
+  taskConfig: Record<string, unknown>,
+  ctx: any
+): Promise<Record<string, unknown>> {
+  const action = taskConfig.action as string;
+  const periodDays = taskConfig.periodDays as number | undefined;
+  const params = taskConfig.params as Record<string, unknown> | undefined;
+
+  // Validate action
+  const validActions = PREDICTIVE_ANALYTICS_TYPES.map((t) => t.action) as string[];
+  if (!action || !validActions.includes(action)) {
+    throw new Error(
+      `Invalid analytics action: "${action}". Valid: ${[...validActions].join(", ")}`
+    );
+  }
+
+  const typedAction = action as AnalyticsAction;
+  ctx.logger.info("Executing scheduled analytics", { action, periodDays });
+
+  // Build date range
+  let dateRange = getDefaultRange(typedAction);
+  if (periodDays) {
+    const end = new Date();
+    const start = new Date(end.getTime() - periodDays * 86_400_000);
+    dateRange = {
+      start: start.toISOString().slice(0, 10),
+      end: end.toISOString().slice(0, 10),
+    };
+  }
+
+  // Fetch data from DB
+  const analyticsData = await getAnalyticsData(typedAction, dateRange);
+  if (analyticsData.rowCount === 0) {
+    return {
+      action,
+      dateRange,
+      dataRowCount: 0,
+      skipped: true,
+      reason: "no_data",
+    };
+  }
+
+  // Run in sandbox via ctx.sandbox
+  const result = await runAnalytics(
+    ctx.sandbox,
+    { action: typedAction, data: analyticsData.data, params },
+  );
+
+  if (!result.success) {
+    throw new Error(result.error || "Analytics module returned an error");
+  }
+
+  // Create notification with summary for admins
+  const typeInfo = PREDICTIVE_ANALYTICS_TYPES.find((t) => t.action === action);
+  const label = typeInfo?.label ?? action;
+  const summaryKeys = Object.keys(result.summary ?? {}).slice(0, 5);
+  const summaryPreview = summaryKeys
+    .map((k) => `${k}: ${JSON.stringify((result.summary as any)?.[k])}`)
+    .join(", ");
+
+  const admins = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.isActive, true));
+
+  for (const admin of admins.slice(0, 10)) {
+    await db.insert(notifications).values({
+      userId: admin.id,
+      type: "info",
+      title: `${label} — Scheduled Analytics Complete`,
+      message: summaryPreview
+        ? `Results: ${summaryPreview.slice(0, 200)}`
+        : `${label} completed for ${dateRange.start} to ${dateRange.end}`,
+    });
+  }
+
+  return {
+    action,
+    label,
+    dateRange,
+    dataRowCount: analyticsData.rowCount,
+    queryMs: analyticsData.queryMs,
+    durationMs: result.meta?.durationMs,
+    chartCount: result.charts?.length ?? 0,
+    hasTable: !!result.table,
+    summaryKeys,
+  };
+}
+
 // ── Agent Definition ────────────────────────────────────────
 
 const scheduler = createAgent("scheduler", {
@@ -309,6 +411,9 @@ const scheduler = createAgent("scheduler", {
           break;
         case "eval":
           result = await executeEvalTask(input.taskConfig, ctx);
+          break;
+        case "analytics":
+          result = await executeAnalyticsTask(input.taskConfig, ctx);
           break;
         case "custom":
           // Custom tasks just log their config — extensible via future plugins

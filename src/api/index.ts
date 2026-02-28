@@ -18,6 +18,7 @@
  *   /api/admin/documents — Knowledge base document management (RAG)
  *   /api/chat        — Business assistant chat
  *   /api/reports     — AI-powered report generation
+ *   /api/pos/*       — External POS integration (webhooks, connections, stock sync)
  */
 
 export { default as configRoutes } from "./config";
@@ -48,8 +49,12 @@ export { default as schedulerCronRoutes } from "./scheduler-cron";
 export { default as telemetryRoutes } from "./telemetry";
 export { default as webhookRoutes } from "./webhooks";
 export { default as attachmentRoutes } from "./attachments";
+export { default as posRoutes } from "./pos";
 export { default as approvalRoutes } from "./approvals";
 export { default as transferRoutes } from "./transfers";
 export { default as salesRoutes } from "./sales";
 export { default as analyticsConfigRoutes } from "./analytics-configs";
+export { default as predictiveAnalyticsRoutes } from "./predictive-analytics";
 export { default as exportRoutes } from "./export";
+export { default as ingestionRoutes } from "./ingestions";
+export { default as pwaRoutes } from "./pwa";

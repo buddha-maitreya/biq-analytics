@@ -1,1 +1,1 @@
-# Anomaly detection modules — Isolation Forest, Shrinkage, Price Anomaly
+# Anomaly detection modules — Isolation Forest, Shrinkage

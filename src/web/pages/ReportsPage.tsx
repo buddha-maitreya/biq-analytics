@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useAPI } from "@agentuity/react";
+import PredictiveAnalytics from "../components/PredictiveAnalytics";
 import type { AppConfig } from "../types";
 
 interface ReportsPageProps {
@@ -75,6 +76,7 @@ const DATE_PRESETS = [
 ];
 
 export default function ReportsPage({ config }: ReportsPageProps) {
+  const [activeTab, setActiveTab] = useState<"reports" | "analytics">("reports");
   const [reportType, setReportType] = useState<ReportType>("sales-summary");
   const [datePreset, setDatePreset] = useState("last30");
   const [customStart, setCustomStart] = useState("");
@@ -273,16 +275,41 @@ export default function ReportsPage({ config }: ReportsPageProps) {
         <div>
           <h2>📈 Reports</h2>
           <span className="text-muted">
-            Generate and download business reports
+            Generate reports and run predictive analytics
           </span>
         </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setHistoryOpen(!historyOpen)}
+          >
+            📋 History ({savedReports.length})
+          </button>
+        </div>
+      </div>
+
+      {/* Tab switcher */}
+      <div className="reports-tabs">
         <button
-          className="btn btn-secondary"
-          onClick={() => setHistoryOpen(!historyOpen)}
+          className={`reports-tab ${activeTab === "reports" ? "active" : ""}`}
+          onClick={() => setActiveTab("reports")}
         >
-          📋 History ({savedReports.length})
+          📄 Business Reports
+        </button>
+        <button
+          className={`reports-tab ${activeTab === "analytics" ? "active" : ""}`}
+          onClick={() => setActiveTab("analytics")}
+        >
+          🔬 Predictive Analytics
         </button>
       </div>
+
+      {/* Analytics Tab */}
+      {activeTab === "analytics" && <PredictiveAnalytics />}
+
+      {/* Reports Tab */}
+      {activeTab === "reports" && (
+      <>
 
       {/* Report History Panel */}
       {historyOpen && (
@@ -449,6 +476,8 @@ export default function ReportsPage({ config }: ReportsPageProps) {
             <pre className="report-text">{reportContent}</pre>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

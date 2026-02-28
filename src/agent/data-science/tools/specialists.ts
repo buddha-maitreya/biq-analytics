@@ -23,18 +23,22 @@ import sharp from "sharp";
 import insightsAnalyzer from "@agent/insights-analyzer";
 import reportGenerator from "@agent/report-generator";
 import knowledgeBase from "@agent/knowledge-base";
-import { exportReport, type ExportFormat } from "@lib/report-export";
+import { exportReport, type ExportFormat, type PreRenderedImage } from "@lib/report-export";
 import { getModel } from "@lib/ai";
 import { db, attachments as attachmentsTable } from "@db/index";
 import { eq } from "drizzle-orm";
 import { config } from "@lib/config";
 import { maskPII } from "@lib/pii";
 import { getAnalyticsSettings } from "@services/settings";
+import { runAnalytics, type AnalyticsAction } from "@lib/analytics";
+import { getAnalyticsData, getDefaultRange, PREDICTIVE_ANALYTICS_TYPES } from "@lib/analytics-queries";
+import type { KVStore } from "@lib/cache";
 import { tempAttachmentCache } from "@api/attachments";
 import {
   stageInvoiceIngestion,
   stageStockSheetIngestion,
   stageBarcodeIngestion,
+  commitIngestion,
 } from "@services/document-ingestion";
 import type {
   AnalyzeTrendsResult,
@@ -42,6 +46,7 @@ import type {
   SearchKnowledgeResult,
   ScanDocumentResult,
   ExportReportResult,
+  PredictiveAnalyticsResult,
 } from "./types";
 
 // ── Image resizing for document scanning ────────────────────
@@ -198,7 +203,7 @@ function agentError(
 
 export const analyzeTrendsTool = tool({
   description:
-    "Delegate to The Analyst (insights-analyzer) for statistical analysis that requires COMPUTATION: demand forecasting, anomaly detection (z-scores), restock recommendations (safety stock calculations), or sales trend analysis (moving averages, growth rates). Use when users ask about trends, forecasts, anomalies, patterns, or restocking. This agent dynamically generates and executes Python code (numpy/pandas/scipy/sklearn/statsmodels) in a sandbox for computations beyond SQL.",
+    "FALLBACK: Delegate to The Analyst (insights-analyzer) for CUSTOM statistical analysis that does NOT match any pre-built analytics type. ONLY use this tool when the user's request cannot be handled by run_predictive_analytics (e.g., truly novel analysis, custom formulas, or ad-hoc computations not covered by the standard forecasting/classification/anomaly/chart modules). If the user asks for forecasting, ABC-XYZ, RFM, CLV, bundles, anomaly detection, shrinkage, safety stock, or any chart — use run_predictive_analytics FIRST.",
   parameters: z.object({
     analysis: z
       .string()
@@ -607,6 +612,21 @@ export const scanDocumentTool = tool({
             ingestionResult = await stageBarcodeIngestion(stageInput);
             break;
         }
+        // ── Auto-commit invoice ingestions ──
+        // Invoice scans uploaded via chat should create a real invoice record
+        // immediately so they appear on the Invoices page. The uploading user
+        // is recorded as the reviewer. Stock-sheet and barcode ingestions
+        // may still require approval depending on workflow config.
+        if (mode === "invoice" && ingestionResult?.ingestionId && ingestionResult.status === "staged") {
+          try {
+            const reviewerId = attachmentUserId ?? "system";
+            const commitResult = await commitIngestion(ingestionResult.ingestionId, reviewerId, "Auto-committed from chat upload");
+            console.log(`[SCAN:5b] Invoice auto-committed`, { ingestionId: ingestionResult.ingestionId, committed: commitResult.committed, skipped: commitResult.skipped, errors: commitResult.errors });
+            ingestionResult.status = "committed";
+          } catch (commitErr: any) {
+            console.log(`[SCAN:5b] Invoice auto-commit FAILED (non-fatal)`, { error: commitErr?.message?.slice(0, 300) });
+          }
+        }
       } catch (ingErr: any) {
         // Ingestion staging failed — non-fatal, still return scan results.
         console.log(`[SCAN:5] Ingestion staging FAILED (non-fatal)`, { error: ingErr?.message?.slice(0, 300), stack: ingErr?.stack?.slice(0, 500) });
@@ -645,7 +665,9 @@ export const exportReportTool = tool({
     "IMPORTANT: Always structure the report content with: 1) Executive Summary (2-3 sentences highlighting key findings), " +
     "2) Relevant data sections with tables and analysis, " +
     "3) Conclusion with key observations and a recommended action plan. " +
-    "For data-heavy exports, prefer Excel. For presentations, use PowerPoint. For printable reports, use PDF. For editable reports, use Word.",
+    "For data-heavy exports, prefer Excel. For presentations, use PowerPoint. For printable reports, use PDF. For editable reports, use Word. " +
+    "CHARTS: If you have analytics results from run_predictive_analytics that include charts, pass them via the analyticsCharts parameter " +
+    "so they are embedded in the exported document alongside any Vega-Lite charts generated from the report content.",
   parameters: z.object({
     content: z
       .string()
@@ -667,15 +689,38 @@ export const exportReportTool = tool({
       .string()
       .optional()
       .describe("Name of the person who prepared the report. Use the logged-in user's name if known from the conversation context."),
+    analyticsCharts: z
+      .array(
+        z.object({
+          title: z.string().describe("Chart title"),
+          data: z.string().describe("Base64-encoded PNG image data"),
+          width: z.number().optional().describe("Image width in pixels (default: 800)"),
+          height: z.number().optional().describe("Image height in pixels (default: 500)"),
+        })
+      )
+      .optional()
+      .describe(
+        "Pre-rendered chart images from Python analytics (run_predictive_analytics results). " +
+        "Pass the charts array from PredictiveAnalyticsResult directly. These will be embedded in the export alongside any Vega-Lite charts."
+      ),
   }),
-  execute: async ({ content, title, format, subtitle, preparedBy }): Promise<ExportReportResult> => {
+  execute: async ({ content, title, format, subtitle, preparedBy, analyticsCharts }): Promise<ExportReportResult> => {
     try {
+      // Convert analyticsCharts to PreRenderedImage format
+      const preRenderedImages: PreRenderedImage[] | undefined = analyticsCharts?.map((c) => ({
+        title: c.title,
+        data: c.data,
+        width: c.width,
+        height: c.height,
+      }));
+
       const result = await exportReport({
         content,
         title,
         format: format as ExportFormat,
         subtitle,
         preparedBy,
+        preRenderedImages,
       });
       return {
         downloadUrl: result.downloadUrl,
@@ -689,3 +734,186 @@ export const exportReportTool = tool({
     }
   },
 });
+
+// ────────────────────────────────────────────────────────────
+// run_predictive_analytics — Pre-built Python analytics modules
+// ────────────────────────────────────────────────────────────
+// ALWAYS PREFERRED over analyze_trends for known analytics types.
+// Pre-built modules are optimized, tested, and produce consistent
+// output (summary JSON + base64 charts). The LLM should route here
+// for ALL standard analytics requests.
+
+/** Valid action values for the tool schema */
+const VALID_ACTIONS = PREDICTIVE_ANALYTICS_TYPES.map((t) => t.action);
+
+/**
+ * Build a human-readable action list for the tool description so the
+ * LLM knows exactly which analytics types are available.
+ */
+function buildActionList(): string {
+  const grouped: Record<string, string[]> = {};
+  for (const t of PREDICTIVE_ANALYTICS_TYPES) {
+    (grouped[t.category] ??= []).push(`${t.action} — ${t.label}: ${t.description}`);
+  }
+  return Object.entries(grouped)
+    .map(([cat, items]) => `${cat.toUpperCase()}:\n${items.map((i) => `  • ${i}`).join("\n")}`)
+    .join("\n");
+}
+
+/**
+ * Factory: creates the predictive analytics tool with sandbox API
+ * captured via closure (same pattern as createRunAnalysisTool).
+ *
+ * The sandbox API is per-request in the streaming chat handler;
+ * this ensures concurrent requests never share sandbox references.
+ */
+export function createPredictiveAnalyticsTool(
+  sandboxApi: { run: (opts: Record<string, unknown>) => Promise<any> },
+  kv?: KVStore
+) {
+  return tool({
+    description: `Run a PRE-BUILT Python analytics module. This is the PREFERRED tool for ALL standard analytics requests — forecasting, classification, anomaly detection, and charts. ALWAYS use this tool BEFORE analyze_trends for any of the supported action types below.
+
+SUPPORTED ANALYTICS (use the exact action string):
+${buildActionList()}
+
+HOW IT WORKS:
+1. You pick the action that best matches the user's request
+2. The tool fetches the right data from the database automatically
+3. A tested, optimized Python module runs in a sandbox
+4. Returns structured JSON (summary metrics + charts + optional data table)
+
+WHEN TO USE:
+- User asks for a forecast → forecast.prophet / forecast.arima / forecast.holt_winters
+- User asks about inventory classification → classify.abc_xyz
+- User asks about customer segments → classify.rfm
+- User asks about customer value → classify.clv
+- User asks about product bundles → classify.bundles
+- User asks about safety stock or reorder → forecast.safety_stock
+- User asks about anomalies → anomaly.transactions
+- User asks about shrinkage → anomaly.shrinkage
+- User asks for any chart/visualization → chart.* (pick the best match)
+- ONLY fall back to analyze_trends if NONE of these match`,
+    parameters: z.object({
+      action: z
+        .string()
+        .describe(
+          `The analytics action to run. Must be one of: ${VALID_ACTIONS.join(", ")}`
+        ),
+      periodDays: z
+        .number()
+        .int()
+        .min(7)
+        .max(365)
+        .optional()
+        .describe(
+          "Number of days of historical data to analyze. Defaults to 90 for forecasting/charts, 30 for classification/anomaly. Only override if the user specifies a specific date range."
+        ),
+      params: z
+        .record(z.unknown())
+        .optional()
+        .describe(
+          "Optional parameter overrides for the analytics module (e.g., { forecast_days: 60, confidence_level: 0.99 }). Only pass when the user explicitly requests non-default settings."
+        ),
+    }),
+    execute: async ({ action, periodDays, params }): Promise<PredictiveAnalyticsResult> => {
+      // ── Validate action ─────────────────────────────────────
+      if (!VALID_ACTIONS.includes(action as AnalyticsAction)) {
+        return {
+          error: `Unknown analytics action "${action}". Valid actions: ${VALID_ACTIONS.join(", ")}`,
+          errorType: "validation",
+          errorHint: `Pick one of the supported actions. If the user's request doesn't match any, use analyze_trends instead.`,
+        };
+      }
+
+      const analyticsAction = action as AnalyticsAction;
+
+      // ── Determine date range ────────────────────────────────
+      let dateRange = getDefaultRange(analyticsAction);
+      if (periodDays) {
+        const end = new Date();
+        const start = new Date(end.getTime() - periodDays * 86_400_000);
+        dateRange = {
+          start: start.toISOString().slice(0, 10),
+          end: end.toISOString().slice(0, 10),
+        };
+      }
+
+      // ── Step 1: Fetch data from database ────────────────────
+      let analyticsData;
+      try {
+        analyticsData = await getAnalyticsData(analyticsAction, dateRange);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          error: `Failed to fetch data for ${analyticsAction}: ${msg}`,
+          errorType: "database",
+          errorHint: "The database query failed. Check if the required tables exist and have data in the specified date range.",
+        };
+      }
+
+      if (analyticsData.rowCount === 0) {
+        return {
+          error: `No data found for ${analyticsAction} in the date range ${dateRange.start} to ${dateRange.end}.`,
+          errorType: "no_data",
+          errorHint: "Try a wider date range, or check if there is sales/inventory data in the system.",
+        };
+      }
+
+      // ── Step 2: Run pre-built Python module ─────────────────
+      try {
+        const result = await runAnalytics(
+          sandboxApi,
+          {
+            action: analyticsAction,
+            data: analyticsData.data,
+            params,
+          },
+          kv
+        );
+
+        if (!result.success) {
+          return {
+            error: result.error || "Analytics module returned an error",
+            errorType: "analytics",
+            errorHint: result.traceback
+              ? `Python traceback: ${result.traceback.slice(0, 500)}`
+              : "The Python analytics module failed. Try a different date range or check the data quality.",
+          };
+        }
+
+        // ── Step 3: Return structured result ────────────────────
+        return {
+          action: analyticsAction,
+          summary: (result.summary ?? {}) as Record<string, unknown>,
+          charts: result.charts?.map((c) => ({
+            title: c.title,
+            format: (c.format ?? "png") as "png" | "svg",
+            data: c.data,
+            width: c.width ?? 800,
+            height: c.height ?? 600,
+          })),
+          table: result.table
+            ? {
+                columns: result.table.columns ?? [],
+                rows: result.table.rows ?? [],
+              }
+            : undefined,
+          dateRange: {
+            start: dateRange.start,
+            end: dateRange.end,
+          },
+          dataRowCount: analyticsData.rowCount,
+          durationMs: result.meta?.durationMs,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          error: `Analytics execution failed: ${msg}`,
+          errorType: "sandbox",
+          errorHint: "The Python sandbox encountered an error. This may be a transient issue — try again.",
+        };
+      }
+    },
+  });
+}

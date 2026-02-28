@@ -29,9 +29,10 @@ interface PendingAttachment {
 
 interface AssistantPageProps {
   config: AppConfig;
+  onOpenSidebar?: () => void;
 }
 
-export default function AssistantPage({ config }: AssistantPageProps) {
+export default function AssistantPage({ config, onOpenSidebar }: AssistantPageProps) {
   const {
     sessions,
     activeSessionId,
@@ -269,12 +270,22 @@ export default function AssistantPage({ config }: AssistantPageProps) {
       <div className="chat-main">
         {/* Header */}
         <div className="chat-header">
+          {onOpenSidebar && (
+            <button
+              className="chat-nav-toggle"
+              onClick={onOpenSidebar}
+              aria-label="Open navigation menu"
+            >
+              <span /><span /><span />
+            </button>
+          )}
           <button
             className="chat-sidebar-toggle"
             onClick={() => setSidebarOpen(true)}
             aria-label="Open conversations"
+            title="Chat history"
           >
-            ☰
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="10" x2="15" y2="10"/></svg>
           </button>
           <h2>🤖 Executive AI Assistant</h2>
           <div className="chat-header-right">

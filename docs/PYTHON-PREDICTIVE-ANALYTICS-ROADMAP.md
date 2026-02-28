@@ -65,7 +65,6 @@ The following templates will be pre-coded and seeded as part of the initial rele
 **Sales Analytics**
 - `sales-trends` — Overall growth rate, product momentum scoring, day-of-week patterns, top growers/decliners.
 - `basket-analysis` — Frequently bought together (co-occurrence matrix). Identifies upsell pairings.
-- `price-elasticity` — Revenue impact of price changes per product over time.
 
 **Inventory**
 - `restock-recommendations` — Safety stock, optimal reorder quantities, urgency classification (out-of-stock → critical → high → medium → low).

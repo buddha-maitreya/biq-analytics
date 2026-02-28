@@ -1,10 +1,11 @@
 /**
- * Generate PWA icons as SVG files (lightweight, scalable).
- * These serve as the PWA icons until a proper logo is provided.
+ * Generate PWA icons as SVG + PNG files.
+ * PNG icons are required for Chrome's beforeinstallprompt (PWA installability).
  * 
  * Run: bun scripts/generate-pwa-icons.ts
  */
 import { writeFileSync, mkdirSync, existsSync } from "fs";
+import sharp from "sharp";
 
 const ICONS_DIR = "src/web/public/icons";
 
@@ -42,6 +43,24 @@ for (const v of variants) {
   console.log(`✓ Generated ${ICONS_DIR}/${v.name}`);
 }
 
-console.log("\nDone! Icons generated as SVGs.");
-console.log("NOTE: For production, replace with proper PNG icons from your designer.");
-console.log("      Update manifest.json icon src paths from .svg to .png when ready.");
+// Generate PNG versions from SVGs (required for Chrome PWA installability)
+const pngVariants = [
+  { src: "icon-192.svg", out: "icon-192.png", size: 192 },
+  { src: "icon-512.svg", out: "icon-512.png", size: 512 },
+  { src: "icon-maskable-192.svg", out: "icon-maskable-192.png", size: 192 },
+  { src: "icon-maskable-512.svg", out: "icon-maskable-512.png", size: 512 },
+  { src: "apple-touch-icon.svg", out: "apple-touch-icon.png", size: 180 },
+];
+
+for (const v of pngVariants) {
+  const svgPath = `${ICONS_DIR}/${v.src}`;
+  const pngPath = `${ICONS_DIR}/${v.out}`;
+  await sharp(svgPath)
+    .resize(v.size, v.size)
+    .png()
+    .toFile(pngPath);
+  console.log(`✓ Generated ${pngPath}`);
+}
+
+console.log("\nDone! SVG + PNG icons generated.");
+console.log("Manifest references PNG icons for maximum browser compatibility.");

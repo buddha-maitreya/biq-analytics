@@ -48,6 +48,18 @@ import type { ChartSpec, RenderedChart } from "@lib/charts";
 
 export type ExportFormat = "pdf" | "xlsx" | "docx" | "pptx";
 
+/** A pre-rendered chart image (e.g. from Python analytics sandbox). */
+export interface PreRenderedImage {
+  /** Chart title */
+  title: string;
+  /** Base64-encoded image data (PNG) */
+  data: string;
+  /** Image width in pixels (default: 800) */
+  width?: number;
+  /** Image height in pixels (default: 500) */
+  height?: number;
+}
+
 export interface ExportInput {
   /** The report content (markdown or plain text) */
   content: string;
@@ -63,6 +75,12 @@ export interface ExportInput {
   preparedBy?: string;
   /** Optional chart specifications to render and embed in the export */
   charts?: ChartSpec[];
+  /**
+   * Pre-rendered chart images (e.g. matplotlib PNGs from Python analytics).
+   * These bypass Vega-Lite rendering and are embedded directly as images.
+   * Merged with Vega-Lite charts — pre-rendered images appear AFTER Vega-Lite charts.
+   */
+  preRenderedImages?: PreRenderedImage[];
 }
 
 export interface ExportResult {
@@ -2187,7 +2205,7 @@ export async function exportReport(input: ExportInput): Promise<ExportResult> {
     }
   }
 
-  // ── Pre-render charts to PNG/SVG ──
+  // ── Pre-render Vega-Lite charts to PNG/SVG ──
   let renderedCharts: RenderedChart[] = [];
   if (allChartSpecs.length > 0) {
     try {
@@ -2196,6 +2214,24 @@ export async function exportReport(input: ExportInput): Promise<ExportResult> {
       });
     } catch (err) {
       console.error("[report-export] Chart rendering failed, continuing without charts:", err);
+    }
+  }
+
+  // ── Merge pre-rendered images (e.g. from Python analytics) ──
+  if (input.preRenderedImages && input.preRenderedImages.length > 0) {
+    for (const img of input.preRenderedImages) {
+      try {
+        const pngBuffer = Buffer.from(img.data, "base64");
+        renderedCharts.push({
+          png: pngBuffer,
+          svg: "", // Pre-rendered — no SVG available
+          title: img.title,
+          width: img.width ?? 800,
+          height: img.height ?? 500,
+        });
+      } catch (err) {
+        console.error(`[report-export] Failed to decode pre-rendered image "${img.title}":`, err);
+      }
     }
   }
 

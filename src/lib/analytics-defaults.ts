@@ -204,20 +204,9 @@ export interface ShrinkageParams {
   minValueFlag: number;
 }
 
-export interface PricingAnomalyParams {
-  enabled: boolean;
-  /** Flag transactions deviating more than this % from avg */
-  deviationPct: number;
-  /** Days of data to compute normal price range */
-  lookbackDays: number;
-  /** Minimum number of transactions to establish a baseline */
-  minTransactions: number;
-}
-
 export interface AnomalyParams {
   transactions: TransactionAnomalyParams;
   shrinkage: ShrinkageParams;
-  pricing: PricingAnomalyParams;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -258,54 +247,6 @@ export interface ChartParams {
 }
 
 // ────────────────────────────────────────────────────────────
-// Pricing Intelligence Defaults
-// ────────────────────────────────────────────────────────────
-
-export interface ElasticityParams {
-  enabled: boolean;
-  /** Minimum number of price change events to estimate elasticity */
-  minPriceChanges: number;
-  /** Minimum data points per price level */
-  minDataPoints: number;
-  /** Days of data to analyze */
-  lookbackDays: number;
-  /** Estimation method */
-  method: "log_linear" | "linear";
-}
-
-export interface MarkdownParams {
-  enabled: boolean;
-  /** Target days to sell through remaining stock */
-  targetSellthroughDays: number;
-  /** Minimum discount to recommend (%) */
-  minDiscountPct: number;
-  /** Maximum discount to recommend (%) */
-  maxDiscountPct: number;
-  /** Days without movement before flagging as slow-mover */
-  slowMoverDays: number;
-}
-
-export interface DynamicPricingParams {
-  enabled: boolean;
-  /** How often to recalculate optimal prices */
-  updateFrequency: "daily" | "weekly" | "monthly";
-  /** Absolute minimum margin % (floor) */
-  marginFloorPct: number;
-  /** Weight of demand signal in price calculation */
-  demandWeight: number;
-  /** Weight of competition signal */
-  competitionWeight: number;
-  /** Weight of seasonality signal */
-  seasonalityWeight: number;
-}
-
-export interface PricingParams {
-  elasticity: ElasticityParams;
-  markdown: MarkdownParams;
-  dynamicPricing: DynamicPricingParams;
-}
-
-// ────────────────────────────────────────────────────────────
 // Category Config (the row shape stored in DB)
 // ────────────────────────────────────────────────────────────
 
@@ -324,7 +265,6 @@ export const ANALYTICS_CATEGORIES = [
   "customer",
   "anomaly",
   "charts",
-  "pricing",
 ] as const;
 
 export type AnalyticsCategory = (typeof ANALYTICS_CATEGORIES)[number];
@@ -465,7 +405,7 @@ export const ANALYTICS_DEFAULTS: Record<AnalyticsCategory, AnalyticsCategoryConf
   anomaly: {
     displayName: "Anomaly Detection",
     description:
-      "Detect unusual transactions, inventory shrinkage, and pricing anomalies " +
+      "Detect unusual transactions and inventory shrinkage " +
       "using Isolation Forest and statistical methods.",
     isEnabled: true,
     params: {
@@ -482,12 +422,6 @@ export const ANALYTICS_DEFAULTS: Record<AnalyticsCategory, AnalyticsCategoryConf
         thresholdSigma: 2.5,
         checkFrequencyDays: 7,
         minValueFlag: 1000,
-      },
-      pricing: {
-        enabled: true,
-        deviationPct: 20,
-        lookbackDays: 30,
-        minTransactions: 5,
       },
     } satisfies AnomalyParams as unknown as Record<string, unknown>,
     schedule: {
@@ -522,37 +456,6 @@ export const ANALYTICS_DEFAULTS: Record<AnalyticsCategory, AnalyticsCategoryConf
     } satisfies ChartParams as unknown as Record<string, unknown>,
   },
 
-  pricing: {
-    displayName: "Pricing Intelligence",
-    description:
-      "Price elasticity estimation, markdown optimization, and dynamic pricing " +
-      "recommendations. Advanced feature — disabled by default.",
-    isEnabled: false,
-    params: {
-      elasticity: {
-        enabled: false,
-        minPriceChanges: 3,
-        minDataPoints: 30,
-        lookbackDays: 180,
-        method: "log_linear",
-      },
-      markdown: {
-        enabled: false,
-        targetSellthroughDays: 30,
-        minDiscountPct: 5,
-        maxDiscountPct: 50,
-        slowMoverDays: 60,
-      },
-      dynamicPricing: {
-        enabled: false,
-        updateFrequency: "weekly",
-        marginFloorPct: 10,
-        demandWeight: 0.6,
-        competitionWeight: 0.2,
-        seasonalityWeight: 0.2,
-      },
-    } satisfies PricingParams as unknown as Record<string, unknown>,
-  },
 };
 
 // ────────────────────────────────────────────────────────────

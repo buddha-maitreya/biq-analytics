@@ -19,6 +19,7 @@ interface ToolCallCardProps {
 const TOOL_LABELS: Record<string, { label: string; icon: string }> = {
   query_database: { label: "Database Query", icon: "🗄️" },
   analyze_trends: { label: "Insights Analysis", icon: "📊" },
+  run_predictive_analytics: { label: "Predictive Analytics", icon: "🔬" },
   generate_report: { label: "Report Generation", icon: "📋" },
   search_knowledge: { label: "Knowledge Search", icon: "📚" },
   get_business_snapshot: { label: "Business Overview", icon: "📈" },
@@ -111,6 +112,16 @@ function renderInput(toolCall: ToolCall) {
         </div>
       );
 
+    case "run_predictive_analytics":
+      return (
+        <div className="tool-input-pills">
+          <span className="tool-pill">{(input as any).action}</span>
+          {(input as any).periodDays && (
+            <span className="tool-pill">{(input as any).periodDays} days</span>
+          )}
+        </div>
+      );
+
     case "generate_report":
       return (
         <div className="tool-input-pills">
@@ -155,6 +166,9 @@ function renderOutput(toolCall: ToolCall) {
 
     case "search_knowledge":
       return <KnowledgeResult output={output} />;
+
+    case "run_predictive_analytics":
+      return <PredictiveAnalyticsResult output={output} />;
 
     case "get_business_snapshot":
       return <SnapshotResult output={output} />;
@@ -364,6 +378,106 @@ function KnowledgeResult({ output }: { output: any }) {
               📄 {s}
             </span>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PredictiveAnalyticsResult({ output }: { output: any }) {
+  const summary = output.summary || {};
+  const charts = output.charts || [];
+  const table = output.table;
+  const summaryEntries = Object.entries(summary).filter(
+    ([, v]) => typeof v !== "object" || v === null
+  );
+
+  return (
+    <div className="tool-predictive-analytics">
+      {/* Action & meta */}
+      <div className="tool-pa-meta">
+        {output.action && <span className="tool-pill">{output.action}</span>}
+        {output.dataRowCount != null && (
+          <span className="tool-pa-stat">{output.dataRowCount.toLocaleString()} rows</span>
+        )}
+        {output.durationMs != null && (
+          <span className="tool-pa-stat">{(output.durationMs / 1000).toFixed(1)}s</span>
+        )}
+        {output.dateRange && (
+          <span className="tool-pa-stat">
+            {output.dateRange.start} → {output.dateRange.end}
+          </span>
+        )}
+      </div>
+
+      {/* Summary metric cards */}
+      {summaryEntries.length > 0 && (
+        <div className="tool-pa-summary-grid">
+          {summaryEntries.slice(0, 12).map(([key, val]) => (
+            <div key={key} className="tool-pa-summary-card">
+              <span className="tool-pa-summary-label">
+                {key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+              </span>
+              <span className="tool-pa-summary-value">
+                {typeof val === "number"
+                  ? val % 1 === 0 ? val.toLocaleString() : val.toFixed(2)
+                  : String(val ?? "—")}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Charts (base64 images) */}
+      {charts.length > 0 && (
+        <div className="tool-insights-charts">
+          {charts.map((chart: any, i: number) => (
+            <div key={i} className="tool-chart-container">
+              <div className="tool-chart-title">{chart.title}</div>
+              <img
+                src={`data:image/${chart.format || "png"};base64,${chart.data}`}
+                alt={chart.title}
+                className="tool-chart-image"
+                style={{
+                  maxWidth: "100%",
+                  width: Math.min(chart.width || 800, 800),
+                  height: "auto",
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Data table */}
+      {table && table.columns?.length > 0 && (
+        <div className="tool-table-wrapper">
+          <div className="tool-row-count">
+            {table.rows?.length ?? 0} row{(table.rows?.length ?? 0) !== 1 ? "s" : ""}
+          </div>
+          <table className="tool-result-table">
+            <thead>
+              <tr>
+                {table.columns.map((col: string) => (
+                  <th key={col}>{col.replace(/_/g, " ")}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(table.rows || []).slice(0, 20).map((row: any, i: number) => (
+                <tr key={i}>
+                  {table.columns.map((col: string) => (
+                    <td key={col}>{formatValue(row[col])}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {(table.rows?.length ?? 0) > 20 && (
+            <div className="tool-truncation-notice">
+              Showing 20 of {table.rows.length} rows
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -131,7 +131,18 @@ Enterprise-grade report generation with AI-powered content, configurable formatt
 - [ ] Sparkline mini-charts embedded in table cells
 - [ ] Interactive HTML chart export (for web/email reports)
 
-### 4.3 Chart Intelligence
+### 4.3 Python Analytics Charts in Report Exports
+- [x] Wire Python analytics pipeline (matplotlib/seaborn) into `exportReport()` so predictive analytics charts embed in PDF/DOCX/XLSX/PPTX
+- [x] Accept pre-rendered base64 PNG images (from `runAnalytics()` results) in `ExportInput` alongside Vega-Lite `ChartSpec[]`
+- [x] Embed Python-generated charts with consistent branding (title, accent underline, figure captions, border frames) matching Vega-Lite charts
+- [x] `exportReportTool` accepts optional `analyticsCharts` parameter (array of `{ title, data: base64, width, height }`)
+- [ ] LLM auto-includes predictive analytics charts when generating analytical reports (forecast, ABC-XYZ, anomaly, etc.)
+- [ ] Python chart sizing/DPI normalization to match Vega-Lite chart dimensions in all export formats
+- [x] PPTX: Python charts rendered as full-bleed slides with title + image (matching Vega-Lite chart slides)
+- [x] DOCX: Python charts embedded as `ImageRun` with captions (matching Vega-Lite chart sections)
+- [x] XLSX: Python charts placed on a dedicated "Analytics Charts" sheet (matching Vega-Lite "Charts" sheet)
+
+### 4.4 Chart Intelligence
 - [ ] Auto-chart selection (LLM picks optimal chart type for each dataset)
 - [ ] Trend annotations (auto-add trend lines, highlight anomalies)
 - [ ] Comparison periods (this month vs last month overlay)

@@ -15,7 +15,7 @@ import type { SandboxErrorType } from "@lib/sandbox";
 export interface ToolErrorResult {
   error: string;
   /** Structured error category for LLM self-correction. */
-  errorType?: SandboxErrorType | "agent" | "validation" | "database";
+  errorType?: SandboxErrorType | "agent" | "validation" | "database" | "no_data" | "analytics" | "sandbox";
   /** Human-readable hint on how to fix the issue. */
   errorHint?: string;
 }
@@ -177,3 +177,29 @@ export interface ExportReportSuccess {
 export interface ExportReportError extends ToolErrorResult {}
 
 export type ExportReportResult = ExportReportSuccess | ExportReportError;
+
+// ────────────────────────────────────────────────────────────
+// run_predictive_analytics (pre-built Python modules)
+// ────────────────────────────────────────────────────────────
+
+export interface PredictiveAnalyticsChart {
+  title: string;
+  format: "png" | "svg";
+  data: string; // base64-encoded
+  width: number;
+  height: number;
+}
+
+export interface PredictiveAnalyticsSuccess {
+  action: string;
+  summary: Record<string, unknown>;
+  charts?: PredictiveAnalyticsChart[];
+  table?: { columns: string[]; rows: Record<string, unknown>[] };
+  dateRange: { start: string; end: string };
+  dataRowCount: number;
+  durationMs?: number;
+}
+
+export interface PredictiveAnalyticsError extends ToolErrorResult {}
+
+export type PredictiveAnalyticsResult = PredictiveAnalyticsSuccess | PredictiveAnalyticsError;

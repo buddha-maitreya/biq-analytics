@@ -5,7 +5,18 @@ import {
 } from "@agentuity/runtime";
 import { getAISettings } from "@services/settings";
 import type { AISettings } from "@services/settings";
-import { PWA_MANIFEST, SERVICE_WORKER_SCRIPT } from "@lib/pwa-assets";
+import {
+  PWA_MANIFEST,
+  SERVICE_WORKER_SCRIPT,
+  ICON_192_SVG,
+  ICON_512_SVG,
+  APPLE_TOUCH_ICON_SVG,
+  ICON_192_PNG,
+  ICON_512_PNG,
+  ICON_MASKABLE_192_PNG,
+  ICON_MASKABLE_512_PNG,
+  APPLE_TOUCH_ICON_PNG,
+} from "@lib/pwa-assets";
 
 /**
  * Agentuity application entry point.
@@ -152,6 +163,62 @@ app.router.get("/sw.js", (c) => {
       "Service-Worker-Allowed": "/",
       "Cache-Control": "no-cache",
     },
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// PWA icon routes — served inline to avoid production serveStatic
+// path mismatch (Vite copies public/ contents to build root, but
+// the generated serveStatic does not strip the /public/ prefix).
+// ────────────────────────────────────────────────────────────
+
+const ICON_CACHE = "public, max-age=604800, immutable";
+
+app.router.get("/public/icons/icon-192.svg", () => {
+  return new Response(ICON_192_SVG, {
+    headers: { "Content-Type": "image/svg+xml", "Cache-Control": ICON_CACHE },
+  });
+});
+
+app.router.get("/public/icons/icon-512.svg", () => {
+  return new Response(ICON_512_SVG, {
+    headers: { "Content-Type": "image/svg+xml", "Cache-Control": ICON_CACHE },
+  });
+});
+
+app.router.get("/public/icons/apple-touch-icon.svg", () => {
+  return new Response(APPLE_TOUCH_ICON_SVG, {
+    headers: { "Content-Type": "image/svg+xml", "Cache-Control": ICON_CACHE },
+  });
+});
+
+app.router.get("/public/icons/icon-192.png", () => {
+  return new Response(ICON_192_PNG, {
+    headers: { "Content-Type": "image/png", "Cache-Control": ICON_CACHE },
+  });
+});
+
+app.router.get("/public/icons/icon-512.png", () => {
+  return new Response(ICON_512_PNG, {
+    headers: { "Content-Type": "image/png", "Cache-Control": ICON_CACHE },
+  });
+});
+
+app.router.get("/public/icons/icon-maskable-192.png", () => {
+  return new Response(ICON_MASKABLE_192_PNG, {
+    headers: { "Content-Type": "image/png", "Cache-Control": ICON_CACHE },
+  });
+});
+
+app.router.get("/public/icons/icon-maskable-512.png", () => {
+  return new Response(ICON_MASKABLE_512_PNG, {
+    headers: { "Content-Type": "image/png", "Cache-Control": ICON_CACHE },
+  });
+});
+
+app.router.get("/public/icons/apple-touch-icon.png", () => {
+  return new Response(APPLE_TOUCH_ICON_PNG, {
+    headers: { "Content-Type": "image/png", "Cache-Control": ICON_CACHE },
   });
 });
 

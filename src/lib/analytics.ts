@@ -294,14 +294,15 @@ export async function runAnalytics(
         exec: ["python3", "main.py"],
         files: commandFiles,
       },
-      runtime: "python:3.13",
-      snapshot: snapshotId,
+      ...(snapshotId
+        ? { snapshot: snapshotId }
+        : { runtime: "python:3.13" as const }),
       resources: {
         memory: DEFAULT_MEMORY,
         cpu: DEFAULT_CPU,
       },
       timeout: { execution: DEFAULT_TIMEOUT },
-      network: { enabled: false }, // No network needed — all packages in snapshot
+      network: { enabled: !snapshotId }, // Network only needed without snapshot
     });
 
     // ── Step 6: Parse and validate result ───────────────────

@@ -107,14 +107,15 @@ export async function renderChartsViaPython(
         exec: ["python3", "main.py"],
         files: commandFiles,
       },
-      runtime: "python:3.13",
-      snapshot: snapshotId,
+      ...(snapshotId
+        ? { snapshot: snapshotId }
+        : { runtime: "python:3.13" as const }),
       resources: {
         memory: "512Mi",
         cpu: "500m",
       },
       timeout: { execution: options?.timeout ?? "120s" },
-      network: { enabled: false },
+      network: { enabled: !snapshotId },
     });
 
     if (result.exitCode !== 0) {

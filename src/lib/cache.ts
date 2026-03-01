@@ -90,7 +90,7 @@ export function analysisKey(analysis: string, timeframeDays: number, productId?:
  */
 export function reportKey(reportType: string, startDate: string, endDate: string): string {
   return schemaScopedKey([
-    "report",
+    "report:v3", // bumped to invalidate pre-chart cached reports
     reportType,
     startDate.split("T")[0],
     endDate.split("T")[0],

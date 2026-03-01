@@ -283,7 +283,7 @@ Example (place this in your report where appropriate):
     const reportLimits = `
 REPORT LENGTH CONSTRAINTS:
 - Executive Summary: approximately ${reportSettings.execSummaryMaxWords} words (concise overview with key findings, period, and business impact)
-- Total report: approximately ${reportSettings.maxWords} words maximum
+- Total report: approximately ${reportSettings.maxWords} words maximum (prose only — chart code blocks do NOT count toward this limit)
 - Target: ${reportSettings.maxPages} pages when exported to PDF
 
 CRITICAL FORMATTING RULES:

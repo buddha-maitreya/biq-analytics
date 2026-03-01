@@ -18,9 +18,11 @@
 
 // Heavy deps loaded lazily to avoid bloating cold start time.
 // vega-lite, vega, and sharp are only needed when actually rendering charts.
+import type { TopLevelSpec } from "vega-lite";
+
 let _vl: typeof import("vega-lite") | null = null;
 let _vega: typeof import("vega") | null = null;
-let _sharp: typeof import("sharp") | null = null;
+let _sharp: any = null;
 
 async function getVl() {
   if (!_vl) _vl = await import("vega-lite");
@@ -30,8 +32,11 @@ async function getVega() {
   if (!_vega) _vega = await import("vega");
   return _vega;
 }
-async function getSharp() {
-  if (!_sharp) _sharp = await import("sharp");
+async function getSharp(): Promise<typeof import("sharp")> {
+  if (!_sharp) {
+    const mod = await import("sharp");
+    _sharp = (mod as any).default ?? mod;
+  }
   return _sharp;
 }
 
@@ -367,11 +372,10 @@ export async function renderChart(
   // Lazy-load heavy deps
   const vl = await getVl();
   const vega = await getVega();
-  const sharpMod = await getSharp();
-  const sharp = sharpMod.default;
+  const sharp = await getSharp();
 
   // 1. Build Vega-Lite spec
-  const vlSpec = buildVegaLiteSpec(chart, brandColor) as unknown as vl.TopLevelSpec;
+  const vlSpec = buildVegaLiteSpec(chart, brandColor) as unknown as TopLevelSpec;
 
   // 2. Compile Vega-Lite → Vega
   const compiled = vl.compile(vlSpec);

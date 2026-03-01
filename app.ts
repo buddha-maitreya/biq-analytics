@@ -212,35 +212,35 @@ app.router.get("/public/icons/apple-touch-icon.svg", () => {
 
 app.router.get("/public/icons/icon-192.png", async () => {
   const icons = await getPngIcons();
-  return new Response(icons.ICON_192_PNG, {
+  return new Response(new Uint8Array(icons.ICON_192_PNG), {
     headers: { "Content-Type": "image/png", "Cache-Control": ICON_CACHE },
   });
 });
 
 app.router.get("/public/icons/icon-512.png", async () => {
   const icons = await getPngIcons();
-  return new Response(icons.ICON_512_PNG, {
+  return new Response(new Uint8Array(icons.ICON_512_PNG), {
     headers: { "Content-Type": "image/png", "Cache-Control": ICON_CACHE },
   });
 });
 
 app.router.get("/public/icons/icon-maskable-192.png", async () => {
   const icons = await getPngIcons();
-  return new Response(icons.ICON_MASKABLE_192_PNG, {
+  return new Response(new Uint8Array(icons.ICON_MASKABLE_192_PNG), {
     headers: { "Content-Type": "image/png", "Cache-Control": ICON_CACHE },
   });
 });
 
 app.router.get("/public/icons/icon-maskable-512.png", async () => {
   const icons = await getPngIcons();
-  return new Response(icons.ICON_MASKABLE_512_PNG, {
+  return new Response(new Uint8Array(icons.ICON_MASKABLE_512_PNG), {
     headers: { "Content-Type": "image/png", "Cache-Control": ICON_CACHE },
   });
 });
 
 app.router.get("/public/icons/apple-touch-icon.png", async () => {
   const icons = await getPngIcons();
-  return new Response(icons.APPLE_TOUCH_ICON_PNG, {
+  return new Response(new Uint8Array(icons.APPLE_TOUCH_ICON_PNG), {
     headers: { "Content-Type": "image/png", "Cache-Control": ICON_CACHE },
   });
 });

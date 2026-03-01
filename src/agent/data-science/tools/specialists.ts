@@ -245,8 +245,7 @@ export const analyzeTrendsTool = tool({
 
 export const generateReportTool = tool({
   description:
-    "Delegate to The Writer (report-generator) for professional, formatted business reports. Use when users ask for reports, summaries, or written overviews. The Writer fetches its own data and narrates it into a polished report with executive summary, key metrics, analysis, and recommendations. For quick data lookups, prefer query_database instead. " +
-    "The result includes a `charts` field with chart specifications — when calling export_report, pass this `charts` array to the `reportCharts` parameter.",
+    "Delegate to The Writer (report-generator) for professional, formatted business reports. Use when users ask for reports, summaries, or written overviews. The Writer fetches its own data and narrates it into a polished report with executive summary, key metrics, analysis, and recommendations. For quick data lookups, prefer query_database instead.",
   parameters: z.object({
     reportType: z
       .string()
@@ -268,17 +267,11 @@ export const generateReportTool = tool({
         endDate,
         format: "markdown",
       });
-      // Extract chart blocks from content so they don't rely on the LLM
-      // to copy raw JSON code blocks through the export_report content arg.
-      // Return them as structured data in `charts` — the LLM passes this
-      // to export_report's `reportCharts` parameter directly.
-      const { content: cleanContent, charts } = extractChartBlocksFromContent(result.content);
       return {
         title: result.title,
-        content: cleanContent,
+        content: result.content,
         period: result.period,
         generatedAt: result.generatedAt,
-        ...(charts.length > 0 ? { charts } : {}),
       };
     } catch (err) {
       return agentError("Report Generator", err);
@@ -681,29 +674,43 @@ export function createExportReportTool(
 ) {
   return tool({
   description:
-    "Export data or a report to a downloadable file. Supports PDF, Excel (XLSX), Word (DOCX), and PowerPoint (PPTX). " +
-    "Use when the user asks to download, export, save as PDF/Excel/Word/PowerPoint, or compile conversation data into a document. " +
-    "The exported file includes company branding (logo, name, colors), a Table of Contents, and 'Prepared by' attribution automatically. " +
-    "IMPORTANT: Always structure the report content with: 1) Executive Summary (2-3 sentences highlighting key findings), " +
-    "2) Relevant data sections with tables and analysis, " +
-    "3) Conclusion with key observations and a recommended action plan. " +
-    "For data-heavy exports, prefer Excel. For presentations, use PowerPoint. For printable reports, use PDF. For editable reports, use Word. " +
-    "CHARTS: If you have analytics results from run_predictive_analytics that include charts, pass them via the analyticsCharts parameter " +
-    "so they are embedded in the exported document. Charts embedded in markdown content (```chart blocks) are automatically rendered " +
-    "via the enterprise Python/matplotlib pipeline for high-quality output.",
+    "Export a report to a downloadable file. Supports PDF, Excel (XLSX), Word (DOCX), and PowerPoint (PPTX). " +
+    "Use when the user asks to download, export, or save a report. " +
+    "The exported file includes company branding, Table of Contents, and 'Prepared by' attribution automatically. " +
+    "PREFERRED: Provide reportType + startDate + endDate — the tool fetches and renders the report with full charts internally. " +
+    "FALLBACK: Provide content directly for ad-hoc exports (no charts). " +
+    "For data-heavy exports prefer Excel, presentations use PowerPoint, printable reports use PDF, editable use Word. " +
+    "ANALYTICS CHARTS: If you have results from run_predictive_analytics, pass their charts via analyticsCharts.",
   parameters: z.object({
-    content: z
-      .string()
-      .describe(
-        "The report content in markdown format. MUST include: ## Executive Summary, data sections with ## headings and markdown tables, " +
-        "and ## Conclusion with key observations and recommended action plan. Use ## for major sections and ### for subsections."
-      ),
     title: z
       .string()
       .describe("Report title — appears on the cover page and in the file metadata"),
     format: z
       .enum(["pdf", "xlsx", "docx", "pptx"])
       .describe("Output format: pdf, xlsx (Excel), docx (Word), or pptx (PowerPoint)"),
+    reportType: z
+      .string()
+      .optional()
+      .describe(
+        "Report type to generate and export (e.g. sales-summary, inventory-health, customer-activity, financial-overview). " +
+        "When provided with startDate/endDate, the tool generates the report internally — charts are included automatically. " +
+        "PREFERRED over passing content directly."
+      ),
+    startDate: z
+      .string()
+      .optional()
+      .describe("Report period start date (ISO format, e.g. 2026-01-01). Used with reportType."),
+    endDate: z
+      .string()
+      .optional()
+      .describe("Report period end date (ISO format, e.g. 2026-01-31). Used with reportType."),
+    content: z
+      .string()
+      .optional()
+      .describe(
+        "Report content in markdown format — use only for ad-hoc exports when reportType is not applicable. " +
+        "When reportType is provided, this is ignored."
+      ),
     subtitle: z
       .string()
       .optional()
@@ -711,25 +718,7 @@ export function createExportReportTool(
     preparedBy: z
       .string()
       .optional()
-      .describe("Name of the person who prepared the report. Use the logged-in user's name if known from the conversation context."),
-    reportCharts: z
-      .array(
-        z.object({
-          type: z.string().describe("Chart type (bar, line, area, pie, donut, scatter, grouped_bar, stacked_bar, heatmap)"),
-          title: z.string().describe("Chart title"),
-          data: z.array(z.record(z.unknown())).describe("Array of data row objects"),
-          xField: z.string().optional().describe("X-axis field name"),
-          yField: z.string().optional().describe("Y-axis field name"),
-          colorField: z.string().optional().describe("Color/grouping field name"),
-          xLabel: z.string().optional().describe("X-axis label"),
-          yLabel: z.string().optional().describe("Y-axis label"),
-        })
-      )
-      .optional()
-      .describe(
-        "Chart specifications from generate_report. Pass the `charts` array from the generate_report result directly here. " +
-        "These are rendered via the Python/matplotlib pipeline and embedded in the export."
-      ),
+      .describe("Name of the person who prepared the report."),
     analyticsCharts: z
       .array(
         z.object({
@@ -741,13 +730,12 @@ export function createExportReportTool(
       )
       .optional()
       .describe(
-        "Pre-rendered chart images from Python analytics (run_predictive_analytics results). " +
-        "Pass the charts array from PredictiveAnalyticsResult directly. These will be embedded in the export alongside any charts in the report content."
+        "Pre-rendered chart images from run_predictive_analytics. " +
+        "Pass the charts array from PredictiveAnalyticsResult directly."
       ),
   }),
-  execute: async ({ content, title, format, subtitle, preparedBy, reportCharts, analyticsCharts }): Promise<ExportReportResult> => {
+  execute: async ({ title, format, reportType, startDate, endDate, content, subtitle, preparedBy, analyticsCharts }): Promise<ExportReportResult> => {
     try {
-      // Start with any explicitly passed analytics charts (pre-rendered PNGs)
       const preRenderedImages: PreRenderedImage[] = (analyticsCharts ?? []).map((c) => ({
         title: c.title,
         data: c.data,
@@ -755,57 +743,66 @@ export function createExportReportTool(
         height: c.height,
       }));
 
-      // Combine chart specs: reportCharts (from generate_report) + any in content
-      const { content: cleanContent, charts: inlineSpecs } = extractChartBlocksFromContent(content);
-      const allChartSpecs = [...(reportCharts ?? []), ...inlineSpecs];
+      let reportContent: string = content ?? "";
+      let allChartSpecs: import("@lib/charts").ChartSpec[] = [];
 
-      logger?.info("[export_report:1] Starting", {
-        title,
-        format,
-        contentLen: content.length,
-        reportChartsCount: reportCharts?.length ?? 0,
-        inlineChartBlocksCount: inlineSpecs.length,
-        analyticsChartsCount: analyticsCharts?.length ?? 0,
-        hasSandbox: !!sandboxApi,
-      });
+      // ── Preferred path: fetch report internally by type + dates ──
+      // This bypasses the LLM entirely for chart data — no risk of the LLM
+      // dropping or reconstructing chart specs without data arrays.
+      if (reportType) {
+        logger?.info("[export_report:1] Fetching report internally", { reportType, startDate, endDate, format });
+        try {
+          const result = await reportGenerator.run({
+            reportType,
+            startDate,
+            endDate,
+            format: "markdown",
+          });
+          const { content: cleanContent, charts } = extractChartBlocksFromContent(result.content);
+          reportContent = cleanContent;
+          allChartSpecs = charts;
+          logger?.info("[export_report:2] Report fetched", { contentLen: reportContent.length, chartSpecsCount: allChartSpecs.length });
+        } catch (err) {
+          logger?.error("[export_report] Report generation failed", { error: String(err) });
+          return agentError("Report Generator", err);
+        }
+      } else {
+        // Fallback: use provided content, extract any inline chart blocks
+        const { content: cleanContent, charts: inlineSpecs } = extractChartBlocksFromContent(reportContent);
+        reportContent = cleanContent;
+        allChartSpecs = inlineSpecs;
+        logger?.info("[export_report:1] Using provided content", { contentLen: reportContent.length, inlineCharts: inlineSpecs.length });
+      }
 
       // ── Python-first chart rendering ──────────────────────
       if (allChartSpecs.length > 0 && sandboxApi && isPythonChartsAvailable()) {
         try {
           const pythonCharts = await renderChartsViaPython(sandboxApi, allChartSpecs);
-          logger?.info("[export_report:2] Python rendering result", { requested: allChartSpecs.length, rendered: pythonCharts.length });
+          logger?.info("[export_report:3] Python rendering result", { requested: allChartSpecs.length, rendered: pythonCharts.length });
           if (pythonCharts.length > 0) {
             preRenderedImages.push(...pythonCharts);
+            allChartSpecs = []; // Consumed by Python — don't also pass to Vega-Lite
           } else {
-            logger?.warn("[export_report:2] Python returned 0 charts — falling back to Vega-Lite");
-            // Vega-Lite fallback handled inside exportReport via allChartSpecs in input.charts
+            logger?.warn("[export_report:3] Python returned 0 charts — falling back to Vega-Lite");
           }
         } catch (err) {
           logger?.error("[export_report] Python chart rendering failed, falling back to Vega-Lite", { error: String(err) });
         }
-      } else if (allChartSpecs.length === 0) {
-        logger?.info("[export_report:2] No chart specs to render");
       }
 
-      logger?.info("[export_report:3] Calling exportReport", {
+      logger?.info("[export_report:4] Calling exportReport", {
         preRenderedImagesCount: preRenderedImages.length,
-        vegaLiteFallbackCharts: preRenderedImages.length === 0 ? allChartSpecs.length : 0,
+        vegaLiteFallbackCharts: allChartSpecs.length,
       });
 
       const result = await exportReport({
-        content: cleanContent,
+        content: reportContent,
         title,
         format: format as ExportFormat,
         subtitle,
         preparedBy,
-        // If Python rendered charts, pass them as pre-rendered images.
-        // If Python failed (preRenderedImages empty), pass chart specs so
-        // exportReport can fall back to Vega-Lite rendering.
-        ...(preRenderedImages.length > 0
-          ? { preRenderedImages }
-          : allChartSpecs.length > 0
-            ? { charts: allChartSpecs }
-            : {}),
+        ...(preRenderedImages.length > 0 ? { preRenderedImages } : {}),
+        ...(allChartSpecs.length > 0 ? { charts: allChartSpecs } : {}),
       });
       return {
         downloadUrl: result.downloadUrl,

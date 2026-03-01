@@ -103,24 +103,9 @@ export type AnalyzeTrendsResult = AnalyzeTrendsSuccess | AnalyzeTrendsError;
 
 export interface GenerateReportSuccess {
   title: string;
-  /** Report markdown content (chart blocks already removed — charts are in the `charts` field) */
   content: string;
   period: { start: string; end: string };
   generatedAt: string;
-  /**
-   * Chart specifications extracted from the report content.
-   * Pass these directly to the `reportCharts` parameter of `export_report`.
-   */
-  charts?: Array<{
-    type: string;
-    title: string;
-    data: Record<string, unknown>[];
-    xField?: string;
-    yField?: string;
-    colorField?: string;
-    xLabel?: string;
-    yLabel?: string;
-  }>;
 }
 
 export interface GenerateReportError extends ToolErrorResult {}

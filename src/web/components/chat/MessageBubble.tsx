@@ -92,20 +92,60 @@ export function renderMarkdown(text: string): React.ReactNode {
   let codeLines: string[] = [];
   let codeLang = "";
 
+  // Table accumulation
+  let tableRows: string[][] = [];
+  let tableIsHeader = true; // first non-separator row is treated as header
+
+  function flushTable(key: string) {
+    if (!tableRows.length) return;
+    const [head, ...body] = tableRows;
+    elements.push(
+      <table key={key} className="message-md-table">
+        <thead>
+          <tr>{head.map((c, j) => <th key={j}>{renderInline(c)}</th>)}</tr>
+        </thead>
+        <tbody>
+          {body.map((row, ri) => (
+            <tr key={ri}>{row.map((c, j) => <td key={j}>{renderInline(c)}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+    );
+    tableRows = [];
+    tableIsHeader = true;
+  }
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
     // Code blocks
     if (line.startsWith("```")) {
+      flushTable(`tbl-pre-${i}`);
       if (inCodeBlock) {
-        elements.push(
-          <pre key={i} className="message-code-block" data-lang={codeLang}>
-            <code>{codeLines.join("\n")}</code>
-          </pre>
-        );
+        const lang = codeLang;
+        const content = codeLines.join("\n");
         codeLines = [];
         codeLang = "";
         inCodeBlock = false;
+
+        if (lang === "chart") {
+          try {
+            const spec = JSON.parse(content);
+            elements.push(<ReportChart key={i} spec={spec} />);
+          } catch {
+            elements.push(
+              <pre key={i} className="message-code-block" data-lang="chart">
+                <code>{content}</code>
+              </pre>
+            );
+          }
+        } else {
+          elements.push(
+            <pre key={i} className="message-code-block" data-lang={lang}>
+              <code>{content}</code>
+            </pre>
+          );
+        }
       } else {
         inCodeBlock = true;
         codeLang = line.slice(3).trim();
@@ -117,6 +157,21 @@ export function renderMarkdown(text: string): React.ReactNode {
       codeLines.push(line);
       continue;
     }
+
+    // Table rows
+    if (line.startsWith("|")) {
+      // Separator row (|---|---| or |:---|---:|) — marks end of header
+      if (line.match(/^\|[\s\-:|]+\|$/)) {
+        tableIsHeader = false;
+        continue;
+      }
+      const cells = line.split("|").filter((_, ci) => ci > 0 && ci < line.split("|").length - 1).map((c) => c.trim());
+      if (cells.length) tableRows.push(cells);
+      continue;
+    }
+
+    // Non-table line — flush any accumulated table
+    if (tableRows.length) flushTable(`tbl-${i}`);
 
     // Headers
     if (line.startsWith("#### ")) {
@@ -144,24 +199,6 @@ export function renderMarkdown(text: string): React.ReactNode {
         <li key={i}>{renderInline(line.replace(/^\s*\d+\.\s/, ""))}</li>
       );
     }
-    // Table rows (simplified)
-    else if (line.startsWith("|")) {
-      // Skip separator rows like |---|---|
-      if (line.match(/^\|[\s-:|]+\|$/)) continue;
-      const cells = line
-        .split("|")
-        .filter((c) => c.trim())
-        .map((c) => c.trim());
-      elements.push(
-        <div key={i} className="message-table-row">
-          {cells.map((cell, j) => (
-            <span key={j} className="message-table-cell">
-              {renderInline(cell)}
-            </span>
-          ))}
-        </div>
-      );
-    }
     // Empty line
     else if (line.trim() === "") {
       elements.push(<br key={i} />);
@@ -172,16 +209,221 @@ export function renderMarkdown(text: string): React.ReactNode {
     }
   }
 
-  // Close unclosed code block
+  // Flush any trailing table / code block
+  flushTable("tbl-end");
   if (inCodeBlock && codeLines.length) {
-    elements.push(
-      <pre key="final-code" className="message-code-block">
-        <code>{codeLines.join("\n")}</code>
-      </pre>
-    );
+    const content = codeLines.join("\n");
+    if (codeLang === "chart") {
+      try {
+        const spec = JSON.parse(content);
+        elements.push(<ReportChart key="chart-end" spec={spec} />);
+      } catch {
+        elements.push(
+          <pre key="final-code" className="message-code-block">
+            <code>{content}</code>
+          </pre>
+        );
+      }
+    } else {
+      elements.push(
+        <pre key="final-code" className="message-code-block">
+          <code>{content}</code>
+        </pre>
+      );
+    }
   }
 
   return <>{elements}</>;
+}
+
+// ── Report Chart Component ─────────────────────────────────
+// Renders ```chart JSON blocks as inline SVG visualisations.
+// Uses viewBox so charts scale responsively inside message bubbles.
+
+const CHART_COLORS = [
+  "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6",
+  "#06b6d4", "#f97316", "#84cc16", "#ec4899", "#14b8a6",
+];
+
+function ReportChart({ spec }: { spec: any }) {
+  const { type = "bar", title, data, xField, yField, colorField } = spec;
+  if (!Array.isArray(data) || !data.length || !xField || !yField) {
+    return (
+      <div className="report-chart-error">
+        ⚠ Chart: missing data or field mapping
+      </div>
+    );
+  }
+
+  if (type === "pie" || type === "donut") {
+    return <ReportPieChart data={data} labelField={xField} valueField={yField} title={title} donut={type === "donut"} />;
+  }
+  if (type === "line" || type === "area") {
+    return <ReportLineChart data={data} xKey={xField} yKey={yField} title={title} area={type === "area"} />;
+  }
+  // bar, grouped_bar, stacked_bar, scatter → bar-style SVG
+  return <ReportBarChart data={data} xKey={xField} yKey={yField} colorField={colorField} title={title} />;
+}
+
+function ReportBarChart({ data, xKey, yKey, colorField, title }: {
+  data: any[]; xKey: string; yKey: string; colorField?: string; title?: string;
+}) {
+  const W = 480, H = 200, PAD_L = 48, PAD_B = 40, PAD_T = 28, PAD_R = 8;
+  const innerW = W - PAD_L - PAD_R;
+  const innerH = H - PAD_T - PAD_B;
+  const max = Math.max(...data.map((d) => Number(d[yKey]) || 0), 1);
+  const barW = Math.max(8, innerW / data.length - 4);
+  // Y-axis ticks
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => ({ ratio: t, val: max * t }));
+
+  return (
+    <div className="report-chart">
+      {title && <div className="report-chart-title">{title}</div>}
+      <svg viewBox={`0 0 ${W} ${H}`} className="report-chart-svg" aria-label={title}>
+        {/* Y-axis grid lines + labels */}
+        {ticks.map(({ ratio, val }, i) => {
+          const y = PAD_T + innerH * (1 - ratio);
+          return (
+            <g key={i}>
+              <line x1={PAD_L} y1={y} x2={W - PAD_R} y2={y} stroke="#e2e8f0" strokeWidth="1" />
+              <text x={PAD_L - 4} y={y + 4} textAnchor="end" fontSize="9" fill="#94a3b8">
+                {val >= 1000 ? `${(val / 1000).toFixed(1)}k` : val.toFixed(0)}
+              </text>
+            </g>
+          );
+        })}
+        {/* Bars */}
+        {data.map((d, i) => {
+          const val = Number(d[yKey]) || 0;
+          const barH = (val / max) * innerH;
+          const x = PAD_L + i * (innerW / data.length) + (innerW / data.length - barW) / 2;
+          const y = PAD_T + innerH - barH;
+          const color = colorField ? CHART_COLORS[i % CHART_COLORS.length] : CHART_COLORS[0];
+          const label = String(d[xKey] ?? "").slice(0, 10);
+          return (
+            <g key={i}>
+              <rect x={x} y={y} width={barW} height={barH} fill={color} rx={2} opacity={0.85}>
+                <title>{d[xKey]}: {val.toLocaleString()}</title>
+              </rect>
+              <text x={x + barW / 2} y={H - PAD_B + 13} textAnchor="middle" fontSize="8" fill="#64748b">{label}</text>
+              {barH > 14 && (
+                <text x={x + barW / 2} y={y - 3} textAnchor="middle" fontSize="8" fill="#475569">
+                  {val >= 1000 ? `${(val / 1000).toFixed(1)}k` : val.toLocaleString()}
+                </text>
+              )}
+            </g>
+          );
+        })}
+        {/* Axes */}
+        <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={PAD_T + innerH} stroke="#cbd5e1" strokeWidth="1.5" />
+        <line x1={PAD_L} y1={PAD_T + innerH} x2={W - PAD_R} y2={PAD_T + innerH} stroke="#cbd5e1" strokeWidth="1.5" />
+      </svg>
+    </div>
+  );
+}
+
+function ReportLineChart({ data, xKey, yKey, title, area }: {
+  data: any[]; xKey: string; yKey: string; title?: string; area?: boolean;
+}) {
+  const W = 480, H = 200, PAD_L = 48, PAD_B = 40, PAD_T = 28, PAD_R = 8;
+  const innerW = W - PAD_L - PAD_R;
+  const innerH = H - PAD_T - PAD_B;
+  const vals = data.map((d) => Number(d[yKey]) || 0);
+  const max = Math.max(...vals, 1);
+  const min = Math.min(...vals, 0);
+  const range = max - min || 1;
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => ({ ratio: t, val: min + range * t }));
+
+  const pts = data.map((d, i) => {
+    const val = Number(d[yKey]) || 0;
+    const x = PAD_L + (i / (data.length - 1 || 1)) * innerW;
+    const y = PAD_T + innerH - ((val - min) / range) * innerH;
+    return { x, y, val, label: String(d[xKey] ?? "").slice(0, 8) };
+  });
+
+  const linePath = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ");
+  const areaPath = area && pts.length
+    ? `${linePath} L${pts[pts.length - 1].x},${PAD_T + innerH} L${pts[0].x},${PAD_T + innerH} Z`
+    : "";
+
+  return (
+    <div className="report-chart">
+      {title && <div className="report-chart-title">{title}</div>}
+      <svg viewBox={`0 0 ${W} ${H}`} className="report-chart-svg" aria-label={title}>
+        {ticks.map(({ ratio, val }, i) => {
+          const y = PAD_T + innerH * (1 - ratio);
+          return (
+            <g key={i}>
+              <line x1={PAD_L} y1={y} x2={W - PAD_R} y2={y} stroke="#e2e8f0" strokeWidth="1" />
+              <text x={PAD_L - 4} y={y + 4} textAnchor="end" fontSize="9" fill="#94a3b8">
+                {val >= 1000 ? `${(val / 1000).toFixed(1)}k` : val.toFixed(0)}
+              </text>
+            </g>
+          );
+        })}
+        {area && areaPath && (
+          <path d={areaPath} fill={CHART_COLORS[0]} opacity={0.15} />
+        )}
+        <path d={linePath} fill="none" stroke={CHART_COLORS[0]} strokeWidth="2" strokeLinejoin="round" />
+        {pts.map((p, i) => (
+          <g key={i}>
+            <circle cx={p.x} cy={p.y} r={3} fill={CHART_COLORS[0]}>
+              <title>{p.label}: {p.val.toLocaleString()}</title>
+            </circle>
+            {i % Math.ceil(data.length / 8) === 0 && (
+              <text x={p.x} y={H - PAD_B + 13} textAnchor="middle" fontSize="8" fill="#64748b">{p.label}</text>
+            )}
+          </g>
+        ))}
+        <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={PAD_T + innerH} stroke="#cbd5e1" strokeWidth="1.5" />
+        <line x1={PAD_L} y1={PAD_T + innerH} x2={W - PAD_R} y2={PAD_T + innerH} stroke="#cbd5e1" strokeWidth="1.5" />
+      </svg>
+    </div>
+  );
+}
+
+function ReportPieChart({ data, labelField, valueField, title, donut }: {
+  data: any[]; labelField: string; valueField: string; title?: string; donut?: boolean;
+}) {
+  const W = 320, H = 200, cx = 100, cy = H / 2, R = 80, r = donut ? 40 : 0;
+  const total = data.reduce((s, d) => s + (Number(d[valueField]) || 0), 0) || 1;
+  let angle = -Math.PI / 2;
+  const slices = data.map((d, i) => {
+    const val = Number(d[valueField]) || 0;
+    const sweep = (val / total) * 2 * Math.PI;
+    const startAngle = angle;
+    angle += sweep;
+    const endAngle = angle;
+    const x1 = cx + R * Math.cos(startAngle), y1 = cy + R * Math.sin(startAngle);
+    const x2 = cx + R * Math.cos(endAngle), y2 = cy + R * Math.sin(endAngle);
+    const ix1 = cx + r * Math.cos(startAngle), iy1 = cy + r * Math.sin(startAngle);
+    const ix2 = cx + r * Math.cos(endAngle), iy2 = cy + r * Math.sin(endAngle);
+    const large = sweep > Math.PI ? 1 : 0;
+    const path = donut
+      ? `M${ix1},${iy1} A${r},${r} 0 ${large} 1 ${ix2},${iy2} L${x2},${y2} A${R},${R} 0 ${large} 0 ${x1},${y1} Z`
+      : `M${cx},${cy} L${x1},${y1} A${R},${R} 0 ${large} 1 ${x2},${y2} Z`;
+    return { path, color: CHART_COLORS[i % CHART_COLORS.length], label: String(d[labelField] ?? ""), val, pct: (val / total * 100).toFixed(1) };
+  });
+
+  return (
+    <div className="report-chart">
+      {title && <div className="report-chart-title">{title}</div>}
+      <svg viewBox={`0 0 ${W} ${H}`} className="report-chart-svg" aria-label={title}>
+        {slices.map((s, i) => (
+          <path key={i} d={s.path} fill={s.color} stroke="#fff" strokeWidth="1.5" opacity={0.9}>
+            <title>{s.label}: {s.val.toLocaleString()} ({s.pct}%)</title>
+          </path>
+        ))}
+        {/* Legend */}
+        {slices.slice(0, 8).map((s, i) => (
+          <g key={i} transform={`translate(${cx + R + 16}, ${16 + i * 20})`}>
+            <rect width="10" height="10" fill={s.color} rx="2" />
+            <text x="14" y="9" fontSize="9" fill="#475569">{s.label.slice(0, 16)} {s.pct}%</text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
 }
 
 function renderInline(text: string): React.ReactNode {

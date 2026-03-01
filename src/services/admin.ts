@@ -482,7 +482,8 @@ export async function getDashboardChartData(startDate?: string, endDate?: string
           LEFT JOIN categories c ON p.category_id = c.id
           WHERE p.is_active = true
           GROUP BY c.name
-          ORDER BY total_value DESC`
+          ORDER BY total_value DESC
+          LIMIT 15`
     ),
 
     // 4. Invoice receivables

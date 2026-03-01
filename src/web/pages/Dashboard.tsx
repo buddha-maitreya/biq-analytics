@@ -8,29 +8,45 @@ interface DashboardProps {
 
 /* ── Tiny SVG Chart Components (no external deps) ── */
 
-const BarChart = React.memo(function BarChart({ data, labelKey, valueKey, color = "#3b82f6", height = 160 }: {
-  data: any[]; labelKey: string; valueKey: string; color?: string; height?: number;
+const BarChart = React.memo(function BarChart({ data, labelKey, valueKey, color = "#3b82f6", height = 160, maxItems }: {
+  data: any[]; labelKey: string; valueKey: string; color?: string; height?: number; maxItems?: number;
 }) {
   if (!data.length) return <div className="chart-empty">No data</div>;
-  const max = Math.max(...data.map((d) => Number(d[valueKey]) || 0), 1);
-  const barW = Math.max(20, Math.min(60, (500 / data.length) - 8));
-  const chartW = data.length * (barW + 8) + 40;
+  const trimmed = maxItems ? data.slice(0, maxItems) : data;
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const [containerW, setContainerW] = React.useState(0);
+  React.useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0;
+      setContainerW((prev) => Math.abs(w - prev) > 5 ? w : prev);
+    });
+    ro.observe(el);
+    setContainerW(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+  const max = Math.max(...trimmed.map((d) => Number(d[valueKey]) || 0), 1);
+  const chartW = containerW > 0 ? containerW : 500;
+  const pad = 20;
+  const gap = 6;
+  const barW = Math.max(14, (chartW - pad * 2) / trimmed.length - gap);
   return (
-    <div className="chart-scroll">
+    <div ref={containerRef} style={{ width: '100%', overflow: 'hidden' }}>
       <svg width={chartW} height={height + 30} className="chart-svg">
-        {data.map((d, i) => {
+        {trimmed.map((d, i) => {
           const val = Number(d[valueKey]) || 0;
           const barH = (val / max) * height;
-          const x = i * (barW + 8) + 20;
+          const x = pad + i * (barW + gap);
           return (
             <g key={i}>
               <rect x={x} y={height - barH} width={barW} height={barH} fill={d.color ?? color} rx={3} opacity={0.85}>
                 <title>{d[labelKey]}: {val.toLocaleString(undefined, { maximumFractionDigits: 2 })}</title>
               </rect>
-              <text x={x + barW / 2} y={height + 14} textAnchor="middle" fontSize={10} fill="#64748b" className="chart-label">
-                {String(d[labelKey]).slice(0, 8)}
+              <text x={x + barW / 2} y={height + 14} textAnchor="middle" fontSize={barW < 30 ? 7 : 10} fill="#64748b" className="chart-label">
+                {String(d[labelKey]).slice(0, barW < 30 ? 5 : 8)}
               </text>
-              <text x={x + barW / 2} y={height - barH - 4} textAnchor="middle" fontSize={9} fill="#475569">
+              <text x={x + barW / 2} y={height - barH - 4} textAnchor="middle" fontSize={barW < 30 ? 7 : 9} fill="#475569">
                 {val >= 1000 ? `${(val / 1000).toFixed(1)}k` : val.toFixed(0)}
               </text>
             </g>
@@ -392,7 +408,7 @@ export default function Dashboard({ config }: DashboardProps) {
             <div className="chart-card">
               <h3>📦 Inventory Value by Category</h3>
               <p className="chart-subtitle">Stock value across categories ({config.currency})</p>
-              <BarChart data={cd.inventoryByCategory} labelKey="category" valueKey="totalValue" color="#8b5cf6" />
+              <BarChart data={cd.inventoryByCategory} labelKey="category" valueKey="totalValue" color="#8b5cf6" maxItems={12} />
             </div>
             <div className="chart-card">
               <h3>💳 Payment Collection</h3>
@@ -414,12 +430,12 @@ export default function Dashboard({ config }: DashboardProps) {
             <div className="chart-card">
               <h3>🏆 Top {config.labels.customerPlural}</h3>
               <p className="chart-subtitle">By revenue ({config.currency})</p>
-              <BarChart data={cd.topCustomers} labelKey="name" valueKey="revenue" color="#06b6d4" />
+              <BarChart data={cd.topCustomers} labelKey="name" valueKey="revenue" color="#06b6d4" maxItems={10} />
             </div>
             <div className="chart-card">
               <h3>🔥 Top {config.labels.productPlural}</h3>
               <p className="chart-subtitle">By revenue ({config.currency})</p>
-              <BarChart data={cd.topProducts} labelKey="name" valueKey="revenue" color="#f59e0b" />
+              <BarChart data={cd.topProducts} labelKey="name" valueKey="revenue" color="#f59e0b" maxItems={10} />
             </div>
           </div>
 

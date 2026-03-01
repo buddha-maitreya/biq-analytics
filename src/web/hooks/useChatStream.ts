@@ -167,9 +167,11 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         error: null,
       };
 
-    // Hydrate from REST (like Coder's INIT_MESSAGES)
+    // Hydrate from REST (like Coder's INIT_MESSAGES).
+    // Merge into existing state so optimistic ADD_USER_MESSAGE temp entries
+    // (e.g. "temp-1740000000") survive a concurrent verifyAuthAndHydrate().
     case "INIT_MESSAGES": {
-      const messages = new Map<string, ChatMessage>();
+      const messages = new Map(state.messages);
       for (const msg of action.messages) {
         messages.set(msg.id, msg);
       }
@@ -649,9 +651,15 @@ export function useChatStream() {
         }
         sessionId = newId;
         // createSession() dispatches SET_ACTIVE_SESSION which schedules the
-        // SSE useEffect. Wait for EventSource to open before POSTing so that
-        // server broadcast() calls land on a registered stream (not an empty set).
-        // Without this gate, the first message is silently dropped.
+        // SSE useEffect. Wait below (unified gate) handles the connection wait.
+      }
+
+      // Gate: wait for SSE to be ready before POSTing.
+      // Applies to BOTH new sessions AND existing sessions where the EventSource
+      // hasn't fully opened yet (e.g. immediately after selectSession(), or after
+      // an infrastructure reconnect). Without this, broadcast() fires before the
+      // stream is registered in sessionStreams and all events are silently dropped.
+      if (!sseReadyRef.current) {
         await new Promise<void>((resolve) => {
           const deadline = Date.now() + 8_000;
           const check = () => {

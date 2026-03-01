@@ -349,17 +349,18 @@ chat.post("/chat/sessions/:id/send",
   // Broadcast: session is busy
   broadcast(sessionId, "session.status", { status: "busy" });
 
-  // Build conversation context (rolling summary + recent messages)
-  const { summary, recentMessages } = await getConversationContext(sessionId);
-
-  // Start streaming in background (events go to SSE bus)
-  // c.waitUntil() keeps the runtime alive until the stream completes,
-  // replacing the unsafe fire-and-forget .catch() pattern.
+  // Start streaming in background (events go to SSE bus).
+  // getConversationContext() is moved inside waitUntil so the POST returns
+  // immediately — the AI still receives full conversation history because
+  // context is fetched before streamText() is called inside processStream().
+  // c.waitUntil() keeps the runtime alive until the stream completes.
   const sandboxApi = (c as any).var?.sandbox;
   const kvStore = (c as any).var?.kv;
-  logger?.info("[SEND:3] Launching processStream", { sessionId, messageLen: message.length, historyLen: recentMessages.length, hasAttachmentCtx: !!attachmentContext });
+  logger?.info("[SEND:3] Launching processStream", { sessionId, messageLen: message.length, hasAttachmentCtx: !!attachmentContext });
   c.waitUntil(async () => {
     try {
+      const { summary, recentMessages } = await getConversationContext(sessionId);
+      logger?.info("[SEND:3] Context loaded", { historyLen: recentMessages.length });
       await processStream(sessionId, message, recentMessages, summary, session.title, sandboxApi, kvStore, logger, user.name);
     } catch (err: any) {
       logger?.error("[SEND:3] processStream threw", { error: err?.message?.slice(0, 500), stack: err?.stack?.slice(0, 800) });

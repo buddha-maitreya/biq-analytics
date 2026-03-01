@@ -72,7 +72,8 @@ export interface SandboxToolOptions {
  */
 export async function getAllTools(
   sandboxOpts?: SandboxToolOptions,
-  kv?: KVStore
+  kv?: KVStore,
+  logger?: { info: (msg: string, meta?: Record<string, unknown>) => void; warn: (msg: string, meta?: Record<string, unknown>) => void; error: (msg: string, meta?: Record<string, unknown>) => void }
 ): Promise<Record<string, any>> {
   const dynamic = await buildDynamicTools();
   return {
@@ -80,7 +81,7 @@ export async function getAllTools(
     // Use cached snapshot when KV is available
     ...(kv ? { get_business_snapshot: createCachedSnapshotTool(kv) } : {}),
     // Export report — always available, uses sandbox for Python chart rendering when possible
-    export_report: createExportReportTool(sandboxOpts?.sandboxApi),
+    export_report: createExportReportTool(sandboxOpts?.sandboxApi, logger),
     // Pre-built predictive analytics (ALWAYS available when sandbox is configured)
     ...(sandboxOpts?.sandboxApi
       ? {

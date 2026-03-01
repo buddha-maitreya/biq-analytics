@@ -2473,13 +2473,6 @@ export async function exportReport(input: ExportInput): Promise<ExportResult> {
     }
   }
 
-  console.log("[exportReport] Chart pipeline", {
-    chartPositionsCount: chartPositions.length,
-    allChartSpecsCount: allChartSpecs.length,
-    preRenderedImagesCount: input.preRenderedImages?.length ?? 0,
-    chartsEnabled: reportCfg.chartsEnabled,
-  });
-
   // ── Pre-render Vega-Lite charts to PNG/SVG ──
   let renderedCharts: RenderedChart[] = [];
   if (allChartSpecs.length > 0) {
@@ -2487,7 +2480,6 @@ export async function exportReport(input: ExportInput): Promise<ExportResult> {
       renderedCharts = await renderCharts(allChartSpecs, {
         brandColor: branding.primaryColor,
       });
-      console.log("[exportReport] Vega-Lite rendered", { renderedCount: renderedCharts.length, failedCount: allChartSpecs.length - renderedCharts.length });
     } catch (err) {
       console.error("[report-export] Chart rendering failed, continuing without charts:", err);
     }

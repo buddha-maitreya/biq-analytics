@@ -245,7 +245,8 @@ export const analyzeTrendsTool = tool({
 
 export const generateReportTool = tool({
   description:
-    "Delegate to The Writer (report-generator) for professional, formatted business reports. Use when users ask for reports, summaries, or written overviews. The Writer fetches its own data and narrates it into a polished report with executive summary, key metrics, analysis, and recommendations. For quick data lookups, prefer query_database instead.",
+    "Delegate to The Writer (report-generator) for professional, formatted business reports. Use when users ask for reports, summaries, or written overviews. The Writer fetches its own data and narrates it into a polished report with executive summary, key metrics, analysis, and recommendations. For quick data lookups, prefer query_database instead. " +
+    "The result includes a `charts` field with chart specifications — when calling export_report, pass this `charts` array to the `reportCharts` parameter.",
   parameters: z.object({
     reportType: z
       .string()
@@ -267,11 +268,17 @@ export const generateReportTool = tool({
         endDate,
         format: "markdown",
       });
+      // Extract chart blocks from content so they don't rely on the LLM
+      // to copy raw JSON code blocks through the export_report content arg.
+      // Return them as structured data in `charts` — the LLM passes this
+      // to export_report's `reportCharts` parameter directly.
+      const { content: cleanContent, charts } = extractChartBlocksFromContent(result.content);
       return {
         title: result.title,
-        content: result.content,
+        content: cleanContent,
         period: result.period,
         generatedAt: result.generatedAt,
+        ...(charts.length > 0 ? { charts } : {}),
       };
     } catch (err) {
       return agentError("Report Generator", err);
@@ -669,7 +676,8 @@ export const scanDocumentTool = tool({
  * Falls back to Vega-Lite if sandbox is unavailable or Python rendering fails.
  */
 export function createExportReportTool(
-  sandboxApi?: Pick<import("@agentuity/core").SandboxService, "run">
+  sandboxApi?: Pick<import("@agentuity/core").SandboxService, "run">,
+  logger?: { info: (msg: string, meta?: Record<string, unknown>) => void; warn: (msg: string, meta?: Record<string, unknown>) => void; error: (msg: string, meta?: Record<string, unknown>) => void }
 ) {
   return tool({
   description:
@@ -704,6 +712,24 @@ export function createExportReportTool(
       .string()
       .optional()
       .describe("Name of the person who prepared the report. Use the logged-in user's name if known from the conversation context."),
+    reportCharts: z
+      .array(
+        z.object({
+          type: z.string().describe("Chart type (bar, line, area, pie, donut, scatter, grouped_bar, stacked_bar, heatmap)"),
+          title: z.string().describe("Chart title"),
+          data: z.array(z.record(z.unknown())).describe("Array of data row objects"),
+          xField: z.string().optional().describe("X-axis field name"),
+          yField: z.string().optional().describe("Y-axis field name"),
+          colorField: z.string().optional().describe("Color/grouping field name"),
+          xLabel: z.string().optional().describe("X-axis label"),
+          yLabel: z.string().optional().describe("Y-axis label"),
+        })
+      )
+      .optional()
+      .describe(
+        "Chart specifications from generate_report. Pass the `charts` array from the generate_report result directly here. " +
+        "These are rendered via the Python/matplotlib pipeline and embedded in the export."
+      ),
     analyticsCharts: z
       .array(
         z.object({
@@ -719,9 +745,9 @@ export function createExportReportTool(
         "Pass the charts array from PredictiveAnalyticsResult directly. These will be embedded in the export alongside any charts in the report content."
       ),
   }),
-  execute: async ({ content, title, format, subtitle, preparedBy, analyticsCharts }): Promise<ExportReportResult> => {
+  execute: async ({ content, title, format, subtitle, preparedBy, reportCharts, analyticsCharts }): Promise<ExportReportResult> => {
     try {
-      // Start with any explicitly passed analytics charts
+      // Start with any explicitly passed analytics charts (pre-rendered PNGs)
       const preRenderedImages: PreRenderedImage[] = (analyticsCharts ?? []).map((c) => ({
         title: c.title,
         data: c.data,
@@ -729,50 +755,42 @@ export function createExportReportTool(
         height: c.height,
       }));
 
-      let cleanContent = content;
+      // Combine chart specs: reportCharts (from generate_report) + any in content
+      const { content: cleanContent, charts: inlineSpecs } = extractChartBlocksFromContent(content);
+      const allChartSpecs = [...(reportCharts ?? []), ...inlineSpecs];
 
-      const hasChartBlocks = content.includes("```chart");
-      console.log("[export_report:1] Starting", {
+      logger?.info("[export_report:1] Starting", {
         title,
         format,
         contentLen: content.length,
-        hasChartBlocks,
+        reportChartsCount: reportCharts?.length ?? 0,
+        inlineChartBlocksCount: inlineSpecs.length,
         analyticsChartsCount: analyticsCharts?.length ?? 0,
         hasSandbox: !!sandboxApi,
       });
 
       // ── Python-first chart rendering ──────────────────────
-      // Extract chart specs from markdown, render via Python/matplotlib,
-      // then pass cleaned content (chart blocks removed) to exportReport.
-      // This means exportReport() won't find any chart blocks to render
-      // via Vega-Lite — all charts come through Python.
-      if (sandboxApi && isPythonChartsAvailable()) {
+      if (allChartSpecs.length > 0 && sandboxApi && isPythonChartsAvailable()) {
         try {
-          const { content: stripped, charts: chartSpecs } = extractChartBlocksFromContent(content);
-          console.log("[export_report:2] Chart specs extracted", { chartSpecsCount: chartSpecs.length, chartTitles: chartSpecs.map((c) => c.title) });
-          if (chartSpecs.length > 0) {
-            const pythonCharts = await renderChartsViaPython(sandboxApi, chartSpecs);
-            console.log("[export_report:3] Python rendering result", { pythonChartsCount: pythonCharts.length });
-            if (pythonCharts.length > 0) {
-              preRenderedImages.push(...pythonCharts);
-              cleanContent = stripped; // Remove chart blocks — they're now pre-rendered
-            } else {
-              console.warn("[export_report:3] Python returned 0 charts — falling back to Vega-Lite");
-            }
-            // If Python rendering returned 0 charts (failure), keep original content
-            // so exportReport() falls back to Vega-Lite rendering
-          } else if (hasChartBlocks) {
-            console.warn("[export_report:2] Content has ```chart blocks but none were parsed — check JSON format");
+          const pythonCharts = await renderChartsViaPython(sandboxApi, allChartSpecs);
+          logger?.info("[export_report:2] Python rendering result", { requested: allChartSpecs.length, rendered: pythonCharts.length });
+          if (pythonCharts.length > 0) {
+            preRenderedImages.push(...pythonCharts);
+          } else {
+            logger?.warn("[export_report:2] Python returned 0 charts — falling back to Vega-Lite");
+            // Vega-Lite fallback handled inside exportReport via allChartSpecs in input.charts
           }
         } catch (err) {
-          console.error("[export_report] Python chart rendering failed, falling back to Vega-Lite:", err);
-          // Keep original content — Vega-Lite will handle charts
+          logger?.error("[export_report] Python chart rendering failed, falling back to Vega-Lite", { error: String(err) });
         }
-      } else {
-        console.log("[export_report:2] Skipping Python rendering", { hasSandbox: !!sandboxApi, pythonAvailable: isPythonChartsAvailable() });
+      } else if (allChartSpecs.length === 0) {
+        logger?.info("[export_report:2] No chart specs to render");
       }
 
-      console.log("[export_report:4] Calling exportReport", { preRenderedImagesCount: preRenderedImages.length, cleanContentLen: cleanContent.length, cleanHasChartBlocks: cleanContent.includes("```chart") });
+      logger?.info("[export_report:3] Calling exportReport", {
+        preRenderedImagesCount: preRenderedImages.length,
+        vegaLiteFallbackCharts: preRenderedImages.length === 0 ? allChartSpecs.length : 0,
+      });
 
       const result = await exportReport({
         content: cleanContent,
@@ -780,7 +798,14 @@ export function createExportReportTool(
         format: format as ExportFormat,
         subtitle,
         preparedBy,
-        preRenderedImages: preRenderedImages.length > 0 ? preRenderedImages : undefined,
+        // If Python rendered charts, pass them as pre-rendered images.
+        // If Python failed (preRenderedImages empty), pass chart specs so
+        // exportReport can fall back to Vega-Lite rendering.
+        ...(preRenderedImages.length > 0
+          ? { preRenderedImages }
+          : allChartSpecs.length > 0
+            ? { charts: allChartSpecs }
+            : {}),
       });
       return {
         downloadUrl: result.downloadUrl,

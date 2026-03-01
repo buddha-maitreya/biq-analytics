@@ -466,7 +466,8 @@ async function processStream(
       dependencies: cfg.sandboxDeps as string[] | undefined,
       memory: cfg.sandboxMemory as string | undefined,
     },
-    kv
+    kv,
+    logger
   );
   logger?.info("[STREAM:3] Tools ready", { toolCount: Object.keys(allTools).length, tools: Object.keys(allTools) });
 

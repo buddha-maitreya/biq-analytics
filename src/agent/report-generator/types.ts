@@ -51,6 +51,10 @@ export const inputSchema = z.object({
     .string()
     .optional()
     .describe("Pre-computed data from the orchestrator -- when provided, skips SQL for fastest path"),
+  skipCache: z
+    .boolean()
+    .optional()
+    .describe("When true, bypasses the KV cache and always generates a fresh report. Use for export calls that must not serve a stale cached report."),
 });
 
 export const outputSchema = z.object({

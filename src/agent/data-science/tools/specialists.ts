@@ -757,6 +757,7 @@ export function createExportReportTool(
             startDate,
             endDate,
             format: "markdown",
+            skipCache: true, // Always generate fresh for export — avoid hitting a chartless cached report
           });
           const { content: cleanContent, charts } = extractChartBlocksFromContent(result.content);
           reportContent = cleanContent;

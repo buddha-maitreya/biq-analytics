@@ -188,21 +188,30 @@ const agent = createAgent("report-generator", {
     const periodStr = `${start.toISOString().split("T")[0]} to ${end.toISOString().split("T")[0]}`;
 
     // Phase 3.2: Check KV cache for recently generated identical report
+    // skipCache=true is passed by export_report's internal call to avoid
+    // serving a stale chartless report that generate_report may have cached.
     const cache = createCache(ctx.kv as any);
     const cacheKeyStr = reportKey(input.reportType, startStr, endStr);
-    const cached = await cache.get<{
-      title: string;
-      reportType: string;
-      period: { start: string; end: string };
-      content: string;
-      generatedAt: string;
-    }>(CACHE_NS.REPORT, cacheKeyStr);
-    if (cached) {
-      ctx.logger.info("Returning cached report", {
+    if (!input.skipCache) {
+      const cached = await cache.get<{
+        title: string;
+        reportType: string;
+        period: { start: string; end: string };
+        content: string;
+        generatedAt: string;
+      }>(CACHE_NS.REPORT, cacheKeyStr);
+      if (cached) {
+        ctx.logger.info("Returning cached report", {
+          reportType: input.reportType,
+          cacheKey: cacheKeyStr,
+        });
+        return cached;
+      }
+    } else {
+      ctx.logger.info("Cache bypassed (skipCache=true)", {
         reportType: input.reportType,
         cacheKey: cacheKeyStr,
       });
-      return cached;
     }
 
     const reportTitles: Record<string, string> = {
@@ -245,9 +254,15 @@ const agent = createAgent("report-generator", {
 
     // ── Chart generation instructions (conditional on report settings) ──
     const chartInstruction = reportSettings.chartsEnabled ? `
-CHARTS -- Visual Data Representation:
-When writing reports, include chart specifications for key data visualizations.
-Place each chart as a fenced code block with the language "chart" containing a JSON object.
+⚠️ MANDATORY CHARTS — YOU MUST INCLUDE EXACTLY ${Math.min(reportSettings.maxCharts, 4)} CHART BLOCKS ⚠️
+Charts are NOT optional. A report submitted without chart blocks is INCOMPLETE.
+Chart JSON blocks are EXCLUDED from the ${reportSettings.maxWords}-word prose limit — they DO NOT count toward the word budget.
+
+Place each chart as a fenced code block with the language "chart" containing a JSON object:
+
+\`\`\`chart
+{"type":"bar","title":"Chart Title","data":[{"category":"A","value":100}],"xField":"category","yField":"value","xLabel":"X Label","yLabel":"Y Label"}
+\`\`\`
 
 Chart JSON schema:
 {
@@ -261,22 +276,18 @@ Chart JSON schema:
   "yLabel": "Y Axis Label"
 }
 
-RULES for charts:
-- Include ${Math.min(reportSettings.maxCharts, 4)} charts per report (not more).
-- Place each chart immediately after the related analysis section.
-- Use REAL data from the report — never fabricate chart data.
-- Choose chart types that best represent the data:
+CHART PLACEMENT RULES:
+- Place each chart immediately after the section whose data it visualises.
+- Use REAL numbers from your SQL query results — never invent chart data.
+- Keep data arrays concise (max ${reportSettings.maxChartDataPoints} data points per chart).
+- The "data" array must be an array of objects with consistent keys matching xField/yField.
+- Choose the chart type that best fits the data:
   • bar/grouped_bar: comparing categories (product revenue, customer spend)
   • line/area: trends over time (daily/weekly revenue, order volume)
   • pie/donut: proportional breakdowns (category share, payment methods)
   • scatter: correlations (price vs quantity)
-- Keep chart data arrays concise (max ${reportSettings.maxChartDataPoints} data points per chart).
-- The "data" array must be an array of objects with consistent keys matching xField/yField.
 
-Example (place this in your report where appropriate):
-\`\`\`chart
-{"type":"bar","title":"Top 5 Products by Revenue","data":[{"product":"Widget A","revenue":12500},{"product":"Widget B","revenue":9800},{"product":"Widget C","revenue":7200},{"product":"Widget D","revenue":5100},{"product":"Widget E","revenue":3400}],"xField":"product","yField":"revenue","xLabel":"Product","yLabel":"Revenue"}
-\`\`\`
+REMINDER: Charts are mandatory. Include all ${Math.min(reportSettings.maxCharts, 4)} chart blocks before finishing the report.
 ` : "\nDo NOT include any chart blocks in the report.\n";
 
     // ── Report structure instructions (driven by settings) ──
@@ -534,12 +545,16 @@ Use exact numbers -- never round or approximate. Reference specific product name
       });
     }
 
+    // Count chart blocks in the generated content for observability
+    const sqlChartBlockCount = (maskedSqlContent.match(/```chart/g) ?? []).length;
     ctx.logger.info("Report generated (dynamic SQL)", {
       reportType: input.reportType,
       period: periodStr,
       format: input.format || defaultFormat,
       durationMs: Date.now() - (ctx.state.get("startedAt") as number ?? Date.now()),
       tokenUsage: tokenTracker.totals(),
+      chartBlocksInContent: sqlChartBlockCount,
+      skipCache: input.skipCache ?? false,
     });
 
     const sqlResult = {

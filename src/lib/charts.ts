@@ -436,11 +436,13 @@ export async function renderCharts(
     if (result.status === "fulfilled") {
       rendered.push(result.value);
     } else {
+      const errMsg = String(result.reason);
       options.logger?.warn("Chart rendering failed", {
         chartTitle: charts[i].title,
         chartType: charts[i].type,
-        error: String(result.reason),
+        error: errMsg,
       });
+      console.error(`[charts] renderChart failed for "${charts[i].title}" (${charts[i].type}):`, errMsg);
     }
   }
   return rendered;

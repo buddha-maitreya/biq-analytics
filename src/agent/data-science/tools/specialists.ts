@@ -731,6 +731,16 @@ export function createExportReportTool(
 
       let cleanContent = content;
 
+      const hasChartBlocks = content.includes("```chart");
+      console.log("[export_report:1] Starting", {
+        title,
+        format,
+        contentLen: content.length,
+        hasChartBlocks,
+        analyticsChartsCount: analyticsCharts?.length ?? 0,
+        hasSandbox: !!sandboxApi,
+      });
+
       // ── Python-first chart rendering ──────────────────────
       // Extract chart specs from markdown, render via Python/matplotlib,
       // then pass cleaned content (chart blocks removed) to exportReport.
@@ -739,20 +749,30 @@ export function createExportReportTool(
       if (sandboxApi && isPythonChartsAvailable()) {
         try {
           const { content: stripped, charts: chartSpecs } = extractChartBlocksFromContent(content);
+          console.log("[export_report:2] Chart specs extracted", { chartSpecsCount: chartSpecs.length, chartTitles: chartSpecs.map((c) => c.title) });
           if (chartSpecs.length > 0) {
             const pythonCharts = await renderChartsViaPython(sandboxApi, chartSpecs);
+            console.log("[export_report:3] Python rendering result", { pythonChartsCount: pythonCharts.length });
             if (pythonCharts.length > 0) {
               preRenderedImages.push(...pythonCharts);
               cleanContent = stripped; // Remove chart blocks — they're now pre-rendered
+            } else {
+              console.warn("[export_report:3] Python returned 0 charts — falling back to Vega-Lite");
             }
             // If Python rendering returned 0 charts (failure), keep original content
             // so exportReport() falls back to Vega-Lite rendering
+          } else if (hasChartBlocks) {
+            console.warn("[export_report:2] Content has ```chart blocks but none were parsed — check JSON format");
           }
         } catch (err) {
           console.error("[export_report] Python chart rendering failed, falling back to Vega-Lite:", err);
           // Keep original content — Vega-Lite will handle charts
         }
+      } else {
+        console.log("[export_report:2] Skipping Python rendering", { hasSandbox: !!sandboxApi, pythonAvailable: isPythonChartsAvailable() });
       }
+
+      console.log("[export_report:4] Calling exportReport", { preRenderedImagesCount: preRenderedImages.length, cleanContentLen: cleanContent.length, cleanHasChartBlocks: cleanContent.includes("```chart") });
 
       const result = await exportReport({
         content: cleanContent,

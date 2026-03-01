@@ -1035,23 +1035,54 @@ async function exportPdf(input: ExportInput, branding: Branding, charts: Rendere
 
       ensureSpace(14);
 
+      const isBullet = clean.startsWith("• ");
       const isBold = /\*\*/.test(line);
       const fontSize = isBold ? 10 : 9;
       const usedFont = isBold ? boldFont : font;
+      const bulletIndent = 14; // px indent for bullet text
 
-      // Word wrap the text
-      const wrapped = wrapText(clean, contentWidth, usedFont, fontSize);
+      if (isBullet) {
+        // Draw the bullet character at margin, text indented
+        const bulletText = clean.substring(2);
+        const textX = margin + bulletIndent;
+        const wrapWidth = contentWidth - bulletIndent;
+        const wrapped = wrapText(bulletText, wrapWidth, usedFont, fontSize);
 
-      for (const wLine of wrapped) {
-        ensureSpace(fontSize + 4);
-        currentPage.drawText(wLine, {
-          x: margin,
-          y,
-          size: fontSize,
-          font: usedFont,
-          color: rgb(0.24, 0.24, 0.24),
-        });
-        y -= fontSize + 3;
+        for (let wi = 0; wi < wrapped.length; wi++) {
+          ensureSpace(fontSize + 4);
+          if (wi === 0) {
+            currentPage.drawText("•", {
+              x: margin + 2,
+              y,
+              size: fontSize,
+              font,
+              color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+            });
+          }
+          currentPage.drawText(wrapped[wi], {
+            x: textX,
+            y,
+            size: fontSize,
+            font: usedFont,
+            color: rgb(0.24, 0.24, 0.24),
+          });
+          y -= fontSize + 3;
+        }
+      } else {
+        // Regular text — word wrap the full width
+        const wrapped = wrapText(clean, contentWidth, usedFont, fontSize);
+
+        for (const wLine of wrapped) {
+          ensureSpace(fontSize + 4);
+          currentPage.drawText(wLine, {
+            x: margin,
+            y,
+            size: fontSize,
+            font: usedFont,
+            color: rgb(0.24, 0.24, 0.24),
+          });
+          y -= fontSize + 3;
+        }
       }
       y -= 2;
     }
@@ -1061,6 +1092,24 @@ async function exportPdf(input: ExportInput, branding: Branding, charts: Rendere
 
   // ── Embed chart images with titles, borders, and captions ──
   if (charts.length > 0) {
+    // "Charts & Visualizations" section heading
+    ensureSpace(40);
+    currentPage.drawText("Charts & Visualizations", {
+      x: margin,
+      y,
+      size: 16,
+      font: boldFont,
+      color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+    });
+    y -= 18;
+    currentPage.drawLine({
+      start: { x: margin, y },
+      end: { x: pageW - margin, y },
+      thickness: 0.5,
+      color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+    });
+    y -= 16;
+
     for (const chart of charts) {
       chartCounter++;
 
@@ -1344,10 +1393,18 @@ async function exportXlsx(input: ExportInput, branding: Branding, charts: Render
     row++; // section spacing
   }
 
-  // Auto-width columns
-  summary.columns.forEach((col: Partial<ExcelJS.Column>) => {
-    col.width = 25;
+  // Auto-size columns based on content (max 50, min 12)
+  summary.columns.forEach((col: Partial<ExcelJS.Column>, idx: number) => {
+    let maxLen = 12;
+    summary.getColumn(idx + 1).eachCell({ includeEmpty: false }, (cell) => {
+      const val = cell.value != null ? String(cell.value) : "";
+      if (val.length > maxLen) maxLen = val.length;
+    });
+    col.width = Math.min(maxLen + 4, 50);
   });
+
+  // Freeze the title/header rows so data scrolls under them
+  summary.views = [{ state: "frozen", xSplit: 0, ySplit: 5 }];
 
   // ── Charts sheet (if chart images available) ──
   if (charts.length > 0) {
@@ -1405,10 +1462,18 @@ async function exportXlsx(input: ExportInput, branding: Branding, charts: Render
       });
     });
 
-    // Auto-width
-    dataSheet.columns.forEach((col: Partial<ExcelJS.Column>) => {
-      col.width = 20;
+    // Auto-size columns
+    dataSheet.columns.forEach((col: Partial<ExcelJS.Column>, idx: number) => {
+      let maxLen = 10;
+      dataSheet.getColumn(idx + 1).eachCell({ includeEmpty: false }, (cell) => {
+        const val = cell.value != null ? String(cell.value) : "";
+        if (val.length > maxLen) maxLen = val.length;
+      });
+      col.width = Math.min(maxLen + 4, 50);
     });
+
+    // Freeze header row
+    dataSheet.views = [{ state: "frozen", xSplit: 0, ySplit: 1 }];
   }
 
   const buffer = await workbook.xlsx.writeBuffer();
@@ -1421,7 +1486,8 @@ async function exportDocx(input: ExportInput, branding: Branding, charts: Render
   const color = branding.primaryColor.replace("#", "");
   const sections = parseMarkdown(input.content);
 
-  const children: Paragraph[] = [];
+  // Mixed array — Paragraph and Table are both valid section children in docx
+  const children: Array<Paragraph | Table> = [];
 
   // Company logo (if available)
   const docxLogo = await fetchLogoImage(branding.logoUrl);
@@ -1589,61 +1655,29 @@ async function exportDocx(input: ExportInput, branding: Branding, charts: Render
       );
     }
 
-    // Tables (handles multiple tables per section)
+    // Tables — inserted inline, immediately after the section heading
     const sectionTables = extractTables(section.lines);
     for (const table of sectionTables) {
-      children.push(new Paragraph({ spacing: { before: 100 } }));
-      children.push(new Paragraph({ spacing: { after: 100 } }));
-    }
-
-    // Text content
-    const textLines = section.lines.filter(
-      (l) => !l.trim().startsWith("|") && l.trim().length > 0
-    );
-
-    for (const line of textLines) {
-      const clean = stripMd(line);
-      if (!clean) continue;
-
-      const isBullet = clean.startsWith("• ");
+      children.push(new Paragraph({ spacing: { before: 80, after: 80 } }));
       children.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: isBullet ? clean.substring(2) : clean,
-              size: 20,
-              color: "444444",
-            }),
-          ],
-          bullet: isBullet ? { level: 0 } : undefined,
-          spacing: { after: 60 },
-        })
-      );
-    }
-  }
-
-  // Build tables separately and add to doc sections
-  const docTables: Table[] = [];
-  for (const section of sections) {
-    const tables = extractTables(section.lines);
-    for (const table of tables) {
-      docTables.push(
         new Table({
           width: { size: 100, type: WidthType.PERCENTAGE },
           rows: [
             new TableRow({
+              tableHeader: true,
               children: table.headers.map(
                 (h) =>
                   new TableCell({
                     children: [
                       new Paragraph({
                         children: [
-                          new TextRun({ text: h, bold: true, color: "FFFFFF", size: 18 }),
+                          new TextRun({ text: h, bold: true, color: "FFFFFF", size: 18, font: "Calibri" }),
                         ],
                         alignment: AlignmentType.CENTER,
                       }),
                     ],
                     shading: { fill: color, type: "clear", color: color },
+                    margins: { top: 60, bottom: 60, left: 100, right: 100 },
                   })
               ),
             }),
@@ -1655,13 +1689,14 @@ async function exportDocx(input: ExportInput, branding: Branding, charts: Render
                       new TableCell({
                         children: [
                           new Paragraph({
-                            children: [new TextRun({ text: cell, size: 18 })],
+                            children: [new TextRun({ text: cell, size: 18, font: "Calibri" })],
                           }),
                         ],
                         shading:
                           rowIdx % 2 === 1
                             ? { fill: "F5F7FA", type: "clear", color: "F5F7FA" }
                             : undefined,
+                        margins: { top: 50, bottom: 50, left: 100, right: 100 },
                       })
                   ),
                 })
@@ -1669,20 +1704,60 @@ async function exportDocx(input: ExportInput, branding: Branding, charts: Render
           ],
         })
       );
+      children.push(new Paragraph({ spacing: { before: 40, after: 160 } }));
+    }
+
+    // Text content (skip table lines)
+    const textLines = section.lines.filter(
+      (l) => !l.trim().startsWith("|") && l.trim().length > 0
+    );
+
+    for (const line of textLines) {
+      const clean = stripMd(line);
+      if (!clean) continue;
+
+      const isBullet = clean.startsWith("• ");
+      const isBold = /\*\*/.test(line);
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: isBullet ? clean.substring(2) : clean,
+              size: 20,
+              color: "444444",
+              bold: isBold,
+              font: "Calibri",
+            }),
+          ],
+          bullet: isBullet ? { level: 0 } : undefined,
+          spacing: { after: 60 },
+        })
+      );
     }
   }
 
-  // ── Chart images ──
-  const chartParagraphs: Paragraph[] = [];
+  // ── Chart images (appended after all content sections) ──
+  const chartParagraphs: Array<Paragraph | Table> = [];
   if (charts.length > 0) {
+    // Section heading for charts
+    chartParagraphs.push(
+      new Paragraph({
+        children: [
+          new TextRun({ text: "Charts & Visualizations", bold: true, size: 28, color: color, font: "Calibri" }),
+        ],
+        heading: HeadingLevel.HEADING_2,
+        spacing: { before: 500, after: 200 },
+        border: { bottom: { color: color, style: BorderStyle.SINGLE, size: 4, space: 1 } },
+      })
+    );
     for (const chart of charts) {
       // Chart title
       chartParagraphs.push(
         new Paragraph({
           children: [
-            new TextRun({ text: chart.title, bold: true, size: 26, color: color }),
+            new TextRun({ text: chart.title, bold: true, size: 24, color: color, font: "Calibri" }),
           ],
-          spacing: { before: 400, after: 120 },
+          spacing: { before: 300, after: 100 },
         })
       );
       // Chart image
@@ -1752,7 +1827,7 @@ async function exportDocx(input: ExportInput, branding: Branding, charts: Render
             ],
           }),
         },
-        children: [...children, ...chartParagraphs, ...docTables],
+        children: [...children, ...chartParagraphs],
       },
     ],
   });
@@ -2106,7 +2181,7 @@ async function exportPptx(input: ExportInput, branding: Branding, charts: Render
         try {
           const b64 = chart.png.toString("base64");
           chartSlide.addImage({
-            data: `image/png;base64,${b64}`,
+            data: `data:image/png;base64,${b64}`,
             x: 0.5, y: 0.7, w: 9, h: 4.5,
             sizing: { type: "contain", w: 9, h: 4.5 },
           });

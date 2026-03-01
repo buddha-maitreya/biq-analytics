@@ -44,14 +44,21 @@ export async function renderChartsViaPython(
 ): Promise<PreRenderedImage[]> {
   if (!chartSpecs.length) return [];
 
-  // ── Check sandbox availability ────────────────────────────
-  const snapshotId = process.env.ANALYTICS_SNAPSHOT_ID;
-  if (!snapshotId) {
-    console.warn(
-      "[python-charts] ANALYTICS_SNAPSHOT_ID not set — falling back to Vega-Lite"
-    );
-    return [];
-  }
+  // ── Snapshot resolution (platform concern, not per-tenant) ──────────────
+  // ANALYTICS_SNAPSHOT_ID is set ONCE by the platform operator (you, the SaaS
+  // developer) in your Agentuity project's environment variables. It is NOT a
+  // per-client/tenant config. All tenants share the same universal Python
+  // runtime image (numpy, pandas, matplotlib, scipy, sklearn) because every
+  // industry needs the same data-science packages. What differs per tenant is
+  // the DATA and the LLM-generated code — both handled dynamically.
+  //
+  // Without a snapshot: sandbox still runs via python:3.13 + uv pip install
+  // (~10-15s cold start vs ~0s with snapshot). Works correctly, just slower.
+  // Set up the snapshot once per Agentuity project:
+  //   agentuity sandbox snapshot create --runtime python:3.13 \
+  //     --packages "numpy pandas matplotlib seaborn scipy scikit-learn statsmodels psycopg2-binary"
+  //   agentuity cloud env set ANALYTICS_SNAPSHOT_ID=<snapshot_id>
+  const snapshotId = process.env.ANALYTICS_SNAPSHOT_ID || undefined;
 
   // ── Load chart config from DB (brand colors, currency, etc.) ──
   let chartConfig: Record<string, unknown> = options?.chartConfig ?? {};
@@ -154,8 +161,11 @@ export async function renderChartsViaPython(
 
 /**
  * Check if Python chart rendering is available.
- * Returns true if ANALYTICS_SNAPSHOT_ID is configured.
+ * Always returns true — sandbox runs with or without a snapshot.
+ * Without ANALYTICS_SNAPSHOT_ID it falls back to python:3.13 + network install
+ * (~10-15s cold start), which is acceptable and fully functional.
+ * Set ANALYTICS_SNAPSHOT_ID once at the platform level for production performance.
  */
 export function isPythonChartsAvailable(): boolean {
-  return !!process.env.ANALYTICS_SNAPSHOT_ID;
+  return true;
 }

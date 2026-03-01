@@ -47,11 +47,20 @@ const DEFAULT_MAX_OUTPUT_BYTES = 512 * 1024; // 512KB
 const MAX_DATA_ROWS = 200;
 
 /**
- * Default snapshot ID for Python runtimes.
- * Read from ANALYTICS_SNAPSHOT_ID env var — set once per deployment,
- * used automatically by all agents that run Python sandboxes.
- * Eliminates per-request `uv pip install` (~6-10s) by booting from
- * a pre-configured snapshot with numpy, pandas, scipy, sklearn, etc.
+ * Default snapshot ID for Python runtimes — platform concern, not per-tenant.
+ *
+ * Set ONCE by the platform operator in the Agentuity project environment.
+ * All tenants share the same universal analytics image (numpy, pandas,
+ * matplotlib, scipy, sklearn, statsmodels). What differs per tenant is
+ * the data and LLM-generated code — both handled dynamically.
+ *
+ * Without this set: sandbox falls back to python:3.13 + uv pip install.
+ * Works correctly but ~10-15s slower per cold start (fine for dev).
+ *
+ * One-time platform setup:
+ *   agentuity sandbox snapshot create --runtime python:3.13 \
+ *     --packages "numpy pandas matplotlib seaborn scipy scikit-learn statsmodels psycopg2-binary"
+ *   agentuity cloud env set ANALYTICS_SNAPSHOT_ID=<snapshot_id>
  */
 const DEFAULT_PYTHON_SNAPSHOT_ID = process.env.ANALYTICS_SNAPSHOT_ID || undefined;
 
@@ -822,8 +831,11 @@ ${analysisCode.split("\n").map((line) => `        ${line}`).join("\n")}
 
     __result = __run_analysis()
     if __result is not None:
-        # Merge any charts generated via save_chart() into the result
-        if isinstance(__result, dict) and '_CHARTS' in dir() and _CHARTS:
+        # Merge any charts generated via save_chart() into the result.
+        # Wrap non-dict results so _CHARTS can always be attached.
+        if not isinstance(__result, dict):
+            __result = {"result": __result}
+        if '_CHARTS' in dir() and _CHARTS:
             __result['_charts'] = _CHARTS
         print(json.dumps(__result, cls=AnalysisEncoder))
     else:

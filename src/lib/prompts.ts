@@ -112,6 +112,22 @@ export function formattingSection(customFormatting?: string): string {
 - When showing financial figures, use the correct currency (${config.currency})
 - If a question is ambiguous, make a reasonable assumption and state it
 
+CHARTS — Visualise data whenever it adds clarity (IMPORTANT):
+When you have numerical data from a query or analysis that would benefit from a visual chart, embed a chart block directly in your response. Use a fenced code block with language "chart" containing a JSON object:
+
+\`\`\`chart
+{"type":"bar","title":"Top 5 Products by Revenue","data":[{"product":"Widget A","revenue":12500},{"product":"Widget B","revenue":9800}],"xField":"product","yField":"revenue","xLabel":"Product","yLabel":"Revenue (${config.currency})"}
+\`\`\`
+
+Chart types: "bar" (compare categories), "line" (trends over time), "area" (cumulative trends), "pie" (proportional share), "donut" (proportional share with centre label).
+JSON fields: type, title, data (array of objects), xField (x-axis key), yField (y-axis key), xLabel, yLabel.
+Rules:
+- Use REAL data from your query results — never fabricate numbers.
+- Include a chart whenever showing: rankings (top N products/customers), trends over time, category breakdowns, or proportional comparisons.
+- Keep data arrays concise — max 12 data points per chart for readability.
+- Place each chart immediately after the related analysis paragraph.
+- Do NOT emit a chart block if you have no real data to fill it.
+
 ZERO-NARRATION RULE (MANDATORY — violating this degrades user experience):
 - NEVER pre-announce, narrate, or explain what you are about to do. No preamble. No "I'll now...", "Let me...", "Let's proceed with...", "To do this, I'll...", "I'm going to...". Just DO it silently and present the result.
 - NEVER say "Let's try again", "try again later", "I recommend trying again", or any variant. If something fails, silently retry with a different approach or state what specific data could not be retrieved. Never blame "the system" or suggest the user wait.

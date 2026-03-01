@@ -118,6 +118,12 @@ ${isPython ? `PYTHON ENVIRONMENT:
         result: result.result,
         dataRowCount: result.dataRowCount,
         explanation,
+        // Surface chart metadata so the LLM knows charts were generated.
+        // Full base64 PNGs are NOT returned here (too large for LLM context).
+        // Charts are available for PDF/XLSX export via the export_report tool.
+        ...(result.charts?.length
+          ? { chartsGenerated: result.charts.length, chartTitles: result.charts.map((c) => c.title) }
+          : {}),
       };
     },
   });

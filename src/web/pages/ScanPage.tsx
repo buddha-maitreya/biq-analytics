@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { flushSync } from "react-dom";
 import { useAPI } from "@agentuity/react";
 import type { AppConfig } from "../types";
 
@@ -412,8 +413,18 @@ export default function ScanPage({ config }: ScanPageProps) {
         },
       });
       streamRef.current = stream;
+
+      // Mount the <video> element synchronously so videoRef.current
+      // is available immediately (it only renders when cameraActive === true).
+      flushSync(() => setCameraActive(true));
+
       const video = videoRef.current;
-      if (!video) { stream.getTracks().forEach((t) => t.stop()); return; }
+      if (!video) {
+        stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        setCameraActive(false);
+        return;
+      }
 
       video.srcObject = stream;
 
@@ -425,7 +436,6 @@ export default function ScanPage({ config }: ScanPageProps) {
         video.addEventListener("canplay", onReady);
       });
       await video.play();
-      setCameraActive(true);
 
       // Start the 5fps detection loop (ZXing WASM via barcode-detector ponyfill)
       detectLoopActiveRef.current = true;

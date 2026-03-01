@@ -159,7 +159,9 @@ export async function listInvoices(
 
   const items = await db.query.invoices.findMany({
     where,
-    with: { customer: true },
+    with: {
+      customer: { columns: { id: true, name: true } },
+    },
     limit: params.limit,
     offset: offset(params),
     orderBy: [desc(invoices.createdAt)],

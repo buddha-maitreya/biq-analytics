@@ -10,6 +10,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { db } from "@db/index";
+import { dbRows, sanitizeRows } from "@db/rows";
 import { sql } from "drizzle-orm";
 import { validateReadOnlySQL } from "@lib/sql-safety";
 import { createCache, CACHE_NS, CACHE_TTL, queryKey, type KVStore } from "@lib/cache";
@@ -53,7 +54,7 @@ Always use SELECT only. Use aggregations, JOINs, and GROUP BY as needed.`,
 
     try {
       const result = await db.execute(sql.raw(query));
-      const rows = Array.isArray(result) ? result : (result as any).rows ?? [];
+      const rows = sanitizeRows(dbRows(result));
       return {
         explanation,
         rows: rows.slice(0, 100),

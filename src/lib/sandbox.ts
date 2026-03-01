@@ -33,6 +33,7 @@
  */
 
 import { db } from "@db/index";
+import { dbRows, sanitizeRows } from "@db/rows";
 import { sql } from "drizzle-orm";
 
 // ────────────────────────────────────────────────────────────
@@ -944,7 +945,7 @@ async function fetchData(
 
     try {
       const result = await db.execute(sql.raw(sqlQuery));
-      const rows = Array.isArray(result) ? result : (result as any).rows ?? [];
+      const rows = sanitizeRows(dbRows(result));
       data = rows.slice(0, MAX_DATA_ROWS);
       dataRowCount = rows.length;
     } catch (err: any) {

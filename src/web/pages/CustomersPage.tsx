@@ -30,7 +30,7 @@ const emptyForm = { name: "", email: "", phone: "", address: "", taxId: "", note
 
 export default function CustomersPage({ config }: CustomersPageProps) {
   const [page, setPage] = useState(1);
-  const { data, isLoading, refetch } = useAPI<any>(`GET /api/customers?page=${page}&limit=50`);
+  const { data, isLoading, refetch } = useAPI<any>(`GET /api/customers?page=${page}&limit=25`);
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");

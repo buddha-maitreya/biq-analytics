@@ -132,11 +132,11 @@ export async function login(email: string, password: string): Promise<LoginResul
   // Sign JWT
   const token = await signToken(authUser);
 
-  // Update last login
-  await db
-    .update(users)
+  // Update last login (fire-and-forget — don't block the login response)
+  db.update(users)
     .set({ lastLoginAt: new Date() })
-    .where(eq(users.id, user.id));
+    .where(eq(users.id, user.id))
+    .catch(() => {/* non-critical */});
 
   return { success: true, token, user: authUser };
 }

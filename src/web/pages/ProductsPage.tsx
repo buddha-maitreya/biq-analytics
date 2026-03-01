@@ -11,7 +11,7 @@ type SortDir = "asc" | "desc";
 
 export default function ProductsPage({ config }: ProductsPageProps) {
   const [page, setPage] = useState(1);
-  const { data, isLoading, refetch } = useAPI<any>(`GET /api/products?page=${page}&limit=50`);
+  const { data, isLoading, refetch } = useAPI<any>(`GET /api/products?page=${page}&limit=25`);
   const { data: catData } = useAPI<any>("GET /api/categories");
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");

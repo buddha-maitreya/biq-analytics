@@ -212,7 +212,10 @@ export async function listOrders(
 
   const items = await db.query.orders.findMany({
     where,
-    with: { customer: true, status: true },
+    with: {
+      customer: { columns: { id: true, name: true } },
+      status: true,
+    },
     limit: params.limit,
     offset: offset(params),
     orderBy: [desc(orders.createdAt)],

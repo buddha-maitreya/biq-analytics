@@ -82,9 +82,21 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
     loadSessions();
   }, [loadSessions]);
 
-  // Auto-scroll on new messages / streaming
+  // Auto-scroll on new messages — debounced to avoid fighting with mobile keyboard.
+  // Only auto-scroll if user is already near the bottom (within 150px).
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    scrollTimerRef.current = setTimeout(() => {
+      const container = messagesEndRef.current?.parentElement;
+      if (container) {
+        const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 150;
+        if (isNearBottom) {
+          messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }
+      }
+    }, 100);
+    return () => { if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current); };
   }, [messages, streamingText, streamingToolCalls]);
 
   const handleSend = async () => {

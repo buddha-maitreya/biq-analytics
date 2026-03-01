@@ -177,7 +177,7 @@ function PieChart({ data, labelKey, valueKey, size = 150 }: {
 export default function Dashboard({ config }: DashboardProps) {
   const { data: health } = useAPI<{ status: string }>("GET /api/health");
   const { data: stats } = useAPI<any>("GET /api/admin/stats");
-  const { data: lowStock } = useAPI<{ data: any[] }>("GET /api/inventory/low-stock");
+  const { data: lowStock } = useAPI<{ data: any[] }>("GET /api/inventory/low-stock?limit=10");
 
   // Date range filters
   const now = new Date();

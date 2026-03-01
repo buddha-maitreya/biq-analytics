@@ -73,7 +73,15 @@ export async function listCustomers(params: PaginationParams) {
 export async function listCustomersEnriched(params: PaginationParams) {
   const rows_ = dbRows(await db.execute(
     sql`SELECT
-          c.*,
+          c.id,
+          c.name,
+          c.email,
+          c.phone,
+          c.address,
+          c.tax_id,
+          c.is_active,
+          c.metadata,
+          c.created_at,
           COALESCE(s.total_spent, 0)  AS total_spent,
           COALESCE(s.order_count, 0)  AS order_count,
           s.first_order_date,

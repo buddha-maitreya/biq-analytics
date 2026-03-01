@@ -75,7 +75,17 @@ export async function getProduct(id: string) {
 export async function listProducts(params: PaginationParams) {
   const items = await db.query.products.findMany({
     where: eq(products.isActive, true),
-    with: { category: true },
+    columns: {
+      id: true,
+      sku: true,
+      name: true,
+      description: true,
+      price: true,
+      unit: true,
+      categoryId: true,
+      createdAt: true,
+    },
+    with: { category: { columns: { id: true, name: true } } },
     limit: params.limit,
     offset: offset(params),
     orderBy: [desc(products.createdAt)],

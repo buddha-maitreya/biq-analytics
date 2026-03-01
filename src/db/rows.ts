@@ -17,3 +17,26 @@ export function dbRows(result: unknown): any[] {
   }
   return [];
 }
+
+/**
+ * Sanitize row values for JSON serialization.
+ *
+ * PostgreSQL COUNT(*) and SUM() return bigint, which JavaScript maps to
+ * BigInt. BigInt cannot be serialized by JSON.stringify() — it throws
+ * "TypeError: Do not know how to serialize a BigInt".
+ *
+ * This breaks the Vercel AI SDK's tool result serialization, causing
+ * LLM tool calls to fail silently and produce reports with "N/A" values.
+ *
+ * Call this on rows before returning them from AI tool execute() functions.
+ */
+export function sanitizeRows(rows: any[]): any[] {
+  return rows.map((row) => {
+    if (!row || typeof row !== "object") return row;
+    const clean: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(row)) {
+      clean[key] = typeof val === "bigint" ? Number(val) : val;
+    }
+    return clean;
+  });
+}

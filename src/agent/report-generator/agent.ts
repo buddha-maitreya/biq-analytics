@@ -28,6 +28,7 @@ import { createAgent } from "@agentuity/runtime";
 import { generateText, tool } from "ai";
 import { z } from "zod";
 import { db } from "@db/index";
+import { dbRows, sanitizeRows } from "@db/rows";
 import { sql } from "drizzle-orm";
 import { config } from "@lib/config";
 import { getModel } from "@lib/ai";
@@ -428,9 +429,7 @@ to get the exact metrics you need. You can call this tool multiple times for dif
 
         try {
           const result = await db.execute(sql.raw(query));
-          const rows = Array.isArray(result)
-            ? result
-            : (result as any).rows ?? [];
+          const rows = sanitizeRows(dbRows(result));
           return {
             rows: rows.slice(0, 200),
             rowCount: rows.length,

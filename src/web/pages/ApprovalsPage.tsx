@@ -157,6 +157,7 @@ export default function ApprovalsPage({ config, user }: ApprovalsPageProps) {
   const [myRequests, setMyRequests] = useState<MyRequest[]>([]);
   const [allRequests, setAllRequests] = useState<MyRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -168,28 +169,27 @@ export default function ApprovalsPage({ config, user }: ApprovalsPageProps) {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setFetchError(null);
     try {
       if (tab === "pending") {
         const res = await fetch("/api/approvals/pending", { headers });
-        if (res.ok) {
-          const json = await res.json();
-          setPendingItems(json.data ?? []);
-        }
+        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        const json = await res.json();
+        setPendingItems(json.data ?? []);
       } else if (tab === "my-requests") {
         const res = await fetch(`/api/approvals/requests?requesterId=${user.id}`, { headers });
-        if (res.ok) {
-          const json = await res.json();
-          setMyRequests(json.data ?? []);
-        }
+        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        const json = await res.json();
+        setMyRequests(json.data ?? []);
       } else {
         const res = await fetch("/api/approvals/requests?limit=100", { headers });
-        if (res.ok) {
-          const json = await res.json();
-          setAllRequests(json.data ?? []);
-        }
+        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        const json = await res.json();
+        setAllRequests(json.data ?? []);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Failed to fetch approvals", e);
+      setFetchError(e?.message || "Failed to load approvals");
     } finally {
       setLoading(false);
     }
@@ -293,7 +293,14 @@ export default function ApprovalsPage({ config, user }: ApprovalsPageProps) {
       </div>
 
       <div className="approvals-content">
-        {loading ? (
+        {fetchError ? (
+          <div style={{ textAlign: "center", padding: 32 }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
+            <h3 style={{ margin: "0 0 8px" }}>Failed to load approvals</h3>
+            <p className="text-muted" style={{ margin: "0 0 16px" }}>{fetchError}</p>
+            <button className="btn btn-primary" onClick={() => fetchData()}>Retry</button>
+          </div>
+        ) : loading ? (
           <div className="approvals-loading">
             <div className="approvals-loading-spinner" />
             <span>Loading approvals…</span>

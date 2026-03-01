@@ -126,12 +126,30 @@ export function sessionMiddleware(options?: AuthMiddlewareOptions) {
   };
 }
 
+// ── In-memory user cache (avoids DB query on every request) ──
+// TTL: 30 seconds — short enough to pick up role/permission changes quickly.
+interface CachedUser {
+  user: AppUser;
+  expiresAt: number;
+}
+const USER_CACHE_TTL_MS = 30_000;
+const userCache = new Map<string, CachedUser>();
+
 /**
  * Look up a user's role & permissions from the legacy `users` table by email.
+ * Results are cached in-memory for 30s to avoid a DB query on every request.
  */
 async function enrichUserFromLegacyTable(
   email: string
 ): Promise<AppUser | null> {
+  const cacheKey = email.toLowerCase().trim();
+
+  // Check cache first
+  const cached = userCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.user;
+  }
+
   try {
     const [row] = await db
       .select()
@@ -141,7 +159,7 @@ async function enrichUserFromLegacyTable(
 
     if (!row || !row.isActive) return null;
 
-    return {
+    const appUser: AppUser = {
       id: row.id,
       email: row.email,
       name: row.name,
@@ -151,6 +169,11 @@ async function enrichUserFromLegacyTable(
       assignedWarehouses: row.assignedWarehouses as string[] | null,
       isActive: row.isActive,
     };
+
+    // Cache the result
+    userCache.set(cacheKey, { user: appUser, expiresAt: Date.now() + USER_CACHE_TTL_MS });
+
+    return appUser;
   } catch {
     return null;
   }

@@ -144,7 +144,7 @@ export default function InvoicesPage({ config }: InvoicesPageProps) {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const dateQ = `${dateFrom ? `&startDate=${dateFrom}` : ""}${dateTo ? `&endDate=${dateTo}` : ""}`;
-  const { data, isLoading, refetch } = useAPI<any>(`GET /api/invoices?page=${page}&limit=50${dateQ}`);
+  const { data, isLoading, refetch } = useAPI<any>(`GET /api/invoices?page=${page}&limit=25${dateQ}`);
   const [statusFilter, setStatusFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("invoiceNumber");

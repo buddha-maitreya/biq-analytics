@@ -1187,6 +1187,7 @@ textarea {
 .assistant-page {
   display: flex;
   height: calc(100vh - 60px);
+  height: calc(100dvh - 60px);
   overflow: hidden;
 }
 
@@ -2215,6 +2216,8 @@ textarea {
 @media (max-width: 768px) {
   .assistant-page {
     flex-direction: column;
+    height: calc(100dvh - 110px);
+    overflow: hidden;
   }
 
   .session-sidebar {
@@ -2747,8 +2750,9 @@ textarea {
   .main-content {
     padding: 16px;
     padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-    max-height: none;
-    overflow-y: visible;
+    max-height: 100dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   /* Content top bar — spread hamburger/title and theme toggle */

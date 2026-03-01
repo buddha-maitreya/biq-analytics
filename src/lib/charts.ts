@@ -16,9 +16,24 @@
  * No DOM, no Canvas, no browser required — runs on Bun server-side.
  */
 
-import * as vl from "vega-lite";
-import * as vega from "vega";
-import sharp from "sharp";
+// Heavy deps loaded lazily to avoid bloating cold start time.
+// vega-lite, vega, and sharp are only needed when actually rendering charts.
+let _vl: typeof import("vega-lite") | null = null;
+let _vega: typeof import("vega") | null = null;
+let _sharp: typeof import("sharp") | null = null;
+
+async function getVl() {
+  if (!_vl) _vl = await import("vega-lite");
+  return _vl;
+}
+async function getVega() {
+  if (!_vega) _vega = await import("vega");
+  return _vega;
+}
+async function getSharp() {
+  if (!_sharp) _sharp = await import("sharp");
+  return _sharp;
+}
 
 // ────────────────────────────────────────────────────────────
 // Types
@@ -348,6 +363,12 @@ export async function renderChart(
   const { brandColor = "#3b82f6", scale = 2 } = options;
   const w = chart.width ?? 600;
   const h = chart.height ?? 400;
+
+  // Lazy-load heavy deps
+  const vl = await getVl();
+  const vega = await getVega();
+  const sharpMod = await getSharp();
+  const sharp = sharpMod.default;
 
   // 1. Build Vega-Lite spec
   const vlSpec = buildVegaLiteSpec(chart, brandColor) as unknown as vl.TopLevelSpec;

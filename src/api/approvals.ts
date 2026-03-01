@@ -66,7 +66,12 @@ router.post("/approvals/submit", async (c) => {
 router.get("/approvals/pending", async (c) => {
   const auth = c.get("appUser" as any) as AuthUser;
   const pending = await approvalSvc.getPendingApprovalsForUser(auth.id);
-  return c.json({ data: pending });
+  // Strip heavy actionData from list view — available via /approvals/requests/:id
+  const slim = pending.map((item: any) => ({
+    ...item,
+    request: { ...item.request, actionData: undefined },
+  }));
+  return c.json({ data: slim });
 });
 
 /** Get pending approval count (for badge) */
@@ -83,7 +88,9 @@ router.get("/approvals/requests", async (c) => {
   const requesterId = c.req.query("requesterId") || undefined;
   const limit = c.req.query("limit") ? parseInt(c.req.query("limit")!) : undefined;
   const requests = await approvalSvc.listApprovalRequests({ status, actionType, requesterId, limit });
-  return c.json({ data: requests });
+  // Strip heavy actionData from list view
+  const slim = requests.map((r: any) => ({ ...r, actionData: undefined }));
+  return c.json({ data: slim });
 });
 
 /** Get single approval request with full details */

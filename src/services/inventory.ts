@@ -1,5 +1,5 @@
 import { db, inventory, inventoryTransactions, products } from "@db/index";
-import { eq, and, sql, lt, desc } from "drizzle-orm";
+import { eq, and, sql, lt, desc, asc } from "drizzle-orm";
 import { config } from "@lib/config";
 import {
   adjustInventorySchema,
@@ -168,7 +168,7 @@ export async function getStockByWarehouse(warehouseId: string) {
 }
 
 /** Get products below their reorder point */
-export async function getLowStockProducts() {
+export async function getLowStockProducts(limit = 50) {
   const result = await db
     .select({
       productId: inventory.productId,
@@ -183,7 +183,9 @@ export async function getLowStockProducts() {
     .innerJoin(products, eq(inventory.productId, products.id))
     .where(
       sql`${inventory.quantity} <= COALESCE(${products.reorderPoint}, ${products.minStockLevel}, 0)`
-    );
+    )
+    .orderBy(asc(inventory.quantity))
+    .limit(limit);
 
   return result;
 }

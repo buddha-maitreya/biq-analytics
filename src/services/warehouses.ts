@@ -76,16 +76,45 @@ export async function getDefaultWarehouse() {
   });
 }
 
-/** List all active warehouses with inventory, product, and category data */
+/** List all active warehouses with inventory, product, and category data (slim payload) */
 export async function listWarehousesWithInventory() {
   return db.query.warehouses.findMany({
     where: eq(warehouses.isActive, true),
     orderBy: [asc(warehouses.name)],
+    columns: {
+      id: true,
+      name: true,
+      code: true,
+      address: true,
+      isDefault: true,
+      metadata: true,
+    },
     with: {
       inventory: {
+        columns: {
+          id: true,
+          productId: true,
+          warehouseId: true,
+          quantity: true,
+          reservedQuantity: true,
+        },
         with: {
           product: {
-            with: { category: true },
+            columns: {
+              id: true,
+              sku: true,
+              name: true,
+              unit: true,
+              price: true,
+              reorderPoint: true,
+              minStockLevel: true,
+              categoryId: true,
+            },
+            with: {
+              category: {
+                columns: { id: true, name: true },
+              },
+            },
           },
         },
       },

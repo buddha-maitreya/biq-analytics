@@ -44,7 +44,8 @@ router.get("/inventory/warehouse/:warehouseId", async (c) => {
 
 /** Get products below reorder point */
 router.get("/inventory/low-stock", async (c) => {
-  const result = await svc.getLowStockProducts();
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "50"), 200);
+  const result = await svc.getLowStockProducts(limit);
   return c.json({ data: result });
 });
 

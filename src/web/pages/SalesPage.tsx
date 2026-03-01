@@ -20,8 +20,8 @@ export default function SalesPage({ config }: SalesPageProps) {
   const branchParam  = branchFilter !== "all" ? `&warehouseId=${branchFilter}` : "";
   const dateFromParam = dateFrom    ? `&startDate=${dateFrom}`                      : "";
   const dateToParam   = dateTo      ? `&endDate=${dateTo}`                          : "";
-  const { data, isLoading, refetch } = useAPI<any>(
-    `GET /api/sales?page=${page}&limit=50${searchParam}${branchParam}${dateFromParam}${dateToParam}`
+  const { data, isLoading, isError, error, refetch } = useAPI<any>(
+    `GET /api/sales?page=${page}&limit=25${searchParam}${branchParam}${dateFromParam}${dateToParam}`
   );
 
   const handleDownload = () => {
@@ -223,7 +223,16 @@ export default function SalesPage({ config }: SalesPageProps) {
         </span>
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <div className="error-state" style={{ textAlign: "center", padding: 32 }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
+          <h3 style={{ margin: "0 0 8px" }}>Failed to load sales</h3>
+          <p className="text-muted" style={{ margin: "0 0 16px" }}>
+            {error?.message || "Unable to fetch sales data. Please check your connection and try again."}
+          </p>
+          <button className="btn btn-primary" onClick={() => refetch()}>Retry</button>
+        </div>
+      ) : isLoading ? (
         <div className="loading-state">
           <div className="spinner" />
           <p>Loading sales...</p>

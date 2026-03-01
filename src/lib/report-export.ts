@@ -728,7 +728,13 @@ async function fetchLogoImage(
   }
 }
 
-async function exportPdf(input: ExportInput, branding: Branding, charts: RenderedChart[] = [], reportCfg?: ReportSettings): Promise<Buffer> {
+async function exportPdf(
+  input: ExportInput,
+  branding: Branding,
+  charts: RenderedChart[] = [],
+  reportCfg?: ReportSettings,
+  chartsBySection?: Map<string, RenderedChart[]>
+): Promise<Buffer> {
   // Sanitize all string inputs for WinAnsiEncoding — pdf-lib standard fonts
   // only support code points 0x20–0xFF; control characters and most Unicode
   // symbols outside that range throw "WinAnsi cannot encode" at render time.
@@ -1026,18 +1032,21 @@ async function exportPdf(input: ExportInput, branding: Branding, charts: Rendere
       const minRowsH = 3 * (tableStyle.fontSize + tableStyle.cellPaddingY * 2 + 2);
       ensureSpace(14 + headerH + minRowsH); // title(14) + header + 3 rows
 
-      // ── Table title (bold, brand color, above the table) ──
-      const tableTitle = section.heading
-        ? `${section.heading}`
-        : `Data Summary`;
-      currentPage.drawText(tableTitle, {
-        x: margin,
-        y,
-        size: 10,
-        font: boldFont,
-        color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
-      });
-      y -= 14;
+      // ── Table title (only for multi-table sections or fallback) ──
+      // Single-table sections: the section heading drawn above already serves
+      // as the table title — drawing it again causes triple duplication
+      // (heading + table title + "Table N" caption). Skip it for single tables.
+      const tableTitle = section.heading ? section.heading : "Data Summary";
+      if (tables.length > 1 || !section.heading) {
+        currentPage.drawText(tableTitle, {
+          x: margin,
+          y,
+          size: 10,
+          font: boldFont,
+          color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+        });
+        y -= 14;
+      }
 
       const result = await drawTable(
         doc,
@@ -1133,12 +1142,86 @@ async function exportPdf(input: ExportInput, branding: Branding, charts: Rendere
       y -= 2;
     }
 
+    // ── Inline charts — embed charts belonging to this section ──
+    const inlineCharts = chartsBySection?.get(section.heading) ?? [];
+    for (const chart of inlineCharts) {
+      chartCounter++;
+      const maxWidth = contentWidth - 20;
+      const scale = Math.min(maxWidth / chart.width, 1);
+      const drawW = chart.width * scale;
+      const drawH = chart.height * scale;
+      const totalNeeded = drawH + 60;
+      ensureSpace(totalNeeded);
+
+      currentPage.drawText(chart.title, {
+        x: margin,
+        y,
+        size: 12,
+        font: boldFont,
+        color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+      });
+      y -= 8;
+      currentPage.drawLine({
+        start: { x: margin, y },
+        end: { x: margin + contentWidth, y },
+        thickness: 0.5,
+        color: rgb(brandRgb.r, brandRgb.g, brandRgb.b),
+      });
+      y -= 10;
+
+      try {
+        const chartImage = await doc.embedPng(chart.png);
+        const imgX = margin + (contentWidth - drawW) / 2;
+        currentPage.drawRectangle({
+          x: imgX - 4,
+          y: y - drawH - 4,
+          width: drawW + 8,
+          height: drawH + 8,
+          borderColor: rgb(tableStyle.borderColor.r, tableStyle.borderColor.g, tableStyle.borderColor.b),
+          borderWidth: 0.6,
+          color: rgb(1, 1, 1),
+        });
+        currentPage.drawImage(chartImage, {
+          x: imgX,
+          y: y - drawH,
+          width: drawW,
+          height: drawH,
+        });
+        y -= drawH + 10;
+
+        const figCaption = `Figure ${chartCounter}: ${chart.title}`;
+        const figCaptionW = italicFont.widthOfTextAtSize(figCaption, 8);
+        const figCaptionX = margin + (contentWidth - figCaptionW) / 2;
+        currentPage.drawText(figCaption, {
+          x: figCaptionX,
+          y,
+          size: 8,
+          font: italicFont,
+          color: rgb(0.5, 0.5, 0.5),
+        });
+        y -= 20;
+      } catch (imgErr) {
+        console.error("[pdf-export] Failed to embed inline chart image:", imgErr);
+      }
+    }
+
     y -= 6; // Section spacing
   }
 
-  // ── Embed chart images with titles, borders, and captions ──
-  if (charts.length > 0) {
-    // "Charts & Visualizations" section heading
+  // ── Embed orphan charts (charts without a matching section heading) ──
+  // Includes: pre-rendered Python images and any charts whose section
+  // heading couldn't be matched (e.g., heading was empty or not found).
+  // Collect all charts that were already embedded inline to exclude them.
+  const embeddedCharts = new Set<RenderedChart>();
+  if (chartsBySection) {
+    for (const sectionCharts of chartsBySection.values()) {
+      for (const c of sectionCharts) embeddedCharts.add(c);
+    }
+  }
+  const orphanCharts = charts.filter((c) => !embeddedCharts.has(c));
+
+  if (orphanCharts.length > 0) {
+    // "Charts & Visualizations" section heading (only for orphan charts)
     ensureSpace(40);
     currentPage.drawText("Charts & Visualizations", {
       x: margin,
@@ -1156,7 +1239,7 @@ async function exportPdf(input: ExportInput, branding: Branding, charts: Rendere
     });
     y -= 16;
 
-    for (const chart of charts) {
+    for (const chart of orphanCharts) {
       chartCounter++;
 
       // Each chart gets its own space — title + image + caption
@@ -2269,6 +2352,54 @@ const EXTENSIONS: Record<ExportFormat, string> = {
 // ── Chart block extraction ─────────────────────────────────
 
 /**
+ * Extract ```chart blocks while tracking which ## / ### section each chart
+ * belongs to. Line-by-line parse preserves heading context so charts can be
+ * placed inline in the PDF immediately after the section they describe.
+ *
+ * Returns:
+ *   content       — markdown with chart blocks removed
+ *   chartPositions — ordered list of { sectionHeading, spec } pairs
+ */
+function extractChartBlocksWithSectionPositions(content: string): {
+  content: string;
+  chartPositions: Array<{ sectionHeading: string; spec: ChartSpec }>;
+} {
+  const lines = content.split("\n");
+  const cleanedLines: string[] = [];
+  const chartPositions: Array<{ sectionHeading: string; spec: ChartSpec }> = [];
+  let currentHeading = "";
+  let inBlock = false;
+  let blockLines: string[] = [];
+
+  for (const line of lines) {
+    const h2 = line.match(/^##\s+(.+)/);
+    const h3 = line.match(/^###\s+(.+)/);
+    if (h2) currentHeading = h2[1].trim();
+    else if (h3) currentHeading = h3[1].trim();
+
+    if (!inBlock && /^```chart/i.test(line.trim())) {
+      inBlock = true;
+      blockLines = [];
+    } else if (inBlock && line.trim() === "```") {
+      inBlock = false;
+      try {
+        const spec = JSON.parse(blockLines.join("\n").trim()) as ChartSpec;
+        if (spec.type && spec.data && Array.isArray(spec.data)) {
+          chartPositions.push({ sectionHeading: currentHeading, spec });
+        }
+      } catch { /* skip invalid JSON */ }
+      blockLines = [];
+    } else if (inBlock) {
+      blockLines.push(line);
+    } else {
+      cleanedLines.push(line);
+    }
+  }
+
+  return { content: cleanedLines.join("\n").trim(), chartPositions };
+}
+
+/**
  * Extract ```chart JSON code blocks from markdown content.
  * Returns cleaned content (blocks removed) and parsed chart specs.
  *
@@ -2316,7 +2447,9 @@ export async function exportReport(input: ExportInput): Promise<ExportResult> {
   const reportCfg = await getReportSettings();
 
   // ── Extract chart specs from markdown ```chart blocks + input.charts ──
-  const { content: cleanContent, charts: extractedCharts } = extractChartBlocks(input.content);
+  // Use section-aware extraction so charts can be placed inline in PDF.
+  const { content: cleanContent, chartPositions } = extractChartBlocksWithSectionPositions(input.content);
+  const extractedCharts = chartPositions.map((cp) => cp.spec);
   let allChartSpecs = [...extractedCharts, ...(input.charts ?? [])];
 
   // Respect report settings: disable charts or limit count/data points
@@ -2327,10 +2460,15 @@ export async function exportReport(input: ExportInput): Promise<ExportResult> {
     if (allChartSpecs.length > reportCfg.maxCharts) {
       allChartSpecs = allChartSpecs.slice(0, reportCfg.maxCharts);
     }
-    // Limit data points per chart
+    // Limit data points per chart — skip for temporal (time-series) charts
+    // since slicing a daily trend series drops the most recent/extreme data points
     for (const spec of allChartSpecs) {
       if (spec.data && spec.data.length > reportCfg.maxChartDataPoints) {
-        spec.data = spec.data.slice(0, reportCfg.maxChartDataPoints);
+        const t = spec.type.toLowerCase().replace(/[_\s-]+/g, "");
+        const isTimeSeries = t === "line" || t === "area";
+        if (!isTimeSeries) {
+          spec.data = spec.data.slice(0, reportCfg.maxChartDataPoints);
+        }
       }
     }
   }
@@ -2346,6 +2484,10 @@ export async function exportReport(input: ExportInput): Promise<ExportResult> {
       console.error("[report-export] Chart rendering failed, continuing without charts:", err);
     }
   }
+  // Record how many Vega-Lite renders we have BEFORE adding pre-rendered images.
+  // This count is used to build chartsBySection: only Vega-Lite charts came
+  // from content and have section-position metadata; pre-rendered images don't.
+  const vegaLiteCount = renderedCharts.length;
 
   // ── Merge pre-rendered images (e.g. from Python analytics) ──
   if (input.preRenderedImages && input.preRenderedImages.length > 0) {
@@ -2365,6 +2507,23 @@ export async function exportReport(input: ExportInput): Promise<ExportResult> {
     }
   }
 
+  // ── Build section → chart map for inline PDF placement ──
+  // Maps each section heading to the RenderedChart(s) that should appear
+  // immediately after it. Only covers Vega-Lite charts extracted from the
+  // markdown content — pre-rendered images have no section context and
+  // remain as orphan charts rendered in the fallback section.
+  const chartsBySection = new Map<string, RenderedChart[]>();
+  // Use the count of content-extracted charts (first N chart positions,
+  // capped by vegaLiteCount which may be < chartPositions.length if some
+  // specs were dropped by maxCharts or failed to render).
+  const positionedCount = Math.min(chartPositions.length, vegaLiteCount);
+  for (let i = 0; i < positionedCount; i++) {
+    const heading = chartPositions[i].sectionHeading;
+    const existing = chartsBySection.get(heading) ?? [];
+    existing.push(renderedCharts[i]);
+    chartsBySection.set(heading, existing);
+  }
+
   // Use cleaned content (chart blocks removed) for markdown parsing
   const exportInput = { ...input, content: cleanContent };
 
@@ -2372,7 +2531,7 @@ export async function exportReport(input: ExportInput): Promise<ExportResult> {
   let buffer: Buffer;
   switch (input.format) {
     case "pdf":
-      buffer = await exportPdf(exportInput, branding, renderedCharts, reportCfg);
+      buffer = await exportPdf(exportInput, branding, renderedCharts, reportCfg, chartsBySection);
       break;
     case "xlsx":
       buffer = await exportXlsx(exportInput, branding, renderedCharts);

@@ -114,7 +114,7 @@ const DEFAULTS: Record<string, string> = {
   /** Whether to include data visualizations (charts/graphs) */
   reportChartsEnabled: "true",
   /** Maximum number of data points per chart (prevents clutter) */
-  reportMaxChartDataPoints: "15",
+  reportMaxChartDataPoints: "50",
   /** Whether to show "Confidential" in the footer */
   reportConfidentialFooter: "true",
   /** Maximum number of charts per report */
@@ -200,14 +200,31 @@ const AI_KEYS = [
 
 export type AISettings = Record<(typeof AI_KEYS)[number], string>;
 
-/** Get only AI-related settings (used by agents at request time) */
+/** In-memory cache for AI settings */
+let _aiSettingsCache: AISettings | null = null;
+let _aiSettingsCacheAt = 0;
+const AI_SETTINGS_TTL = 60_000; // 1 minute
+
+/** Invalidate the AI settings cache (called when settings are saved) */
+export function invalidateAISettingsCache() {
+  _aiSettingsCache = null;
+  _aiSettingsCacheAt = 0;
+}
+
+/** Get only AI-related settings (used by agents at request time, cached for 1 min) */
 export async function getAISettings(): Promise<AISettings> {
+  const now = Date.now();
+  if (_aiSettingsCache && now - _aiSettingsCacheAt < AI_SETTINGS_TTL) {
+    return _aiSettingsCache;
+  }
   const all = await getAllSettings();
   const ai: Record<string, string> = {};
   for (const key of AI_KEYS) {
     ai[key] = all[key] ?? "";
   }
-  return ai as AISettings;
+  _aiSettingsCache = ai as AISettings;
+  _aiSettingsCacheAt = now;
+  return _aiSettingsCache;
 }
 
 // ── Report Settings ─────────────────────────────────────────
@@ -260,7 +277,7 @@ export async function getReportSettings(): Promise<ReportSettings> {
     maxWords: parseInt(all.reportMaxWords, 10) || 5000,
     referencesPage: all.reportReferencesPage !== "false",
     chartsEnabled: all.reportChartsEnabled !== "false",
-    maxChartDataPoints: parseInt(all.reportMaxChartDataPoints, 10) || 15,
+    maxChartDataPoints: parseInt(all.reportMaxChartDataPoints, 10) || 50,
     confidentialFooter: all.reportConfidentialFooter !== "false",
     maxCharts: parseInt(all.reportMaxCharts, 10) || 4,
   };
@@ -278,7 +295,7 @@ export function getReportSettingsDefaults(): ReportSettings {
     maxWords: 5000,
     referencesPage: true,
     chartsEnabled: true,
-    maxChartDataPoints: 15,
+    maxChartDataPoints: 50,
     confidentialFooter: true,
     maxCharts: 4,
   };

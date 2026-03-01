@@ -123,14 +123,15 @@ function buildVegaLiteSpec(
   chart: ChartSpec,
   brandColor: string = "#3b82f6"
 ): Record<string, unknown> {
-  const w = chart.width ?? 600;
-  const h = chart.height ?? 400;
+  const w = chart.width ?? 700;
+  const h = chart.height ?? 420;
   const palette = buildPalette(brandColor);
 
   // Common config for enterprise styling
   const vegaConfig = {
     background: "#ffffff",
     font: "Helvetica, Arial, sans-serif",
+    padding: { left: 8, right: 8, top: 8, bottom: 8 },
     title: {
       fontSize: 16,
       fontWeight: 600,
@@ -270,19 +271,6 @@ function buildVegaLiteSpec(
   }
 
   // Bar / Grouped Bar / Stacked Bar / Line / Area
-  // Determine Vega-Lite mark type
-  let mark: string | Record<string, unknown>;
-  if (type === "bar" || type === "groupedbar" || type === "stackedbar") {
-    mark = { type: "bar", cornerRadiusTopLeft: 3, cornerRadiusTopRight: 3 };
-  } else if (type === "line") {
-    mark = { type: "line", strokeWidth: 2.5, point: { size: 40, filled: true } };
-  } else if (type === "area") {
-    mark = { type: "area", opacity: 0.6, line: { strokeWidth: 2 } };
-  } else {
-    // Default to bar for unknown types
-    mark = { type: "bar", cornerRadiusTopLeft: 3, cornerRadiusTopRight: 3 };
-  }
-
   // Determine x encoding type — temporal if the data looks like dates
   const xField = chart.xField ?? "x";
   const sampleVal = chart.data[0]?.[xField];
@@ -290,6 +278,31 @@ function buildVegaLiteSpec(
     typeof sampleVal === "string" &&
     /^\d{4}-\d{2}(-\d{2})?$/.test(sampleVal);
   const xType = isDate ? "temporal" : "ordinal";
+
+  // Determine Vega-Lite mark type
+  let mark: string | Record<string, unknown>;
+  if (type === "bar" || type === "groupedbar" || type === "stackedbar") {
+    mark = { type: "bar", cornerRadiusTopLeft: 3, cornerRadiusTopRight: 3 };
+  } else if (type === "line") {
+    // Use area mark with line overlay for gradient fill effect on time-series
+    mark = {
+      type: "area",
+      line: { strokeWidth: 3.5, color: brandColor },
+      opacity: 0.12,
+      point: { size: 70, filled: true, color: brandColor },
+      color: brandColor,
+    };
+  } else if (type === "area") {
+    mark = {
+      type: "area",
+      opacity: 0.6,
+      line: { strokeWidth: 2.5 },
+      point: { size: 50, filled: true },
+    };
+  } else {
+    // Default to bar for unknown types
+    mark = { type: "bar", cornerRadiusTopLeft: 3, cornerRadiusTopRight: 3 };
+  }
 
   const spec: Record<string, unknown> = {
     $schema: "https://vega.github.io/schema/vega-lite/v5.json",
@@ -303,7 +316,9 @@ function buildVegaLiteSpec(
         field: xField,
         type: xType,
         title: chart.xLabel ?? xField,
-        axis: { labelAngle: xType === "temporal" ? 0 : -30 },
+        axis: {
+          labelAngle: xType === "temporal" ? -35 : -40,
+        },
       },
       y: {
         field: chart.yField ?? "y",
@@ -366,8 +381,8 @@ export async function renderChart(
   } = {}
 ): Promise<RenderedChart> {
   const { brandColor = "#3b82f6", scale = 2 } = options;
-  const w = chart.width ?? 600;
-  const h = chart.height ?? 400;
+  const w = chart.width ?? 700;
+  const h = chart.height ?? 420;
 
   // Lazy-load heavy deps
   const vl = await getVl();

@@ -172,7 +172,7 @@ const agent = createAgent("report-generator", {
       reportSettings = {
         titlePage: true, tocPage: true, execSummaryMaxWords: 200,
         maxPages: 20, maxWords: 5000, referencesPage: true,
-        chartsEnabled: true, maxChartDataPoints: 15,
+        chartsEnabled: true, maxChartDataPoints: 50,
         confidentialFooter: true, maxCharts: 4,
       };
     }

@@ -433,8 +433,18 @@ async function processStream(
   const abortController = new AbortController();
   sessionAbortControllers.set(sessionId, abortController);
 
-  // ── Load agent config (single source — same as agent handler setup) ──
-  const agentConfig = await getAgentConfigWithDefaults("data-science");
+  // ── Load config, AI settings, and custom tools prompt in parallel ──
+  // agentConfig → sandboxTimeoutMs → getAllTools must remain sequential
+  // (getAllTools params depend on agentConfig values), but agentConfig,
+  // getAISettings, and buildCustomToolsPromptSection are independent.
+  const [agentConfig, ai, customToolsSection] = await Promise.all([
+    getAgentConfigWithDefaults("data-science"),
+    getAISettings().catch((aiErr: any) => {
+      logger?.warn("[STREAM:2] getAISettings failed", { error: aiErr?.message?.slice(0, 200) });
+      return undefined as AISettings | undefined;
+    }),
+    buildCustomToolsPromptSection(),
+  ]);
   const cfg = (agentConfig.config ?? {}) as Record<string, unknown>;
   const maxSteps = agentConfig.maxSteps ?? 8;
   const sandboxTimeoutMs = (cfg.sandboxTimeoutMs as number) ?? 30_000;
@@ -445,14 +455,7 @@ async function processStream(
   const routingExamples = cfg.routingExamples as any[] | undefined;
   logger?.info("[STREAM:2] Config loaded", { modelId, maxSteps, sandboxTimeoutMs, hasRoutingExamples: !!routingExamples });
 
-  let ai: AISettings | undefined;
-  try {
-    ai = await getAISettings();
-  } catch (aiErr: any) {
-    logger?.warn("[STREAM:2] getAISettings failed", { error: aiErr?.message?.slice(0, 200) });
-  }
-
-  // ── Build per-request tool set ──
+  // ── Build per-request tool set (sequential — depends on agentConfig) ──
   logger?.info("[STREAM:3] Building tool set");
   const allTools = await getAllTools(
     {
@@ -465,7 +468,6 @@ async function processStream(
     },
     kv
   );
-  const customToolsSection = await buildCustomToolsPromptSection();
   logger?.info("[STREAM:3] Tools ready", { toolCount: Object.keys(allTools).length, tools: Object.keys(allTools) });
 
   // ── Build message array ──

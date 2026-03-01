@@ -133,12 +133,21 @@ export async function renderChartsViaPython(
       return [];
     }
 
-    // Parse stdout — last line is JSON output
+    // Parse stdout — scan backward for last line that is valid JSON.
+    // Python may print warnings or debug text after the JSON output, so
+    // taking only the last line fails when non-JSON text follows the payload.
     const stdout = (result.stdout || "").trim();
     if (!stdout) return [];
 
     const lines = stdout.split("\n");
-    const parsed = JSON.parse(lines[lines.length - 1]);
+    let parsed: any = null;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (line.startsWith("{") || line.startsWith("[")) {
+        try { parsed = JSON.parse(line); break; } catch { /* try previous line */ }
+      }
+    }
+    if (!parsed) throw new Error(`No valid JSON in sandbox output. Preview: ${stdout.slice(0, 300)}`);
 
     if (parsed.error) {
       console.error("[python-charts] Python error:", parsed.error);

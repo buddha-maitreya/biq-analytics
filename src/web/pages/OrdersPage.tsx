@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { useAPI } from "@agentuity/react";
 import type { AppConfig } from "../types";
 
@@ -9,11 +9,45 @@ interface OrdersPageProps {
 type SortKey = "orderNumber" | "customer" | "status" | "totalAmount" | "createdAt";
 type SortDir = "asc" | "desc";
 
+type DatePreset = "all" | "today" | "yesterday" | "last7" | "last30" | "last90" | "thisMonth" | "lastMonth" | "custom";
+function resolveDatePreset(preset: DatePreset): { from: string; to: string } {
+  if (preset === "all" || preset === "custom") return { from: "", to: "" };
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const now = new Date();
+  const ago = (n: number) => new Date(now.getTime() - n * 86400000);
+  switch (preset) {
+    case "today":     return { from: iso(now), to: iso(now) };
+    case "yesterday": { const y = ago(1); return { from: iso(y), to: iso(y) }; }
+    case "last7":     return { from: iso(ago(7)), to: iso(now) };
+    case "last30":    return { from: iso(ago(30)), to: iso(now) };
+    case "last90":    return { from: iso(ago(90)), to: iso(now) };
+    case "thisMonth": return { from: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`, to: iso(now) };
+    case "lastMonth": {
+      const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const lme = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { from: iso(lm), to: iso(lme) };
+    }
+  }
+}
+
 export default function OrdersPage({ config }: OrdersPageProps) {
   const [page, setPage] = useState(1);
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [datePreset, setDatePreset] = useState<DatePreset>("last30");
+  const [dateFrom, setDateFrom] = useState(() => resolveDatePreset("last30").from);
+  const [dateTo, setDateTo] = useState(() => resolveDatePreset("last30").to);
   const dateQ = `${dateFrom ? `&startDate=${dateFrom}` : ""}${dateTo ? `&endDate=${dateTo}` : ""}`;
+
+  const handleDatePreset = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    const p = e.target.value as DatePreset;
+    setDatePreset(p);
+    if (p !== "custom") {
+      const { from, to } = resolveDatePreset(p);
+      setDateFrom(from);
+      setDateTo(to);
+    }
+    setPage(1);
+  }, []);
   const { data, isLoading, refetch } = useAPI<any>(`GET /api/orders?page=${page}&limit=25${dateQ}`);
   const [statusFilter, setStatusFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -169,24 +203,24 @@ export default function OrdersPage({ config }: OrdersPageProps) {
 
       {/* Date Filter + Search Bar */}
       <div className="toolbar">
-        <div className="date-range-filter">
-          <input
-            type="date"
-            className="date-input"
-            value={dateFrom}
-            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
-            title="From date"
-          />
-          <span className="date-sep">–</span>
-          <input
-            type="date"
-            className="date-input"
-            value={dateTo}
-            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
-            title="To date"
-          />
-          {(dateFrom || dateTo) && (
-            <button className="search-clear" onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}>✕</button>
+        <div className="date-range-dropdown">
+          <select className="date-range-select" value={datePreset} onChange={handleDatePreset} aria-label="Date range">
+            <option value="all">All time</option>
+            <option value="today">Today</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="last7">Last 7 days</option>
+            <option value="last30">Last 30 days</option>
+            <option value="last90">Last 90 days</option>
+            <option value="thisMonth">This month</option>
+            <option value="lastMonth">Last month</option>
+            <option value="custom">Custom range</option>
+          </select>
+          {datePreset === "custom" && (
+            <div className="date-range-custom">
+              <input type="date" className="date-input" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} title="From date" />
+              <span className="date-sep">–</span>
+              <input type="date" className="date-input" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} title="To date" />
+            </div>
           )}
         </div>
         <div className="search-box">

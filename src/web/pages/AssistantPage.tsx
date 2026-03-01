@@ -11,11 +11,14 @@
  */
 
 import React, { useState, useRef, useEffect } from "react";
+
+// No-op in production — prevents JSON serialization overhead on mobile
+const devLog = process.env.NODE_ENV !== "production" ? console.log : (..._args: any[]) => {};
 import type { AppConfig } from "../types";
 import { useChatStream } from "../hooks/useChatStream";
 import type { ToolCall } from "../hooks/useChatStream";
 import SessionSidebar from "../components/chat/SessionSidebar";
-import MessageBubble from "../components/chat/MessageBubble";
+import MessageBubble, { renderMarkdown } from "../components/chat/MessageBubble";
 import ToolCallCard from "../components/chat/ToolCallCard";
 
 /** Pending attachment before send */
@@ -110,7 +113,7 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
 
   /** Upload a file and add it as a pending attachment */
   const handleFileUpload = async (file: File, sessionIdOverride?: string) => {
-    console.log("[UPLOAD:1] handleFileUpload called", { fileName: file?.name, fileSize: file?.size, fileType: file?.type, sessionIdOverride, activeSessionId });
+    devLog("[UPLOAD:1] handleFileUpload called", { fileName: file?.name, fileSize: file?.size, fileType: file?.type, sessionIdOverride, activeSessionId });
     if (!file) {
       console.warn("[UPLOAD:1] No file provided — aborting");
       return;
@@ -118,17 +121,17 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
     // Auto-create session if needed (caller can pass one to avoid races)
     let sessionId = sessionIdOverride ?? activeSessionId;
     if (!sessionId) {
-      console.log("[UPLOAD:2] No session — creating one");
+      devLog("[UPLOAD:2] No session — creating one");
       sessionId = await createSession();
       if (!sessionId) {
         console.error("[UPLOAD:2] Session creation returned null — aborting upload");
         throw new Error("Failed to create chat session for upload");
       }
-      console.log("[UPLOAD:2] Session created", { sessionId });
+      devLog("[UPLOAD:2] Session created", { sessionId });
     }
 
     const url = `/api/chat/sessions/${sessionId}/attachments`;
-    console.log("[UPLOAD:3] Uploading to", url, { fileName: file.name, fileSize: file.size, fileType: file.type });
+    devLog("[UPLOAD:3] Uploading to", url, { fileName: file.name, fileSize: file.size, fileType: file.type });
 
     let res: Response;
     try {
@@ -145,7 +148,7 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
       throw new Error(`Network error uploading ${file.name}: ${networkErr?.message || "Connection failed"}`);
     }
 
-    console.log("[UPLOAD:4] Response received", { status: res.status, statusText: res.statusText, contentType: res.headers.get("content-type") });
+    devLog("[UPLOAD:4] Response received", { status: res.status, statusText: res.statusText, contentType: res.headers.get("content-type") });
 
     if (!res.ok) {
       let errMsg = `Upload failed (HTTP ${res.status} ${res.statusText})`;
@@ -170,7 +173,7 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
       throw new Error(`Upload succeeded but response was not valid JSON: ${parseErr?.message}`);
     }
 
-    console.log("[UPLOAD:5] Upload successful", { attachmentId: json.data?.id, filename: json.data?.filename });
+    devLog("[UPLOAD:5] Upload successful", { attachmentId: json.data?.id, filename: json.data?.filename });
 
     const att = json.data;
     if (!att?.id) {
@@ -190,7 +193,7 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
 
   const handleFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    console.log("[UPLOAD:0] handleFileInput triggered", { fileCount: files?.length, streaming, uploading, activeSessionId });
+    devLog("[UPLOAD:0] handleFileInput triggered", { fileCount: files?.length, streaming, uploading, activeSessionId });
     if (!files || files.length === 0) {
       console.warn("[UPLOAD:0] No files selected — user may have cancelled picker");
       return;
@@ -199,7 +202,7 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
     // to e.target.files — setting value="" empties the FileList immediately.
     const fileList = Array.from(files);
     e.target.value = ""; // reset so same file can be re-selected
-    console.log("[UPLOAD:0] Files to upload:", fileList.map(f => ({ name: f.name, size: f.size, type: f.type })));
+    devLog("[UPLOAD:0] Files to upload:", fileList.map(f => ({ name: f.name, size: f.size, type: f.type })));
 
     setUploading(true);
     setUploadError(null);
@@ -208,7 +211,7 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
       // Ensure session exists once before uploading all files
       let sessionId = activeSessionId;
       if (!sessionId) {
-        console.log("[UPLOAD:0] No active session — creating one for upload");
+        devLog("[UPLOAD:0] No active session — creating one for upload");
         sessionId = await createSession();
         if (!sessionId) {
           const msg = "Failed to create chat session — cannot upload files";
@@ -217,7 +220,7 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
           setUploading(false);
           return;
         }
-        console.log("[UPLOAD:0] Session created for upload", { sessionId });
+        devLog("[UPLOAD:0] Session created for upload", { sessionId });
       }
       // Upload files sequentially to avoid race conditions
       let successCount = 0;
@@ -225,7 +228,7 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
         try {
           await handleFileUpload(file, sessionId);
           successCount++;
-          console.log(`[UPLOAD:0] File ${successCount}/${fileList.length} uploaded: ${file.name}`);
+          devLog(`[UPLOAD:0] File ${successCount}/${fileList.length} uploaded: ${file.name}`);
         } catch (err: any) {
           const msg = err?.message || `Upload failed for ${file.name}`;
           console.error("[UPLOAD:0] File upload error", { file: file.name, error: msg, stack: err?.stack });
@@ -233,7 +236,7 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
         }
       }
       if (successCount > 0) {
-        console.log(`[UPLOAD:0] Upload complete: ${successCount}/${fileList.length} files succeeded`);
+        devLog(`[UPLOAD:0] Upload complete: ${successCount}/${fileList.length} files succeeded`);
       }
     } catch (outerErr: any) {
       const msg = outerErr?.message || "Unexpected upload error";
@@ -376,7 +379,7 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
               <div className="message-bubble">
                 <div className="message-content">
                   <div className="message-markdown streaming-text">
-                    {streamingText}
+                    {renderMarkdown(streamingText)}
                     <span className="streaming-cursor">▍</span>
                   </div>
                 </div>
@@ -454,7 +457,7 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
           <button
             className="btn btn-icon chat-attach-btn"
             onClick={() => {
-              console.log("[UPLOAD:BTN] Attach button clicked", { streaming, uploading, fileInputRef: !!fileInputRef.current });
+              devLog("[UPLOAD:BTN] Attach button clicked", { streaming, uploading, fileInputRef: !!fileInputRef.current });
               setUploadError(null);
               if (!fileInputRef.current) {
                 console.error("[UPLOAD:BTN] fileInputRef is null — hidden input not mounted");
@@ -473,7 +476,7 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
           <button
             className="btn btn-icon chat-attach-btn"
             onClick={() => {
-              console.log("[UPLOAD:BTN] Camera button clicked", { streaming, uploading, cameraInputRef: !!cameraInputRef.current });
+              devLog("[UPLOAD:BTN] Camera button clicked", { streaming, uploading, cameraInputRef: !!cameraInputRef.current });
               setUploadError(null);
               if (!cameraInputRef.current) {
                 console.error("[UPLOAD:BTN] cameraInputRef is null — hidden input not mounted");

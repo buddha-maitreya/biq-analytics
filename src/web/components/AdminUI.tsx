@@ -15,7 +15,7 @@ interface StatCardProps {
   onClick?: () => void;
 }
 
-export function StatCard({ icon, value, label, accent = "#3b82f6", subtitle, onClick }: StatCardProps) {
+export const StatCard = React.memo(function StatCard({ icon, value, label, accent = "#3b82f6", subtitle, onClick }: StatCardProps) {
   return (
     <div
       className="admin-stat-card"
@@ -35,11 +35,11 @@ export function StatCard({ icon, value, label, accent = "#3b82f6", subtitle, onC
       </div>
     </div>
   );
-}
+});
 
-export function StatRow({ children }: { children: React.ReactNode }) {
+export const StatRow = React.memo(function StatRow({ children }: { children: React.ReactNode }) {
   return <div className="admin-stat-row">{children}</div>;
-}
+});
 
 /* ---------- Section Card ---------- */
 interface SectionCardProps {
@@ -53,7 +53,7 @@ interface SectionCardProps {
   noPadding?: boolean;
 }
 
-export function SectionCard({ title, icon, subtitle, accent, actions, children, className = "", noPadding }: SectionCardProps) {
+export const SectionCard = React.memo(function SectionCard({ title, icon, subtitle, accent, actions, children, className = "", noPadding }: SectionCardProps) {
   return (
     <div className={`admin-section-card ${className}`} style={accent ? { "--section-accent": accent } as React.CSSProperties : undefined}>
       {(title || actions) && (
@@ -73,7 +73,7 @@ export function SectionCard({ title, icon, subtitle, accent, actions, children, 
       </div>
     </div>
   );
-}
+});
 
 /* ---------- Search Toolbar ---------- */
 interface SearchToolbarProps {
@@ -85,7 +85,7 @@ interface SearchToolbarProps {
   children?: React.ReactNode; // extra buttons/filters
 }
 
-export function SearchToolbar({ search, onSearchChange, placeholder = "Search...", count, countLabel, children }: SearchToolbarProps) {
+export const SearchToolbar = React.memo(function SearchToolbar({ search, onSearchChange, placeholder = "Search...", count, countLabel, children }: SearchToolbarProps) {
   return (
     <div className="admin-toolbar">
       <div className="admin-search-wrap">
@@ -117,7 +117,7 @@ export function SearchToolbar({ search, onSearchChange, placeholder = "Search...
       {children}
     </div>
   );
-}
+});
 
 /* ---------- Empty State ---------- */
 interface EmptyStateProps {
@@ -127,7 +127,7 @@ interface EmptyStateProps {
   action?: React.ReactNode;
 }
 
-export function EmptyState({ icon, title, description, action }: EmptyStateProps) {
+export const EmptyState = React.memo(function EmptyState({ icon, title, description, action }: EmptyStateProps) {
   return (
     <div className="admin-empty-state">
       <div className="admin-empty-icon">{icon}</div>
@@ -136,7 +136,7 @@ export function EmptyState({ icon, title, description, action }: EmptyStateProps
       {action && <div className="admin-empty-action">{action}</div>}
     </div>
   );
-}
+});
 
 /* ---------- Alert / Flash Banner ---------- */
 interface AlertBannerProps {
@@ -152,7 +152,7 @@ const ALERT_ICONS: Record<string, string> = {
   warning: "⚠",
 };
 
-export function AlertBanner({ type, children, onDismiss }: AlertBannerProps) {
+export const AlertBanner = React.memo(function AlertBanner({ type, children, onDismiss }: AlertBannerProps) {
   return (
     <div className={`admin-alert admin-alert-${type}`}>
       <span className="admin-alert-icon">{ALERT_ICONS[type]}</span>
@@ -162,7 +162,7 @@ export function AlertBanner({ type, children, onDismiss }: AlertBannerProps) {
       )}
     </div>
   );
-}
+});
 
 /* ---------- Form Panel (elevated create/edit form) ---------- */
 interface FormPanelProps {
@@ -176,7 +176,7 @@ interface FormPanelProps {
   footer?: React.ReactNode; // extra footer content (e.g. toggle switch)
 }
 
-export function FormPanel({ title, icon, onClose, onSave, saving, saveLabel, children, footer }: FormPanelProps) {
+export const FormPanel = React.memo(function FormPanel({ title, icon, onClose, onSave, saving, saveLabel, children, footer }: FormPanelProps) {
   return (
     <div className="admin-form-panel-v2">
       <div className="admin-form-panel-v2-header">
@@ -204,7 +204,7 @@ export function FormPanel({ title, icon, onClose, onSave, saving, saveLabel, chi
       </div>
     </div>
   );
-}
+});
 
 /* ---------- Field Group (visual grouping of form fields) ---------- */
 interface FieldGroupProps {
@@ -214,7 +214,7 @@ interface FieldGroupProps {
   children: React.ReactNode;
 }
 
-export function FieldGroup({ label, hint, cols = 2, children }: FieldGroupProps) {
+export const FieldGroup = React.memo(function FieldGroup({ label, hint, cols = 2, children }: FieldGroupProps) {
   return (
     <div className="admin-field-group">
       {label && (
@@ -228,7 +228,7 @@ export function FieldGroup({ label, hint, cols = 2, children }: FieldGroupProps)
       </div>
     </div>
   );
-}
+});
 
 /* ---------- Form Field v2 ---------- */
 interface FormFieldV2Props {
@@ -239,7 +239,7 @@ interface FormFieldV2Props {
   children: React.ReactNode;
 }
 
-export function FormFieldV2({ label, hint, required, error, children }: FormFieldV2Props) {
+export const FormFieldV2 = React.memo(function FormFieldV2({ label, hint, required, error, children }: FormFieldV2Props) {
   return (
     <div className={`admin-form-field ${error ? "admin-form-field-error" : ""}`}>
       <label className="admin-form-field-label">
@@ -251,7 +251,7 @@ export function FormFieldV2({ label, hint, required, error, children }: FormFiel
       {error && <span className="admin-form-field-error-text">{error}</span>}
     </div>
   );
-}
+});
 
 /* ---------- Badge ---------- */
 interface BadgeProps {
@@ -261,31 +261,31 @@ interface BadgeProps {
   dotColor?: string;
 }
 
-export function Badge({ children, variant = "default", dot, dotColor }: BadgeProps) {
+export const Badge = React.memo(function Badge({ children, variant = "default", dot, dotColor }: BadgeProps) {
   return (
     <span className={`admin-badge admin-badge-${variant}`}>
       {dot && <span className="admin-badge-dot" style={dotColor ? { background: dotColor } : undefined} />}
       {children}
     </span>
   );
-}
+});
 
 /* ---------- Tip / Help Block ---------- */
-export function TipBlock({ children }: { children: React.ReactNode }) {
+export const TipBlock = React.memo(function TipBlock({ children }: { children: React.ReactNode }) {
   return (
     <div className="admin-tip-block">
       <span className="admin-tip-icon">💡</span>
       <div className="admin-tip-content">{children}</div>
     </div>
   );
-}
+});
 
 /* ---------- Loading Spinner ---------- */
-export function LoadingState({ message = "Loading..." }: { message?: string }) {
+export const LoadingState = React.memo(function LoadingState({ message = "Loading..." }: { message?: string }) {
   return (
     <div className="admin-loading-state">
       <div className="admin-loading-spinner" />
       <p className="admin-loading-text">{message}</p>
     </div>
   );
-}
+});

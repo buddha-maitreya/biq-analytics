@@ -29,14 +29,16 @@ export default function LoginPage({ config, onLogin }: LoginPageProps) {
 
         if (!res.ok) {
           setError(data.error || "Login failed");
+          setLoading(false);
           return;
         }
 
-        // Cookie is set by the server (HttpOnly) — no localStorage needed
+        // Cookie is set by the server (HttpOnly) — no localStorage needed.
+        // Do NOT call setLoading(false) here — the component unmounts immediately
+        // after onLogin(), so setting state would be a no-op (React 18) or warning.
         onLogin(data.user);
       } catch {
         setError("Network error. Please try again.");
-      } finally {
         setLoading(false);
       }
     },

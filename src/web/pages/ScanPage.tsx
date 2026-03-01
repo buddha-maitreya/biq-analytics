@@ -188,6 +188,16 @@ export default function ScanPage({ config }: ScanPageProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+  // Camera detection loop refs — prevent stale closures and runaway rAF
+  const detectLoopActiveRef = useRef(false);
+  const scanCooldownRef = useRef(false);
+  const lastDetectedRef = useRef("");
+  // Always-current versions of state values for callbacks inside the detect loop
+  const handleScanRef = useRef<(code: string) => void>(() => {});
+  const warehouseIdRef = useRef(warehouseId);
+  const quantityRef = useRef(quantity);
+  const scanTypeRef = useRef(scanType);
+  const hardwareScannerActiveRef = useRef(hardwareScannerActive);
 
   // Fetch warehouses
   const { data: whData } = useAPI<any>("GET /api/warehouses");
@@ -217,6 +227,12 @@ export default function ScanPage({ config }: ScanPageProps) {
       setWarehouseId(defaultWh?.id ?? warehouses[0].id);
     }
   }, [warehouses, warehouseId]);
+
+  // Keep scan-config refs in sync so the detection loop always reads fresh values
+  useEffect(() => { warehouseIdRef.current = warehouseId; }, [warehouseId]);
+  useEffect(() => { quantityRef.current = quantity; }, [quantity]);
+  useEffect(() => { scanTypeRef.current = scanType; }, [scanType]);
+  useEffect(() => { hardwareScannerActiveRef.current = hardwareScannerActive; }, [hardwareScannerActive]);
 
   // Auto-dismiss status flash after 4 seconds
   useEffect(() => {
@@ -334,7 +350,7 @@ export default function ScanPage({ config }: ScanPageProps) {
         reactToPaste: true,             // Support paste-mode scanners
         minLength: 4,                   // Minimum barcode length
         avgTimeByChar: 50,              // Max 50ms per char (scanner speed)
-        onScan: (scannedCode: string, qty: number) => {
+        onScan: (scannedCode: string, _qty: number) => {
           // Only process if we're on the scanner tab and not in an input
           if (mode !== "scanner") return;
 
@@ -346,8 +362,8 @@ export default function ScanPage({ config }: ScanPageProps) {
 
           setBarcode(scannedCode);
           setHardwareScannerActive(true);
-          // Auto-submit the scanned barcode
-          handleScan(scannedCode);
+          // Call via ref — avoids stale closure when warehouseId/quantity/scanType change
+          handleScanRef.current(scannedCode);
           // Reset indicator after brief delay
           setTimeout(() => setHardwareScannerActive(false), 2000);
         },
@@ -369,31 +385,10 @@ export default function ScanPage({ config }: ScanPageProps) {
 
   // ── Camera Scanner (barcode-detector polyfill) ─────────────
 
-  const startCamera = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      setCameraActive(true);
-
-      // Use barcode-detector polyfill — works in ALL browsers via ZXing WASM
-      detectBarcodeLoop();
-    } catch (err) {
-      setStatusFlash({
-        type: "error",
-        message: "Camera access denied",
-        detail: err instanceof Error ? err.message : "Please allow camera access in browser settings",
-        timestamp: Date.now(),
-      });
-    }
-  }, []);
-
   const stopCamera = useCallback(() => {
+    detectLoopActiveRef.current = false;
+    scanCooldownRef.current = false;
+    lastDetectedRef.current = "";
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -404,51 +399,115 @@ export default function ScanPage({ config }: ScanPageProps) {
     setCameraActive(false);
   }, []);
 
+  const startCamera = useCallback(async () => {
+    try {
+      // Use { ideal: "environment" } to avoid hard-failing on devices that
+      // don't expose the rear camera as "environment" (iOS Safari quirk).
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+      });
+      streamRef.current = stream;
+      const video = videoRef.current;
+      if (!video) { stream.getTracks().forEach((t) => t.stop()); return; }
+
+      video.srcObject = stream;
+
+      // Wait for the first frame before starting detection —
+      // detector.detect() errors silently if video isn't ready yet.
+      await new Promise<void>((resolve) => {
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) { resolve(); return; }
+        const onReady = () => { video.removeEventListener("canplay", onReady); resolve(); };
+        video.addEventListener("canplay", onReady);
+      });
+      await video.play();
+      setCameraActive(true);
+
+      // Start the 5fps detection loop (ZXing WASM via barcode-detector ponyfill)
+      detectLoopActiveRef.current = true;
+      lastDetectedRef.current = "";
+      scanCooldownRef.current = false;
+
+      const detector = new BarcodeDetector({
+        formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "code_93", "qr_code", "data_matrix"],
+      });
+
+      const tick = async () => {
+        if (!detectLoopActiveRef.current || !streamRef.current) return;
+        // Guard: skip if video doesn't have a decoded frame yet
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && !scanCooldownRef.current) {
+          try {
+            const barcodes = await detector.detect(video);
+            if (barcodes.length > 0) {
+              const detected = barcodes[0].rawValue;
+              // Deduplicate via ref (not stale state)
+              if (detected && detected !== lastDetectedRef.current) {
+                lastDetectedRef.current = detected;
+                scanCooldownRef.current = true;
+                setBarcode(detected);
+                // Auto-submit — camera stays open for seamless continuous scanning
+                handleScanRef.current(detected);
+                // Resume detection after 2s cooldown
+                setTimeout(() => {
+                  scanCooldownRef.current = false;
+                  lastDetectedRef.current = "";
+                }, 2000);
+              }
+            }
+          } catch {
+            // Detection error (frame not ready, WASM busy) — continue
+          }
+        }
+        // 5fps polling — avoids flooding ZXing WASM with 60 concurrent requests
+        if (detectLoopActiveRef.current) {
+          setTimeout(tick, 200);
+        }
+      };
+
+      tick();
+    } catch (err) {
+      const name = err instanceof DOMException ? err.name : "";
+      const detail =
+        name === "NotAllowedError" ? "Camera permission denied — allow access in browser settings" :
+        name === "NotFoundError" ? "No camera found on this device" :
+        name === "NotReadableError" ? "Camera is in use by another app — close it and try again" :
+        name === "OverconstrainedError" ? "Camera constraints not supported — try a different browser" :
+        err instanceof Error ? err.message : "Please allow camera access in browser settings";
+      setStatusFlash({
+        type: "error",
+        message: "Camera unavailable",
+        detail,
+        timestamp: Date.now(),
+      });
+    }
+  }, []);
+
   // Cleanup camera on unmount
   useEffect(() => {
     return () => {
+      detectLoopActiveRef.current = false;
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
       }
     };
   }, []);
 
-  const detectBarcodeLoop = useCallback(async () => {
-    // Uses the `barcode-detector` ponyfill (ZXing WASM) — works in ALL browsers
-    const detector = new BarcodeDetector({
-      formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "code_93", "qr_code", "data_matrix"],
-    });
-
-    const detect = async () => {
-      if (!videoRef.current || !streamRef.current) return;
-      try {
-        const barcodes = await detector.detect(videoRef.current);
-        if (barcodes.length > 0) {
-          const detected = barcodes[0].rawValue;
-          if (detected && detected !== barcode) {
-            setBarcode(detected);
-            // Auto-submit on detection
-            stopCamera();
-            handleScan(detected);
-            return; // Stop loop
-          }
-        }
-      } catch {
-        // Detection error — continue
-      }
-      if (streamRef.current) {
-        requestAnimationFrame(detect);
-      }
-    };
-
-    detect();
-  }, [barcode]);
-
   // ── Scan Submission ────────────────────────────────────────
 
   const handleScan = useCallback(async (barcodeValue?: string) => {
     const code = barcodeValue ?? barcode;
-    if (!code.trim() || !warehouseId) {
+    // Read warehouse/quantity/scanType via refs — safe from stale closures
+    // when called from the camera detection loop or onscan.js handler.
+    const wid = warehouseIdRef.current;
+    const qty = quantityRef.current;
+    const stype = scanTypeRef.current;
+    const hwActive = hardwareScannerActiveRef.current;
+
+    if (!code.trim() || !wid) {
       setStatusFlash({
         type: "warning",
         message: "Enter a barcode and select a warehouse",
@@ -460,10 +519,10 @@ export default function ScanPage({ config }: ScanPageProps) {
     const idempotencyKey = `web-${Date.now()}-${code.trim()}`;
     const scanPayload = {
       barcode: code.trim(),
-      warehouseId,
-      deviceType: hardwareScannerActive ? "usb_scanner" : "web",
-      quantity,
-      scanType,
+      warehouseId: wid,
+      deviceType: hwActive ? "usb_scanner" : "web",
+      quantity: qty,
+      scanType: stype,
       idempotencyKey,
     };
 
@@ -565,7 +624,10 @@ export default function ScanPage({ config }: ScanPageProps) {
     } finally {
       setScanning(false);
     }
-  }, [barcode, warehouseId, quantity, scanType, mode, refetchHistory, hardwareScannerActive]);
+  }, [barcode, mode, refetchHistory]);
+
+  // Keep handleScanRef in sync so detection loop and onscan.js always call latest version
+  useEffect(() => { handleScanRef.current = handleScan; }, [handleScan]);
 
   // ── Offline Sync ───────────────────────────────────────────
   // Sync queued offline scans via POST /api/scan/batch
@@ -822,7 +884,7 @@ export default function ScanPage({ config }: ScanPageProps) {
           <div className="scan-camera-area">
             {cameraActive ? (
               <div className="scan-camera-container">
-                <video ref={videoRef} className="scan-video" playsInline muted />
+                <video ref={videoRef} className="scan-video" playsInline muted autoPlay />
                 <div className="scan-crosshair" />
                 <button className="scan-camera-stop" onClick={stopCamera}>
                   ✕ Close Camera

@@ -25,7 +25,7 @@ const TOOL_LABELS: Record<string, { label: string; icon: string }> = {
   get_business_snapshot: { label: "Business Overview", icon: "📈" },
 };
 
-export default function ToolCallCard({ toolCall }: ToolCallCardProps) {
+const ToolCallCard = React.memo(function ToolCallCard({ toolCall }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false);
   const meta = TOOL_LABELS[toolCall.name] || {
     label: toolCall.name,
@@ -84,7 +84,9 @@ export default function ToolCallCard({ toolCall }: ToolCallCardProps) {
       )}
     </div>
   );
-}
+});
+
+export default ToolCallCard;
 
 function renderInput(toolCall: ToolCall) {
   const input = toolCall.input;

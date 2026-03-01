@@ -56,7 +56,7 @@ const PERMISSION_PAGES: Record<string, Page> = {
   assistant: "assistant",
 };
 
-export default function Sidebar({ config, currentPage, onNavigate, user, onLogout, mobileOpen, onCloseMobile }: SidebarProps) {
+const Sidebar = React.memo(function Sidebar({ config, currentPage, onNavigate, user, onLogout, mobileOpen, onCloseMobile }: SidebarProps) {
   // ── Pending approval count badge (visibility-aware, adaptive interval) ──
   const [pendingCount, setPendingCount] = useState(0);
 
@@ -183,4 +183,6 @@ export default function Sidebar({ config, currentPage, onNavigate, user, onLogou
       </aside>
     </>
   );
-}
+});
+
+export default Sidebar;

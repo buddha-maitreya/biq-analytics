@@ -16,7 +16,7 @@ interface SessionSidebarProps {
   onCloseMobile: () => void;
 }
 
-export default function SessionSidebar({
+const SessionSidebar = React.memo(function SessionSidebar({
   sessions,
   activeSessionId,
   onSelect,
@@ -90,7 +90,9 @@ export default function SessionSidebar({
       </aside>
     </>
   );
-}
+});
+
+export default SessionSidebar;
 
 function formatRelativeDate(dateStr: string): string {
   const date = new Date(dateStr);

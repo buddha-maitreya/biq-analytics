@@ -138,20 +138,10 @@ export default function App() {
     approvalsPolling: "disabled",
   };
 
-  // Show loading spinner while checking auth
-  if (!authChecked) {
-    return (
-      <div className="login-page">
-        <div className="login-card" style={{ textAlign: "center", padding: "60px 40px" }}>
-          <div className="login-title" style={{ fontSize: "18px", color: "#94a3b8" }}>
-            Loading…
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Show login if not authenticated
+  // Show login if not authenticated (also shown while auth check is in flight).
+  // Eliminates the blank spinner — unauthenticated users see the form immediately;
+  // authenticated users see it briefly, then transition automatically once
+  // /api/auth/me resolves and handleLogin is called.
   if (!user) {
     return <LoginPage config={cfg} onLogin={handleLogin} />;
   }

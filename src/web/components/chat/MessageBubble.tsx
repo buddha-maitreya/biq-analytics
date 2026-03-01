@@ -3,7 +3,7 @@
  * Assistant messages include markdown rendering, tool call cards, and feedback buttons.
  */
 
-import React from "react";
+import React, { useMemo } from "react";
 import type { ChatMessage } from "../../hooks/useChatStream";
 import ToolCallCard from "./ToolCallCard";
 
@@ -12,11 +12,15 @@ interface MessageBubbleProps {
   onFeedback?: (messageId: string, rating: "up" | "down") => void;
 }
 
-export default function MessageBubble({
+const MessageBubble = React.memo(function MessageBubble({
   message,
   onFeedback,
 }: MessageBubbleProps) {
   const isUser = message.role === "user";
+  const renderedContent = useMemo(
+    () => (isUser ? null : renderMarkdown(message.content)),
+    [isUser, message.content]
+  );
 
   return (
     <div className={`chat-message ${message.role}`}>
@@ -36,7 +40,7 @@ export default function MessageBubble({
             <p>{message.content}</p>
           ) : (
             <div className="message-markdown">
-              {renderMarkdown(message.content)}
+              {renderedContent}
             </div>
           )}
         </div>
@@ -73,11 +77,13 @@ export default function MessageBubble({
       </div>
     </div>
   );
-}
+});
+
+export default MessageBubble;
 
 // ── Markdown Renderer ──────────────────────────────────────
 
-function renderMarkdown(text: string): React.ReactNode {
+export function renderMarkdown(text: string): React.ReactNode {
   if (!text) return null;
 
   const lines = text.split("\n");

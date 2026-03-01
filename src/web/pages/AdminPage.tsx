@@ -258,11 +258,17 @@ function InfoBox({ children }: { children: React.ReactNode }) {
 export default function AdminPage({ config, onSaved }: AdminPageProps) {
   const [tab, setTab] = useState<AdminTab>("knowledge");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   return (
     <div className="admin-console">
+      {/* Mobile overlay backdrop */}
+      {mobileSidebarOpen && (
+        <div className="admin-mobile-overlay" onClick={() => setMobileSidebarOpen(false)} />
+      )}
+
       {/* ── Admin Sidebar Navigation ── */}
-      <aside className={`admin-sidebar ${sidebarCollapsed ? "admin-sidebar-collapsed" : ""}`}>
+      <aside className={`admin-sidebar ${sidebarCollapsed ? "admin-sidebar-collapsed" : ""} ${mobileSidebarOpen ? "admin-sidebar-mobile-open" : ""}`}>
         <div className="admin-sidebar-header">
           <div className="admin-sidebar-brand">
             <span className="admin-sidebar-icon">⚙️</span>
@@ -274,6 +280,13 @@ export default function AdminPage({ config, onSaved }: AdminPageProps) {
             title={sidebarCollapsed ? "Expand" : "Collapse"}
           >
             {sidebarCollapsed ? "»" : "«"}
+          </button>
+          <button
+            className="admin-sidebar-mobile-close"
+            onClick={() => setMobileSidebarOpen(false)}
+            aria-label="Close admin menu"
+          >
+            ✕
           </button>
         </div>
 
@@ -306,6 +319,18 @@ export default function AdminPage({ config, onSaved }: AdminPageProps) {
 
       {/* ── Content Area ── */}
       <div className="admin-main">
+        {/* Mobile nav toggle bar — only visible on small screens */}
+        <div className="admin-mobile-nav-bar">
+          <button
+            className="admin-mobile-nav-btn"
+            onClick={() => setMobileSidebarOpen(true)}
+            aria-label="Open admin menu"
+          >
+            <span /><span /><span />
+          </button>
+          <span className="admin-mobile-nav-title">{TAB_TITLES[tab] ?? tab}</span>
+        </div>
+
         {/* Content Header */}
         <div className="admin-content-header">
           <div className="admin-content-header-text">

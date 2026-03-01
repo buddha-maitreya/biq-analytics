@@ -389,6 +389,11 @@ export function useChatStream() {
   const hasConnectedRef = useRef(false);
   /** Consecutive auth failures — stop reconnecting if auth is truly expired */
   const authFailCountRef = useRef(0);
+  /** Always-current session ID — prevents stale closure in sendMessage */
+  const activeSessionIdRef = useRef<string | null>(null);
+  activeSessionIdRef.current = state.activeSessionId;
+  /** Mirrors state.isConnected so sendMessage can gate POSTs on SSE readiness */
+  const sseReadyRef = useRef(false);
 
   // ── SSE connection lifecycle ───────────────────────────
   // 1. Pre-flight auth check (prevents reconnect loop on 401)
@@ -556,6 +561,11 @@ export function useChatStream() {
     };
   }, [state.activeSessionId]);
 
+  // Keep sseReadyRef in sync with connection state
+  useEffect(() => {
+    sseReadyRef.current = state.isConnected;
+  }, [state.isConnected]);
+
   // ── Session management ─────────────────────────────────
 
   const loadSessions = useCallback(async () => {
@@ -576,7 +586,6 @@ export function useChatStream() {
 
   const createSession = useCallback(async (): Promise<string | null> => {
     try {
-      console.log("[Chat] createSession — POST /api/chat/sessions");
       const res = await fetch("/api/chat/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
@@ -584,16 +593,19 @@ export function useChatStream() {
       });
       if (res.ok) {
         const { data } = await res.json();
-        console.log("[Chat] createSession OK", { sessionId: data.id });
         dispatch({ type: "ADD_SESSION", session: data });
         dispatch({ type: "SET_ACTIVE_SESSION", sessionId: data.id });
         return data.id;
       } else {
-        const text = await res.text().catch(() => "");
-        console.error("[Chat] createSession failed", { status: res.status, statusText: res.statusText, body: text.slice(0, 300) });
+        if (process.env.NODE_ENV !== "production") {
+          const text = await res.text().catch(() => "");
+          console.error("[Chat] createSession failed", { status: res.status, body: text.slice(0, 300) });
+        }
       }
     } catch (err: any) {
-      console.error("[Chat] createSession network error", { error: err?.message, stack: err?.stack });
+      if (process.env.NODE_ENV !== "production") {
+        console.error("[Chat] createSession network error", { error: err?.message });
+      }
     }
     return null;
   }, []);
@@ -622,7 +634,8 @@ export function useChatStream() {
 
   const sendMessage = useCallback(
     async (message: string, attachmentIds?: string[]) => {
-      let sessionId = state.activeSessionId;
+      // Read via ref — no stale closure risk on session ID
+      let sessionId = activeSessionIdRef.current;
 
       // Auto-create session if none active
       if (!sessionId) {
@@ -635,6 +648,18 @@ export function useChatStream() {
           return;
         }
         sessionId = newId;
+        // createSession() dispatches SET_ACTIVE_SESSION which schedules the
+        // SSE useEffect. Wait for EventSource to open before POSTing so that
+        // server broadcast() calls land on a registered stream (not an empty set).
+        // Without this gate, the first message is silently dropped.
+        await new Promise<void>((resolve) => {
+          const deadline = Date.now() + 8_000;
+          const check = () => {
+            if (sseReadyRef.current || Date.now() > deadline) resolve();
+            else setTimeout(check, 50);
+          };
+          check();
+        });
       }
 
       // Track for retry
@@ -674,7 +699,7 @@ export function useChatStream() {
         });
       }
     },
-    [state.activeSessionId, createSession]
+    [createSession]  // activeSessionId read via ref — not a dep
   );
 
   // ── Retry last message ─────────────────────────────────
@@ -709,13 +734,13 @@ export function useChatStream() {
   // ── Cancel generation ──────────────────────────────────
 
   const cancelStream = useCallback(async () => {
-    const sessionId = state.activeSessionId;
+    const sessionId = activeSessionIdRef.current;
     if (!sessionId) return;
 
     // Reset client state immediately for responsive UX
     dispatch({ type: "SESSION_STATUS", status: "idle" });
 
-    // Tell the backend to abort the in-flight AI generation 
+    // Tell the backend to abort the in-flight AI generation
     try {
       await fetch(`/api/chat/sessions/${sessionId}/cancel`, {
         method: "POST",
@@ -724,7 +749,7 @@ export function useChatStream() {
     } catch {
       // Best-effort — client state is already reset
     }
-  }, [state.activeSessionId]);
+  }, []);
 
   // ── Derived helpers (memoized, like Coder) ─────────────
 

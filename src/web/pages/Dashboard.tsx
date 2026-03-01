@@ -8,7 +8,7 @@ interface DashboardProps {
 
 /* ── Tiny SVG Chart Components (no external deps) ── */
 
-function BarChart({ data, labelKey, valueKey, color = "#3b82f6", height = 160 }: {
+const BarChart = React.memo(function BarChart({ data, labelKey, valueKey, color = "#3b82f6", height = 160 }: {
   data: any[]; labelKey: string; valueKey: string; color?: string; height?: number;
 }) {
   if (!data.length) return <div className="chart-empty">No data</div>;
@@ -39,9 +39,9 @@ function BarChart({ data, labelKey, valueKey, color = "#3b82f6", height = 160 }:
       </svg>
     </div>
   );
-}
+});
 
-function LineChart({ data, xKey, yKey, color = "#3b82f6", height = 160, xLabel = "", yLabel = "" }: {
+const LineChart = React.memo(function LineChart({ data, xKey, yKey, color = "#3b82f6", height = 160, xLabel = "", yLabel = "" }: {
   data: any[]; xKey: string; yKey: string; color?: string; height?: number; xLabel?: string; yLabel?: string;
 }) {
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -49,12 +49,18 @@ function LineChart({ data, xKey, yKey, color = "#3b82f6", height = 160, xLabel =
   React.useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const ro = new ResizeObserver((entries) => {
-      for (const e of entries) setContainerW(e.contentRect.width);
+      // Debounce width updates — only fire if width actually changed by >5px
+      const newW = entries[0]?.contentRect.width ?? 0;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        setContainerW((prev) => Math.abs(newW - prev) > 5 ? newW : prev);
+      }, 100);
     });
     ro.observe(el);
     setContainerW(el.clientWidth);
-    return () => ro.disconnect();
+    return () => { ro.disconnect(); if (timer) clearTimeout(timer); };
   }, []);
   if (!data.length) return <div ref={containerRef} className="chart-empty">No data</div>;
   const max = Math.max(...data.map((d) => Number(d[yKey]) || 0), 1);
@@ -122,9 +128,9 @@ function LineChart({ data, xKey, yKey, color = "#3b82f6", height = 160, xLabel =
       </svg>
     </div>
   );
-}
+});
 
-function PieChart({ data, labelKey, valueKey, size = 150 }: {
+const PieChart = React.memo(function PieChart({ data, labelKey, valueKey, size = 150 }: {
   data: any[]; labelKey: string; valueKey: string; size?: number;
 }) {
   if (!data.length) return <div className="chart-empty">No data</div>;
@@ -170,7 +176,7 @@ function PieChart({ data, labelKey, valueKey, size = 150 }: {
       </div>
     </div>
   );
-}
+});
 
 /* ── Dashboard Component ── */
 

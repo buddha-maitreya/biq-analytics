@@ -19,9 +19,15 @@ import type { Context, Next } from "hono";
 // ── Config ───────────────────────────────────────────────────
 const JWT_EXPIRY_HOURS = parseInt(process.env.JWT_EXPIRY_HOURS ?? "24", 10);
 
-function getJwtSecret(): Uint8Array {
+// Encode secret once at module load — avoids repeated Uint8Array allocation
+// on every signToken() / verifyToken() call (hot login path).
+const _jwtSecret: Uint8Array = (() => {
   const secret = process.env.JWT_SECRET ?? process.env.AGENTUITY_SDK_KEY ?? "business-iq-dev-secret-change-me";
   return new TextEncoder().encode(secret);
+})();
+
+function getJwtSecret(): Uint8Array {
+  return _jwtSecret;
 }
 
 // ── JWT Token Payload ────────────────────────────────────────
@@ -95,9 +101,18 @@ export async function login(email: string, password: string): Promise<LoginResul
     return { success: false, error: "Email and password are required" };
   }
 
-  // Find user by email
+  // Find user by email — project only the columns needed for login
+  // (avoids fetching heavy JSONB metadata columns on every login)
   const [user] = await db
-    .select()
+    .select({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      role: users.role,
+      hashedPassword: users.hashedPassword,
+      isActive: users.isActive,
+      permissions: users.permissions,
+    })
     .from(users)
     .where(eq(users.email, email.toLowerCase().trim()))
     .limit(1);

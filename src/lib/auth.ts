@@ -24,6 +24,7 @@ import {
   createApiKeyMiddleware,
   mountAuthRoutes,
 } from "@agentuity/auth";
+import { getUserFromToken as legacyGetUserFromToken } from "@services/auth";
 import type {
   AuthUser,
   AuthSession,
@@ -152,7 +153,16 @@ async function enrichUserFromLegacyTable(
 
   try {
     const [row] = await db
-      .select()
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        role: users.role,
+        isActive: users.isActive,
+        permissions: users.permissions,
+        primaryWarehouseId: users.primaryWarehouseId,
+        assignedWarehouses: users.assignedWarehouses,
+      })
       .from(users)
       .where(eq(users.email, email.toLowerCase().trim()))
       .limit(1);
@@ -185,8 +195,6 @@ async function enrichUserFromLegacyTable(
  */
 async function tryLegacyJwt(c: Context): Promise<AppUser | null> {
   try {
-    const { getUserFromToken } = await import("@services/auth");
-
     let token: string | undefined;
     const authHeader = c.req.header("Authorization");
     if (authHeader?.startsWith("Bearer ")) {
@@ -201,7 +209,7 @@ async function tryLegacyJwt(c: Context): Promise<AppUser | null> {
     }
     if (!token) return null;
 
-    const legacyUser = await getUserFromToken(token);
+    const legacyUser = await legacyGetUserFromToken(token);
     if (!legacyUser) return null;
 
     return {

@@ -763,6 +763,48 @@ export function createExportReportTool(
           reportContent = cleanContent;
           allChartSpecs = charts;
           logger?.info("[export_report:2] Report fetched", { contentLen: reportContent.length, chartSpecsCount: allChartSpecs.length });
+
+          // ── Fallback: extract charts via a dedicated LLM call ──────────────
+          // The report-generator LLM reliably ignores chart embedding instructions
+          // regardless of prompt strength. This second focused call does only ONE
+          // job — produce chart JSON from the data already in the report — making
+          // it far more reliable than asking the writer to do both tasks at once.
+          if (allChartSpecs.length === 0 && reportContent.length > 200) {
+            logger?.info("[export_report:2b] No chart blocks embedded — extracting via dedicated LLM call");
+            try {
+              const { text: chartJson } = await generateText({
+                model: await getModel("gpt-4o-mini"), // Fast model — purely structured JSON task, no reasoning needed
+                temperature: 0.1,
+                system: `You are a data visualization specialist. Your only job is to extract chart specifications from a business report.
+
+Output ONLY a valid JSON array — no markdown fences, no explanation, just raw JSON.
+
+Each chart must use this exact schema:
+{"type":"bar","title":"string","data":[{"label":"string","value":123}],"xField":"label","yField":"value","xLabel":"string","yLabel":"string"}
+
+Supported types: bar, line, area, pie, donut
+Rules:
+- Use ONLY real numbers that appear verbatim in the report
+- Pick the 3 most meaningful metrics to visualise
+- bar/line: comparisons and trends — use the field names that match the data
+- pie/donut: proportional/percentage breakdowns
+- Every "data" entry must have consistent key names matching xField and yField`,
+                prompt: `Extract 3 chart specifications from this business report. Return ONLY the JSON array:\n\n${reportContent.slice(0, 8000)}`,
+              });
+              const trimmed = chartJson.trim()
+                .replace(/^```json\s*/i, "")
+                .replace(/^```\s*/i, "")
+                .replace(/```\s*$/i, "")
+                .trim();
+              const parsed = JSON.parse(trimmed);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                allChartSpecs = parsed as import("@lib/charts").ChartSpec[];
+                logger?.info("[export_report:2b] Chart specs extracted", { chartCount: allChartSpecs.length });
+              }
+            } catch (err) {
+              logger?.warn("[export_report:2b] Chart extraction failed (non-critical)", { error: String(err) });
+            }
+          }
         } catch (err) {
           logger?.error("[export_report] Report generation failed", { error: String(err) });
           return agentError("Report Generator", err);

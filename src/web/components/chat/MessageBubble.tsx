@@ -485,10 +485,17 @@ function renderInline(text: string): React.ReactNode {
           </a>
         );
       } else {
+        // Strip the `sandbox:` prefix that the Agentuity platform adds to
+        // relative API URLs (e.g. sandbox:/api/reports/download-temp/…).
+        // After stripping, the URL is a valid same-origin relative path that
+        // the browser can navigate to normally.
+        const cleanHref = href.startsWith("sandbox:")
+          ? href.slice("sandbox:".length)
+          : href;
         parts.push(
           <a
             key={key++}
-            href={href}
+            href={cleanHref}
             target="_blank"
             rel="noopener noreferrer"
           >

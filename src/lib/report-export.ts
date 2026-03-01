@@ -252,6 +252,36 @@ function stripMd(text: string): string {
 }
 
 /**
+ * Sanitize a string for WinAnsiEncoding compatibility.
+ *
+ * pdf-lib standard fonts (Helvetica, Times-Roman, Courier) use WinAnsiEncoding
+ * which only covers code points 0x20–0xFF. Control characters and most Unicode
+ * symbols outside that range throw "WinAnsi cannot encode 'X'" at render time.
+ *
+ * This replaces common typographic Unicode characters with ASCII equivalents
+ * and strips any remaining non-encodable characters.
+ */
+function sanitizePdfText(text: string): string {
+  return text
+    // Common typographic substitutions → ASCII equivalents
+    .replace(/[\u2014\u2013]/g, "-")       // em-dash, en-dash → hyphen
+    .replace(/[\u2018\u2019]/g, "'")       // curly single quotes → straight
+    .replace(/[\u201C\u201D]/g, '"')       // curly double quotes → straight
+    .replace(/\u2026/g, "...")             // ellipsis → three dots
+    .replace(/\u00A0/g, " ")              // non-breaking space → space
+    .replace(/\u2022/g, "*")             // bullet → asterisk
+    .replace(/\u2019/g, "'")             // right single quotation mark
+    .replace(/\u20AC/g, "EUR")           // euro sign
+    .replace(/\u00B7/g, "*")             // middle dot
+    .replace(/\u2012/g, "-")             // figure dash
+    .replace(/\u2015/g, "-")             // horizontal bar
+    // Strip ASCII control characters (keep \t=0x09, \n=0x0A, \r=0x0D)
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+    // Replace any remaining non-WinAnsi characters with '?'
+    .replace(/[^\x09\x0A\x0D\x20-\xFF]/g, "?");
+}
+
+/**
  * Strip LLM-generated metadata lines from markdown content.
  * The PDF template renders its own title page with title, date, company name,
  * so we remove the LLM's duplicate metadata to avoid it appearing on content pages.
@@ -699,6 +729,22 @@ async function fetchLogoImage(
 }
 
 async function exportPdf(input: ExportInput, branding: Branding, charts: RenderedChart[] = [], reportCfg?: ReportSettings): Promise<Buffer> {
+  // Sanitize all string inputs for WinAnsiEncoding — pdf-lib standard fonts
+  // only support code points 0x20–0xFF; control characters and most Unicode
+  // symbols outside that range throw "WinAnsi cannot encode" at render time.
+  input = {
+    ...input,
+    content: sanitizePdfText(input.content),
+    title: sanitizePdfText(input.title),
+    subtitle: input.subtitle ? sanitizePdfText(input.subtitle) : undefined,
+    preparedBy: input.preparedBy ? sanitizePdfText(input.preparedBy) : undefined,
+  };
+  branding = {
+    ...branding,
+    companyName: sanitizePdfText(branding.companyName),
+    tagline: sanitizePdfText(branding.tagline),
+  };
+
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const boldFont = await doc.embedFont(StandardFonts.HelveticaBold);

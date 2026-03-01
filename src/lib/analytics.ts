@@ -351,12 +351,25 @@ export async function runAnalytics(
     let parsed: Record<string, unknown>;
     try {
       // main.py outputs a single JSON line to stdout.
-      // Filter empty lines and grab the last real line.
+      // Scan backward for the last line that looks like JSON.
+      //
+      // IMPORTANT: The Agentuity sandbox prepends a nanosecond ISO timestamp
+      // to every stdout line, e.g. "2026-03-01T14:58:14.686553200Z {...}".
+      // Strip that prefix before checking/parsing.
+      const sandboxTsPrefix = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s*/;
       const lines = stdout.split("\n").filter((l) => l.trim());
-      const lastLine = lines[lines.length - 1] ?? "";
+      let rawJson = "";
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const stripped = lines[i].trim().replace(sandboxTsPrefix, "");
+        if (stripped.startsWith("{") || stripped.startsWith("[")) {
+          rawJson = stripped;
+          break;
+        }
+      }
+      if (!rawJson) throw new Error("no JSON line found");
       // Python json.dumps outputs bare NaN / Infinity tokens that are
       // invalid JSON in JavaScript. Sanitize them to null before parsing.
-      const sanitized = lastLine
+      const sanitized = rawJson
         .replace(/\bNaN\b/g, "null")
         .replace(/\b-?Infinity\b/g, "null");
       parsed = JSON.parse(sanitized);

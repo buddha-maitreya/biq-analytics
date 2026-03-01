@@ -7,8 +7,16 @@ and consistent chart output format.
 
 import io
 import base64
+import warnings
+import logging
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for server-side rendering
+# Suppress font-not-found warnings before any pyplot import.
+# The snapshot uses system fonts (DejaVu Sans etc); 'Inter' won't be found
+# and matplotlib emits noisy warnings that pollute stdout and confuse the
+# JSON parser in the TypeScript layer.
+warnings.filterwarnings('ignore', message='.*findfont.*')
+logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 
@@ -43,8 +51,10 @@ def apply_style(chart_config: dict) -> dict:
         'ytick.color': colors['text'],
     })
     
-    # Font family
-    font = chart_config.get('fontFamily', 'Inter')
+    # Font family — default to 'sans-serif' (always available in the snapshot).
+    # If chart_config specifies a custom font like 'Inter' that isn't installed,
+    # matplotlib falls back gracefully; the warning is already suppressed above.
+    font = chart_config.get('fontFamily', 'sans-serif')
     try:
         plt.rcParams['font.family'] = font
     except Exception:

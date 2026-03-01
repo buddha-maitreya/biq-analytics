@@ -136,13 +136,19 @@ export async function renderChartsViaPython(
     // Parse stdout — scan backward for last line that is valid JSON.
     // Python may print warnings or debug text after the JSON output, so
     // taking only the last line fails when non-JSON text follows the payload.
+    //
+    // IMPORTANT: The Agentuity sandbox prepends a nanosecond ISO timestamp to
+    // every line of stdout, e.g.:
+    //   "2026-03-01T14:58:14.686553200Z {"charts": [...]}"
+    // Strip that prefix before checking whether a line starts with { or [.
     const stdout = (result.stdout || "").trim();
     if (!stdout) return [];
 
+    const sandboxTsPrefix = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s*/;
     const lines = stdout.split("\n");
     let parsed: any = null;
     for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i].trim();
+      const line = lines[i].trim().replace(sandboxTsPrefix, "");
       if (line.startsWith("{") || line.startsWith("[")) {
         try { parsed = JSON.parse(line); break; } catch { /* try previous line */ }
       }

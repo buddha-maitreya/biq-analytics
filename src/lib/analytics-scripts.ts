@@ -197,7 +197,14 @@ def main():
             print(json.dumps({"error": f"Unknown action: {action}"}))
             sys.exit(1)
 
-        result = run(data, params, chart_config)
+        # Capture any stray stdout from module execution (Prophet/cmdstanpy
+        # convergence messages, matplotlib font cache warnings, etc.) so ONLY
+        # our json.dumps goes to real stdout.
+        import io as _io
+        import contextlib as _ctx
+        _capture = _io.StringIO()
+        with _ctx.redirect_stdout(_capture):
+            result = run(data, params, chart_config)
 
         # Sanitize NaN/Infinity → None before JSON serialization.
         # Python json.dumps outputs bare NaN/Infinity by default which
@@ -2329,6 +2336,11 @@ import pandas as pd
 import numpy as np
 import json
 import sys
+
+# Suppress noisy cmdstanpy / Prophet logging (convergence messages, etc.)
+import logging as _logging
+_logging.getLogger('cmdstanpy').disabled = True
+_logging.getLogger('prophet').setLevel(_logging.WARNING)
 
 # Prophet may not be installed — graceful fallback
 try:

@@ -353,23 +353,29 @@ export async function runAnalytics(
 
     let parsed: Record<string, unknown>;
     try {
-      // main.py outputs a single JSON line to stdout.
-      // Scan backward for the last line that looks like JSON.
+      // main.py outputs JSON to stdout. The Agentuity sandbox prepends a
+      // nanosecond ISO timestamp to every stdout line, e.g.
+      // "2026-03-01T14:58:14.686553200Z {...}".
       //
-      // IMPORTANT: The Agentuity sandbox prepends a nanosecond ISO timestamp
-      // to every stdout line, e.g. "2026-03-01T14:58:14.686553200Z {...}".
-      // Strip that prefix before checking/parsing.
+      // CRITICAL: If the JSON is very large (base64 chart images can be
+      // 100KB+), the sandbox may split it across multiple stdout lines,
+      // each prefixed with a timestamp. The old single-line approach would
+      // only grab one fragment → invalid JSON → parse failure.
+      //
+      // Fix: strip timestamps from ALL lines, join into one string, then
+      // extract the outermost JSON object boundaries.
       const sandboxTsPrefix = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s*/;
       const lines = stdout.split("\n").filter((l) => l.trim());
-      let rawJson = "";
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const stripped = lines[i].trim().replace(sandboxTsPrefix, "");
-        if (stripped.startsWith("{") || stripped.startsWith("[")) {
-          rawJson = stripped;
-          break;
-        }
-      }
-      if (!rawJson) throw new Error("no JSON line found");
+      const joined = lines
+        .map((l) => l.trim().replace(sandboxTsPrefix, ""))
+        .join("");
+
+      // Find outermost JSON object boundaries
+      const firstBrace = joined.indexOf("{");
+      const lastBrace = joined.lastIndexOf("}");
+      if (firstBrace === -1 || lastBrace <= firstBrace)
+        throw new Error("no JSON object found in output");
+      const rawJson = joined.slice(firstBrace, lastBrace + 1);
       // Python json.dumps outputs bare NaN / Infinity tokens that are
       // invalid JSON in JavaScript. Sanitize them to null before parsing.
       const sanitized = rawJson

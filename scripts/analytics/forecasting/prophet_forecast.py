@@ -20,6 +20,11 @@ import numpy as np
 import json
 import sys
 
+# Suppress noisy cmdstanpy / Prophet logging (convergence messages, etc.)
+import logging as _logging
+_logging.getLogger('cmdstanpy').disabled = True
+_logging.getLogger('prophet').setLevel(_logging.WARNING)
+
 # Prophet may not be installed — graceful fallback
 try:
     from prophet import Prophet

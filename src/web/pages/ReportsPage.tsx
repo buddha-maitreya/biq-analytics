@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useAPI } from "@agentuity/react";
 import PredictiveAnalytics from "../components/PredictiveAnalytics";
 import type { AppConfig } from "../types";
-import { renderMarkdown } from "@web/lib/markdown";
+import { renderMarkdown } from "../lib/markdown";
 
 interface ReportsPageProps {
   config: AppConfig;

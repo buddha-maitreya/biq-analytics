@@ -11,7 +11,7 @@
 
 import React, { useState } from "react";
 import type { ToolCall } from "../../hooks/useChatStream";
-import { renderMarkdown } from "@web/lib/markdown";
+import { renderMarkdown } from "../../lib/markdown";
 
 interface ToolCallCardProps {
   toolCall: ToolCall;

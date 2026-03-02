@@ -27,6 +27,7 @@ import {
   warehouses,
   documentIngestions,
   documentIngestionItems,
+  sales,
 } from "@db/index";
 import { eq, and, or, ilike, sql } from "drizzle-orm";
 import { submitForApproval } from "./approvals";
@@ -35,17 +36,32 @@ import { z } from "zod";
 
 // ─── Types ────────────────────────────────────────────────────
 
-/** Scanner output for a single line item (invoice or stock sheet) */
+/** Scanner output for a single line item (invoice, stock sheet, or sales record).
+ *  Small-business documents often contain mixed data — a single sheet can have
+ *  stock counts, sales figures, and pricing all together.
+ */
 export interface ScannedLineItem {
   name?: string | null;
   sku?: string | null;
   barcode?: string | null;
-  quantity?: number | null;
+  // ── Inventory fields ──────────────────────────────────────
+  quantity?: number | null;          // General quantity (stock count or invoice qty)
+  stockCount?: number | null;        // Explicit on-hand / closing stock count
+  openingStock?: number | null;      // Opening balance (period start)
+  closingStock?: number | null;      // Closing balance (period end)
   unit?: string | null;
-  unitPrice?: number | null;
-  totalPrice?: number | null;
-  description?: string | null;
   location?: string | null;
+  // ── Sales fields ──────────────────────────────────────────
+  quantitySold?: number | null;      // Units sold in this period
+  unitPrice?: number | null;         // Selling price per unit
+  totalSales?: number | null;        // Total revenue from this line
+  totalPrice?: number | null;        // Alias used by invoice items
+  costPrice?: number | null;         // Purchase / cost price
+  paymentMethod?: string | null;     // cash / card / mpesa / etc.
+  customerName?: string | null;      // Customer name if visible
+  soldBy?: string | null;            // Salesperson / cashier name
+  // ── Common ────────────────────────────────────────────────
+  description?: string | null;
   notes?: string | null;
   [key: string]: unknown;
 }
@@ -69,13 +85,15 @@ export interface ScannedInvoice {
   warnings?: string[];
 }
 
-/** Scanner output for a stock sheet */
+/** Scanner output for a stock sheet (may also contain sales/product data) */
 export interface ScannedStockSheet {
   items?: ScannedLineItem[];
   documentDate?: string | null;
   totalItems?: number | null;
   confidence?: number | null;
   warnings?: string[];
+  /** Detected document type from the smart scanner */
+  documentType?: "inventory_only" | "sales_only" | "product_catalog" | "mixed_inventory_sales" | "unknown" | null;
 }
 
 /** Scanner output for a barcode scan */
@@ -94,7 +112,7 @@ export interface DedupMatch {
   matchConfidence: number; // 0-1
   matchedProductId: string | null;
   matchedProductName: string | null;
-  suggestedAction: "update_inventory" | "update_price" | "create_product" | "needs_review";
+  suggestedAction: "update_inventory" | "update_price" | "create_product" | "create_sale" | "needs_review";
 }
 
 /** Full ingestion result returned to the scanner tool */
@@ -170,8 +188,33 @@ const FUZZY_MATCH_THRESHOLD = 0.75;
 /**
  * Run the multi-layer dedup cascade for a single line item.
  * Checks SKU → barcode → name fuzzy match against existing products.
+ *
+ * Small-business documents can contain BOTH inventory counts and sales data.
+ * Items with quantitySold + unitPrice → suggest create_sale.
+ * Items with stockCount / quantity (no sales data) → suggest update_inventory.
+ * Items with price only (no quantities) → suggest update_price or create_product.
  */
 async function dedupLineItem(item: ScannedLineItem): Promise<DedupMatch> {
+  // Determine item purpose from which fields are populated
+  const hasSalesData = (item.quantitySold ?? 0) > 0 && item.unitPrice != null;
+  const hasInventoryData = (item.stockCount ?? item.quantity ?? 0) > 0 && !hasSalesData;
+  const hasPriceOnly = item.unitPrice != null && !hasSalesData && !hasInventoryData;
+
+  // Helper: resolve action for a matched product based on item purpose
+  function resolveMatchedAction(similarity?: number): DedupMatch["suggestedAction"] {
+    if (hasSalesData) return "create_sale";
+    if (hasPriceOnly) return "update_price";
+    // inventory items: high-confidence matches auto-update, low-confidence need review
+    if (similarity !== undefined && similarity < 0.9) return "needs_review";
+    return "update_inventory";
+  }
+
+  // Helper: resolve action when no product match found
+  function resolveNoMatchAction(): DedupMatch["suggestedAction"] {
+    if (hasSalesData) return "create_sale"; // Record sale even without catalog match
+    return "create_product";
+  }
+
   // Layer 3: SKU exact match
   if (item.sku) {
     const bySkuRows = await db
@@ -186,7 +229,7 @@ async function dedupLineItem(item: ScannedLineItem): Promise<DedupMatch> {
         matchConfidence: 1.0,
         matchedProductId: bySkuRows[0].id,
         matchedProductName: bySkuRows[0].name,
-        suggestedAction: "update_inventory",
+        suggestedAction: resolveMatchedAction(),
       };
     }
   }
@@ -205,14 +248,13 @@ async function dedupLineItem(item: ScannedLineItem): Promise<DedupMatch> {
         matchConfidence: 1.0,
         matchedProductId: byBarcodeRows[0].id,
         matchedProductName: byBarcodeRows[0].name,
-        suggestedAction: "update_inventory",
+        suggestedAction: resolveMatchedAction(),
       };
     }
   }
 
   // Layer 5: Name fuzzy match
   if (item.name) {
-    // Fetch candidate products with a loose ILIKE filter first to limit the set
     const firstWord = item.name.split(/\s+/)[0];
     const candidates = firstWord && firstWord.length >= 2
       ? await db
@@ -244,19 +286,18 @@ async function dedupLineItem(item: ScannedLineItem): Promise<DedupMatch> {
         matchConfidence: Math.round(bestMatch.similarity * 100) / 100,
         matchedProductId: bestMatch.id,
         matchedProductName: bestMatch.name,
-        // Fuzzy matches below 0.9 need human review
-        suggestedAction: bestMatch.similarity >= 0.9 ? "update_inventory" : "needs_review",
+        suggestedAction: resolveMatchedAction(bestMatch.similarity),
       };
     }
   }
 
-  // No match found
+  // No product match found
   return {
     matchType: "none",
     matchConfidence: 0,
     matchedProductId: null,
     matchedProductName: null,
-    suggestedAction: "create_product",
+    suggestedAction: resolveNoMatchAction(),
   };
 }
 
@@ -444,22 +485,38 @@ export async function stageStockSheetIngestion(input: {
       })
       .returning();
 
-    const itemValues = dedupResults.map(({ item, match, lineNumber }) => ({
-      ingestionId: ingestion.id,
-      lineNumber,
-      rawName: item.name ?? null,
-      rawSku: item.sku ?? null,
-      rawBarcode: item.barcode ?? null,
-      quantity: item.quantity ?? null,
-      unit: item.unit ?? null,
-      unitPrice: item.unitPrice != null ? String(item.unitPrice) : null,
-      totalPrice: item.totalPrice != null ? String(item.totalPrice) : null,
-      action: match.suggestedAction,
-      matchType: match.matchType,
-      matchConfidence: match.matchConfidence != null ? String(match.matchConfidence) : null,
-      matchedProductId: match.matchedProductId ?? null,
-      rawData: item as Record<string, unknown>,
-    }));
+    const itemValues = dedupResults.map(({ item, match, lineNumber }) => {
+      // For sales items, store the sold quantity; for inventory items, store the stock count.
+      // Priority: stockCount > closingStock > quantitySold > quantity (generic).
+      const isSaleItem = match.suggestedAction === "create_sale";
+      const effectiveQty = isSaleItem
+        ? (item.quantitySold ?? item.quantity ?? null)
+        : (item.stockCount ?? item.closingStock ?? item.quantity ?? null);
+      // For sales items, unitPrice is the selling price; for inventory, costPrice if present.
+      const effectiveUnitPrice = isSaleItem
+        ? (item.unitPrice ?? item.costPrice ?? null)
+        : (item.costPrice ?? item.unitPrice ?? null);
+      const effectiveTotalPrice = isSaleItem
+        ? (item.totalSales ?? item.totalPrice ?? null)
+        : (item.totalPrice ?? null);
+
+      return {
+        ingestionId: ingestion.id,
+        lineNumber,
+        rawName: item.name ?? null,
+        rawSku: item.sku ?? null,
+        rawBarcode: item.barcode ?? null,
+        quantity: effectiveQty,
+        unit: item.unit ?? null,
+        unitPrice: effectiveUnitPrice != null ? String(effectiveUnitPrice) : null,
+        totalPrice: effectiveTotalPrice != null ? String(effectiveTotalPrice) : null,
+        action: match.suggestedAction,
+        matchType: match.matchType,
+        matchConfidence: match.matchConfidence != null ? String(match.matchConfidence) : null,
+        matchedProductId: match.matchedProductId ?? null,
+        rawData: item as Record<string, unknown>, // Full item stored for create_sale commit
+      };
+    });
 
     let items: typeof itemValues = [];
     if (itemValues.length > 0) {
@@ -562,7 +619,7 @@ export async function stageBarcodeIngestion(input: {
 
 /**
  * Commit an approved ingestion — write records to the target tables.
- * Only processes items with action = update_inventory or create_product.
+ * Handles: update_inventory, update_price, create_product, create_sale.
  * Items marked "skip" or "needs_review" are left alone.
  */
 export async function commitIngestion(
@@ -714,6 +771,80 @@ export async function commitIngestion(
                 referenceType: "document_ingestion",
                 referenceId: ingestionId,
                 notes: `New product from scanned ${ingestion.mode}: ${newName}`,
+                performedBy: reviewerId,
+              });
+            }
+
+            committed++;
+            break;
+          }
+
+          case "create_sale": {
+            // Record a sale from scanned sales data (daily sales sheet, POS record, etc.)
+            // rawData holds all original fields including paymentMethod, customerName, soldBy.
+            const rawData = (item.rawData ?? {}) as Record<string, unknown>;
+            const qty = item.quantity ?? 1;
+            const unitPrice = item.unitPrice ? Number(item.unitPrice) : null;
+            const totalAmount = item.totalPrice
+              ? Number(item.totalPrice)
+              : (unitPrice != null ? qty * unitPrice : null);
+
+            if (!unitPrice || !totalAmount) {
+              errors.push(`Line ${item.lineNumber}: Cannot record sale — missing unit price or total amount`);
+              skipped++;
+              continue;
+            }
+
+            const productName = item.rawName ?? "Unknown Product";
+            const sku = item.rawSku ?? `SCAN-SALE-${Date.now()}-${item.lineNumber}`;
+            const saleNumber = `SCN-${Date.now().toString(36).toUpperCase()}-${item.lineNumber}`;
+
+            // Get warehouse name for denormalization
+            let warehouseName: string | undefined;
+            if (warehouseId) {
+              const wh = await tx.query.warehouses.findFirst({
+                where: eq(warehouses.id, warehouseId),
+                columns: { name: true },
+              });
+              warehouseName = wh?.name ?? undefined;
+            }
+
+            await tx.insert(sales).values({
+              saleNumber,
+              productId: productId ?? null,
+              sku,
+              productName,
+              warehouseId: warehouseId ?? null,
+              warehouseName: warehouseName ?? null,
+              quantity: qty,
+              unitPrice: String(unitPrice),
+              totalAmount: String(totalAmount),
+              paymentMethod: (rawData.paymentMethod as string) ?? null,
+              customerName: (rawData.customerName as string) ?? null,
+              soldBy: (rawData.soldBy as string) ?? null,
+            });
+
+            // Deduct from inventory if product is matched and warehouse known
+            if (productId && warehouseId && qty > 0) {
+              const existing = await tx.query.inventory.findFirst({
+                where: and(
+                  eq(inventory.productId, productId),
+                  eq(inventory.warehouseId, warehouseId)
+                ),
+              });
+              if (existing && existing.quantity >= qty) {
+                await tx.update(inventory)
+                  .set({ quantity: existing.quantity - qty })
+                  .where(eq(inventory.id, existing.id));
+              }
+              await tx.insert(inventoryTransactions).values({
+                productId,
+                warehouseId,
+                type: "sale",
+                quantity: -qty,
+                referenceType: "document_ingestion",
+                referenceId: ingestionId,
+                notes: `From scanned sales record: ${productName}`,
                 performedBy: reviewerId,
               });
             }

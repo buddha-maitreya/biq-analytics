@@ -79,30 +79,44 @@ export interface StkQueryResult {
 // Config Loaders — read from business_settings
 // ═══════════════════════════════════════════════════════════════
 
+/**
+ * Config loaders — secret precedence:
+ *   1. Agentuity environment variable (set per-client via `agentuity cloud env set`)
+ *   2. DB business_settings fallback (for UI-managed non-sensitive config)
+ *
+ * Secrets (keys, secrets, passkeys) MUST come from env vars in production.
+ * Non-sensitive config (currency, payment type, display names) can use DB.
+ * This supports the single-tenant deployment model: one Agentuity project per client.
+ */
+
 export async function getPaystackConfig(): Promise<PaystackConfig> {
   const s = await settingsSvc.getAllSettings();
   return {
-    enabled: s.paystackEnabled === "true",
-    publicKey: s.paystackPublicKey ?? "",
-    secretKey: s.paystackSecretKey ?? "",
-    currency: s.paystackCurrency ?? "KES",
+    // Sensitive: env var takes precedence — never shipped in code
+    enabled: process.env.PAYSTACK_ENABLED === "true" || s.paystackEnabled === "true",
+    publicKey: process.env.PAYSTACK_PUBLIC_KEY ?? s.paystackPublicKey ?? "",
+    secretKey: process.env.PAYSTACK_SECRET_KEY ?? s.paystackSecretKey ?? "",
+    // Non-sensitive: DB / env both fine
+    currency: process.env.PAYSTACK_CURRENCY ?? s.paystackCurrency ?? "KES",
   };
 }
 
 export async function getMpesaConfig(): Promise<MpesaConfig> {
   const s = await settingsSvc.getAllSettings();
   return {
-    enabled: s.mpesaEnabled === "true",
-    environment: (s.mpesaEnvironment as "sandbox" | "production") ?? "sandbox",
-    consumerKey: s.mpesaConsumerKey ?? "",
-    consumerSecret: s.mpesaConsumerSecret ?? "",
-    shortcode: s.mpesaShortcode ?? "",
-    passkey: s.mpesaPasskey ?? "",
-    paymentType: (s.mpesaPaymentType as MpesaPaymentType) ?? "till",
-    tillNumber: s.mpesaTillNumber ?? "",
-    paybillNumber: s.mpesaPaybillNumber ?? "",
-    accountReference: s.mpesaAccountReference ?? "BusinessIQ",
-    callbackUrl: s.mpesaCallbackUrl ?? "",
+    // Sensitive: Agentuity env vars per client deployment
+    enabled: process.env.MPESA_ENABLED === "true" || s.mpesaEnabled === "true",
+    environment: (process.env.MPESA_ENVIRONMENT ?? s.mpesaEnvironment ?? "sandbox") as "sandbox" | "production",
+    consumerKey: process.env.MPESA_CONSUMER_KEY ?? s.mpesaConsumerKey ?? "",
+    consumerSecret: process.env.MPESA_CONSUMER_SECRET ?? s.mpesaConsumerSecret ?? "",
+    shortcode: process.env.MPESA_SHORTCODE ?? s.mpesaShortcode ?? "",
+    passkey: process.env.MPESA_PASSKEY ?? s.mpesaPasskey ?? "",
+    // Non-sensitive: configurable via DB / env
+    paymentType: (process.env.MPESA_PAYMENT_TYPE ?? s.mpesaPaymentType ?? "till") as MpesaPaymentType,
+    tillNumber: process.env.MPESA_TILL_NUMBER ?? s.mpesaTillNumber ?? "",
+    paybillNumber: process.env.MPESA_PAYBILL_NUMBER ?? s.mpesaPaybillNumber ?? "",
+    accountReference: process.env.MPESA_ACCOUNT_REFERENCE ?? s.mpesaAccountReference ?? "BusinessIQ",
+    callbackUrl: process.env.MPESA_CALLBACK_URL ?? s.mpesaCallbackUrl ?? "",
   };
 }
 
@@ -143,26 +157,31 @@ export async function initializePaystackTransaction(
 
   const reference = `PS_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-  // ── PLACEHOLDER: Replace with actual Paystack API call ──
-  // const response = await fetch("https://api.paystack.co/transaction/initialize", {
-  //   method: "POST",
-  //   headers: {
-  //     Authorization: `Bearer ${config.secretKey}`,
-  //     "Content-Type": "application/json",
-  //   },
-  //   body: JSON.stringify({
-  //     email,
-  //     amount: Math.round(amount * 100), // Convert to smallest unit
-  //     currency: currency ?? config.currency,
-  //     reference,
-  //     metadata,
-  //   }),
-  // });
-  // const data = await response.json();
-  // if (!data.status) throw new Error(data.message ?? "Paystack initialization failed");
+  const response = await fetch("https://api.paystack.co/transaction/initialize", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.secretKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      email,
+      amount: Math.round(amount * 100), // Paystack uses smallest currency unit (kobo/cents)
+      currency: currency ?? config.currency,
+      reference,
+      metadata,
+    }),
+  });
+
+  const data = await response.json() as {
+    status: boolean;
+    message?: string;
+    data?: { authorization_url?: string; access_code?: string; reference?: string };
+  };
+
+  if (!data.status) throw new Error(data.message ?? "Paystack initialization failed");
 
   return {
-    reference,
+    reference: data.data?.reference ?? reference,
     publicKey: config.publicKey,
     amount: Math.round(amount * 100),
     currency: currency ?? config.currency,
@@ -184,25 +203,30 @@ export async function verifyPaystackTransaction(reference: string): Promise<{
   const config = await getPaystackConfig();
   if (!config.secretKey) throw new Error("Paystack secret key not configured");
 
-  // ── PLACEHOLDER: Replace with actual Paystack verification ──
-  // const response = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
-  //   headers: { Authorization: `Bearer ${config.secretKey}` },
-  // });
-  // const data = await response.json();
-  // return {
-  //   verified: data.data?.status === "success",
-  //   amount: data.data?.amount / 100,
-  //   currency: data.data?.currency,
-  //   channel: data.data?.channel,
-  //   paidAt: data.data?.paid_at,
-  // };
+  const response = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+    headers: { Authorization: `Bearer ${config.secretKey}` },
+  });
+
+  const data = await response.json() as {
+    status: boolean;
+    message?: string;
+    data?: {
+      status?: string;
+      amount?: number;
+      currency?: string;
+      channel?: string;
+      paid_at?: string;
+    };
+  };
+
+  if (!data.status) throw new Error(data.message ?? "Paystack verification failed");
 
   return {
-    verified: true,
-    amount: 0,
-    currency: config.currency,
-    channel: "card",
-    paidAt: new Date().toISOString(),
+    verified: data.data?.status === "success",
+    amount: (data.data?.amount ?? 0) / 100,
+    currency: data.data?.currency ?? config.currency,
+    channel: data.data?.channel ?? "card",
+    paidAt: data.data?.paid_at ?? new Date().toISOString(),
   };
 }
 
@@ -210,27 +234,37 @@ export async function verifyPaystackTransaction(reference: string): Promise<{
 // M-Pesa Daraja Integration (Placeholder)
 // ═══════════════════════════════════════════════════════════════
 
+// ── Access token cache (tokens are valid for 3600s; refresh at 80% of TTL) ──
+let _mpesaToken: string | null = null;
+let _mpesaTokenExpiresAt = 0;
+
 /**
  * Get M-Pesa OAuth access token.
- * In production: GET https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials
- * Sandbox:       GET https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials
+ * Cached in-process for ~48 minutes (80% of the 3600s token lifetime).
  */
 async function getMpesaAccessToken(): Promise<string> {
+  if (_mpesaToken && Date.now() < _mpesaTokenExpiresAt) return _mpesaToken;
+
   const config = await getMpesaConfig();
   const baseUrl = config.environment === "production"
     ? "https://api.safaricom.co.ke"
     : "https://sandbox.safaricom.co.ke";
 
-  // ── PLACEHOLDER: Replace with actual Daraja OAuth call ──
-  // const credentials = Buffer.from(`${config.consumerKey}:${config.consumerSecret}`).toString("base64");
-  // const response = await fetch(`${baseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
-  //   headers: { Authorization: `Basic ${credentials}` },
-  // });
-  // const data = await response.json();
-  // return data.access_token;
+  const credentials = Buffer.from(`${config.consumerKey}:${config.consumerSecret}`).toString("base64");
+  const response = await fetch(`${baseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
+    headers: { Authorization: `Basic ${credentials}` },
+  });
+  if (!response.ok) {
+    throw new Error(`M-Pesa OAuth failed: HTTP ${response.status}`);
+  }
+  const data = await response.json() as { access_token?: string; errorCode?: string; errorMessage?: string };
+  if (!data.access_token) {
+    throw new Error(`M-Pesa OAuth error: ${data.errorMessage ?? JSON.stringify(data)}`);
+  }
 
-  void baseUrl;
-  return "PLACEHOLDER_ACCESS_TOKEN";
+  _mpesaToken = data.access_token;
+  _mpesaTokenExpiresAt = Date.now() + 48 * 60 * 1000; // cache 48 min
+  return _mpesaToken;
 }
 
 /**
@@ -265,44 +299,50 @@ export async function initiateSTKPush(request: StkPushRequest): Promise<StkPushR
     ? "https://api.safaricom.co.ke"
     : "https://sandbox.safaricom.co.ke";
 
-  // ── PLACEHOLDER: Replace with actual Daraja STK Push call ──
-  // const response = await fetch(`${baseUrl}/mpesa/stkpush/v1/processrequest`, {
-  //   method: "POST",
-  //   headers: {
-  //     Authorization: `Bearer ${accessToken}`,
-  //     "Content-Type": "application/json",
-  //   },
-  //   body: JSON.stringify({
-  //     BusinessShortCode: businessShortCode,
-  //     Password: password,
-  //     Timestamp: timestamp,
-  //     TransactionType: commandID,
-  //     Amount: Math.ceil(request.amount),
-  //     PartyA: request.phoneNumber,
-  //     PartyB: partyB,
-  //     PhoneNumber: request.phoneNumber,
-  //     CallBackURL: config.callbackUrl,
-  //     AccountReference: request.accountReference || config.accountReference,
-  //     TransactionDesc: request.transactionDesc || "Payment",
-  //   }),
-  // });
-  // const data = await response.json();
+  const response = await fetch(`${baseUrl}/mpesa/stkpush/v1/processrequest`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      BusinessShortCode: businessShortCode,
+      Password: password,
+      Timestamp: timestamp,
+      TransactionType: commandID,
+      Amount: Math.ceil(request.amount),
+      PartyA: request.phoneNumber,
+      PartyB: partyB,
+      PhoneNumber: request.phoneNumber,
+      CallBackURL: config.callbackUrl,
+      AccountReference: request.accountReference || config.accountReference,
+      TransactionDesc: request.transactionDesc || "Payment",
+    }),
+  });
 
-  // Suppress unused variable warnings for placeholder
-  void accessToken;
-  void password;
-  void businessShortCode;
-  void commandID;
-  void partyB;
-  void baseUrl;
+  const data = await response.json() as {
+    ResponseCode?: string;
+    ResponseDescription?: string;
+    CustomerMessage?: string;
+    CheckoutRequestID?: string;
+    MerchantRequestID?: string;
+    errorCode?: string;
+    errorMessage?: string;
+  };
 
-  // Simulated success response matching Daraja API format
+  if (data.ResponseCode !== "0") {
+    return {
+      success: false,
+      responseDescription: data.errorMessage ?? data.ResponseDescription ?? "STK Push request failed",
+    };
+  }
+
   return {
     success: true,
-    checkoutRequestId: `ws_CO_${timestamp}_${config.shortcode}_${Math.random().toString(36).slice(2, 8)}`,
-    merchantRequestId: `MR_${Date.now()}`,
-    responseDescription: "Success. Request accepted for processing",
-    customerMessage: `Success. Request accepted for processing. Check your phone (${request.phoneNumber}) to complete payment.`,
+    checkoutRequestId: data.CheckoutRequestID,
+    merchantRequestId: data.MerchantRequestID,
+    responseDescription: data.ResponseDescription ?? "Success. Request accepted for processing",
+    customerMessage: data.CustomerMessage ?? `Check your phone (${request.phoneNumber}) to complete payment.`,
   };
 }
 
@@ -320,33 +360,32 @@ export async function querySTKPushStatus(checkoutRequestId: string): Promise<Stk
     ? "https://api.safaricom.co.ke"
     : "https://sandbox.safaricom.co.ke";
 
-  // ── PLACEHOLDER: Replace with actual Daraja STK Query call ──
-  // const response = await fetch(`${baseUrl}/mpesa/stkpushquery/v1/query`, {
-  //   method: "POST",
-  //   headers: {
-  //     Authorization: `Bearer ${accessToken}`,
-  //     "Content-Type": "application/json",
-  //   },
-  //   body: JSON.stringify({
-  //     BusinessShortCode: config.shortcode,
-  //     Password: password,
-  //     Timestamp: timestamp,
-  //     CheckoutRequestID: checkoutRequestId,
-  //   }),
-  // });
-  // const data = await response.json();
+  const response = await fetch(`${baseUrl}/mpesa/stkpushquery/v1/query`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      BusinessShortCode: config.shortcode,
+      Password: password,
+      Timestamp: timestamp,
+      CheckoutRequestID: checkoutRequestId,
+    }),
+  });
 
-  void accessToken;
-  void password;
-  void baseUrl;
-  void checkoutRequestId;
+  const data = await response.json() as {
+    ResultCode?: string | number;
+    ResultDesc?: string;
+    errorCode?: string;
+    errorMessage?: string;
+  };
 
-  // Simulated completed response
+  const resultCode = Number(data.ResultCode ?? -1);
   return {
-    completed: true,
-    resultCode: 0,
-    resultDesc: "The service request is processed successfully.",
-    mpesaReceiptNumber: `QHL${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+    completed: resultCode === 0 || resultCode === 1032, // 1032 = cancelled by user (also final)
+    resultCode,
+    resultDesc: data.ResultDesc ?? data.errorMessage ?? "Unknown result",
   };
 }
 
@@ -365,25 +404,33 @@ export async function registerC2BUrls(
     ? "https://api.safaricom.co.ke"
     : "https://sandbox.safaricom.co.ke";
 
-  // ── PLACEHOLDER: Replace with actual Daraja C2B registration ──
-  // const response = await fetch(`${baseUrl}/mpesa/c2b/v1/registerurl`, {
-  //   method: "POST",
-  //   headers: {
-  //     Authorization: `Bearer ${accessToken}`,
-  //     "Content-Type": "application/json",
-  //   },
-  //   body: JSON.stringify({
-  //     ShortCode: config.shortcode,
-  //     ResponseType: "Completed",
-  //     ConfirmationURL: confirmationUrl,
-  //     ValidationURL: validationUrl,
-  //   }),
-  // });
+  const response = await fetch(`${baseUrl}/mpesa/c2b/v1/registerurl`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      ShortCode: config.shortcode,
+      ResponseType: "Completed",
+      ConfirmationURL: confirmationUrl,
+      ValidationURL: validationUrl,
+    }),
+  });
 
-  void accessToken;
-  void baseUrl;
-  void validationUrl;
-  void confirmationUrl;
+  const data = await response.json() as {
+    ResponseCode?: string;
+    ResponseDescription?: string;
+    errorCode?: string;
+    errorMessage?: string;
+  };
 
-  return { success: true, message: "C2B URLs registered successfully (placeholder)" };
+  if (data.ResponseCode !== "0") {
+    return {
+      success: false,
+      message: data.errorMessage ?? data.ResponseDescription ?? "C2B registration failed",
+    };
+  }
+
+  return { success: true, message: data.ResponseDescription ?? "C2B URLs registered successfully" };
 }

@@ -1,3 +1,5 @@
+**MOST PRESSING:** First client acquisition strategy & sales playbook → See [SALES-PLAYBOOK.md](SALES-PLAYBOOK.md)
+
 Pending features:
 User can upload document in the chat UI and the data populates automatically in relevant tables
 User can run approvals from the chat UI

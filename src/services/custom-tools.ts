@@ -96,6 +96,16 @@ export interface CreateToolInput {
 
 export interface UpdateToolInput extends Partial<CreateToolInput> {}
 
+// ── Active-tools cache (60s TTL — eliminates duplicate DB calls per request) ──
+
+let _activeToolsCache: CustomToolRow[] | null = null;
+let _activeToolsCacheAt = 0;
+const ACTIVE_TOOLS_TTL = 60_000;
+
+function invalidateActiveToolsCache() {
+  _activeToolsCache = null;
+}
+
 // ── CRUD ───────────────────────────────────────────────────
 
 /** List all custom tools, ordered by sortOrder */
@@ -115,13 +125,19 @@ export async function listToolsByType(type: ToolType): Promise<CustomToolRow[]> 
   return rows as CustomToolRow[];
 }
 
-/** List only active tools (used by the agent at runtime) */
+/** List only active tools (used by the agent at runtime). Results cached for 60s. */
 export async function listActiveTools(): Promise<CustomToolRow[]> {
+  const now = Date.now();
+  if (_activeToolsCache !== null && now - _activeToolsCacheAt < ACTIVE_TOOLS_TTL) {
+    return _activeToolsCache;
+  }
   const rows = await db.query.customTools.findMany({
     where: eq(customTools.isActive, true),
     orderBy: [asc(customTools.sortOrder), asc(customTools.name)],
   });
-  return rows as CustomToolRow[];
+  _activeToolsCache = rows as CustomToolRow[];
+  _activeToolsCacheAt = now;
+  return _activeToolsCache;
 }
 
 /** Get a single tool by ID */
@@ -134,6 +150,7 @@ export async function getToolById(id: string): Promise<CustomToolRow | null> {
 
 /** Create a new custom tool */
 export async function createTool(input: CreateToolInput): Promise<CustomToolRow> {
+  invalidateActiveToolsCache();
   const [row] = await db
     .insert(customTools)
     .values({
@@ -205,6 +222,7 @@ export async function updateTool(
     return getToolById(id);
   }
 
+  invalidateActiveToolsCache();
   const [row] = await db
     .update(customTools)
     .set(updates)
@@ -215,6 +233,7 @@ export async function updateTool(
 
 /** Delete a custom tool */
 export async function deleteTool(id: string): Promise<boolean> {
+  invalidateActiveToolsCache();
   const result = await db.delete(customTools).where(eq(customTools.id, id)).returning();
   return result.length > 0;
 }

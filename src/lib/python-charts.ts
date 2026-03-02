@@ -176,11 +176,9 @@ export async function renderChartsViaPython(
 
 /**
  * Check if Python chart rendering is available.
- * Always returns true — sandbox runs with or without a snapshot.
- * Without ANALYTICS_SNAPSHOT_ID it falls back to python:3.13 + network install
- * (~10-15s cold start), which is acceptable and fully functional.
- * Set ANALYTICS_SNAPSHOT_ID once at the platform level for production performance.
+ * Currently disabled — tables-only mode to avoid sandbox cold-start latency.
+ * Re-enable by returning true when Python/matplotlib sandbox is ready.
  */
 export function isPythonChartsAvailable(): boolean {
-  return true;
+  return false;
 }

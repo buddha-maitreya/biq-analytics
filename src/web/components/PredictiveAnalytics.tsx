@@ -18,7 +18,7 @@ interface AnalyticsType {
   action: string;
   label: string;
   description: string;
-  category: "forecasting" | "classification" | "anomaly" | "charts";
+  category: "forecasting" | "classification" | "anomaly" | "charts" | "insights";
   icon: string;
 }
 
@@ -48,13 +48,14 @@ interface AnalyticsResult {
 // ── Category metadata ───────────────────────────────────────
 
 const CATEGORY_META: Record<string, { label: string; icon: string; color: string }> = {
-  forecasting:    { label: "Forecasting",     icon: "📈", color: "#3b82f6" },
-  classification: { label: "Classification",  icon: "🏷️", color: "#8b5cf6" },
-  anomaly:        { label: "Anomaly Detection", icon: "🔍", color: "#ef4444" },
-  charts:         { label: "Visualizations",  icon: "📊", color: "#10b981" },
+  forecasting:    { label: "Forecasting",        icon: "📈", color: "#3b82f6" },
+  classification: { label: "Classification",     icon: "🏷️", color: "#8b5cf6" },
+  anomaly:        { label: "Anomaly Detection",  icon: "🔍", color: "#ef4444" },
+  charts:         { label: "Visualizations",     icon: "📊", color: "#10b981" },
+  insights:       { label: "Business Insights",  icon: "🏆", color: "#f59e0b" },
 };
 
-const CATEGORY_ORDER = ["forecasting", "classification", "anomaly", "charts"];
+const CATEGORY_ORDER = ["insights", "forecasting", "classification", "anomaly", "charts"];
 
 // ── Date presets ────────────────────────────────────────────
 
@@ -83,14 +84,28 @@ const DATE_PRESETS = [
 
 // ── Component ───────────────────────────────────────────────
 
+const HORIZON_PRESETS = [
+  { value: 7,  label: "1 week" },
+  { value: 14, label: "2 weeks" },
+  { value: 30, label: "1 month" },
+  { value: 60, label: "2 months" },
+  { value: 90, label: "3 months" },
+];
+
+/** Actions that expose a forecast horizon control */
+const FORECAST_ACTIONS = new Set(["forecast.prophet", "forecast.arima", "forecast.holt_winters"]);
+
 export default function PredictiveAnalytics() {
   const [types, setTypes] = useState<AnalyticsType[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   const [datePreset, setDatePreset] = useState("last90");
+  const [horizonDays, setHorizonDays] = useState(30);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<AnalyticsResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const showHorizonPicker = selected !== null && FORECAST_ACTIONS.has(selected);
 
   // ── Fetch available types on mount ──────────────────────
   useEffect(() => {
@@ -119,14 +134,19 @@ export default function PredictiveAnalytics() {
     const range = getPresetRange(datePreset);
 
     try {
+      const body: Record<string, unknown> = {
+        action: selected,
+        startDate: range.start,
+        endDate: range.end,
+      };
+      if (FORECAST_ACTIONS.has(selected)) {
+        body.params = { horizonDays };
+      }
+
       const res = await fetch("/api/predictive-analytics/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: selected,
-          startDate: range.start,
-          endDate: range.end,
-        }),
+        body: JSON.stringify(body),
       });
 
       const data = await res.json();
@@ -212,7 +232,7 @@ export default function PredictiveAnalytics() {
 
           <div className="analytics-run-config">
             <div className="analytics-config-field">
-              <label className="form-label">Data Period</label>
+              <label className="form-label">Historical Data Period</label>
               <div className="analytics-date-pills">
                 {DATE_PRESETS.map((p) => (
                   <button
@@ -225,6 +245,23 @@ export default function PredictiveAnalytics() {
                 ))}
               </div>
             </div>
+
+            {showHorizonPicker && (
+              <div className="analytics-config-field">
+                <label className="form-label">Forecast Horizon</label>
+                <div className="analytics-date-pills">
+                  {HORIZON_PRESETS.map((p) => (
+                    <button
+                      key={p.value}
+                      className={`analytics-pill ${horizonDays === p.value ? "active" : ""}`}
+                      onClick={() => setHorizonDays(p.value)}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <button
               className="btn btn-primary analytics-run-btn"

@@ -56,7 +56,7 @@ const PAGE_TITLES: Record<Page, string> = {
   scan: "Scanner",
   invoices: "Invoices",
   assistant: "Executive AI Assistant",
-  reports: "Reports",
+  reports: "Analytics",
   approvals: "Approvals",
   admin: "Admin",
   settings: "Settings",

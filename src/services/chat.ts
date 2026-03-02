@@ -73,20 +73,21 @@ export async function getConversationContext(sessionId: string): Promise<{
   const recentMessageCount =
     (agentCfg.recentMessageCount as number) ?? DEFAULT_RECENT_MESSAGE_COUNT;
 
-  // Load rolling summary from session metadata
-  const session = await db.query.chatSessions.findFirst({
-    where: eq(chatSessions.id, sessionId),
-  });
+  // Load session summary and recent messages in parallel (saves one DB round trip)
+  const [session, messages] = await Promise.all([
+    db.query.chatSessions.findFirst({
+      where: eq(chatSessions.id, sessionId),
+    }),
+    db.query.chatMessages.findMany({
+      where: eq(chatMessages.sessionId, sessionId),
+      orderBy: [desc(chatMessages.createdAt)],
+      limit: recentMessageCount,
+    }),
+  ]);
+
   const summary = (session?.metadata as Record<string, unknown>)?.summary as
     | string
     | undefined;
-
-  // Load recent messages (enough for immediate context)
-  const messages = await db.query.chatMessages.findMany({
-    where: eq(chatMessages.sessionId, sessionId),
-    orderBy: [desc(chatMessages.createdAt)],
-    limit: recentMessageCount,
-  });
 
   const recentMessages = messages
     .reverse()

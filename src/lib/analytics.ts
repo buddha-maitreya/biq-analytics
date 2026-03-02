@@ -64,7 +64,9 @@ export type AnalyticsAction =
   | "classify.bundles"
   // Anomaly Detection
   | "anomaly.transactions"
-  | "anomaly.shrinkage";
+  | "anomaly.shrinkage"
+  // Insights
+  | "insights.value_gap";
 
 /**
  * Map action prefixes to their analytics category for config lookup.
@@ -75,6 +77,7 @@ export type AnalyticsAction =
 const ACTION_TO_CATEGORY: Record<string, AnalyticsCategory> = {
   // Specific overrides (checked first via exact match)
   "classify.abc_xyz": "classification",
+  "insights.value_gap": "classification",
   // Prefix-based (checked second via startsWith)
   "chart.": "charts",
   "forecast.": "forecasting",

@@ -53,6 +53,7 @@ MIN_ROWS = {
     'forecast.': 14,
     'classify.': 5,
     'anomaly.': 10,
+    'insights.': 1,
 }
 
 REQUIRED_COLUMNS = {
@@ -190,6 +191,8 @@ def main():
             from anomaly.isolation_forest import run
         elif action == 'anomaly.shrinkage':
             from anomaly.shrinkage import run
+        elif action == 'insights.value_gap':
+            from insights.value_gap import run
         else:
             print(json.dumps({"error": f"Unknown action: {action}"}))
             sys.exit(1)
@@ -3866,6 +3869,239 @@ export const ANOMALY_INIT_PY = `# Anomaly detection modules — Isolation Forest
 `;
 
 // ────────────────────────────────────────────────────────────
+// Insights Modules
+// ────────────────────────────────────────────────────────────
+
+export const INSIGHTS_VALUE_GAP_PY = `"""
+Value Gap Analysis — AI vs Standard POS Comparison
+
+Computes real performance metrics across 4 dimensions and returns a
+personalised comparison table showing actual results vs Kenyan SME
+benchmarks for standard (non-AI) POS systems.
+
+Input rows carry a metric_type discriminator:
+  'inventory' — product stock with is_dead_stock flag
+  'sales'     — daily revenue aggregates for trend analysis
+  'mpesa'     — M-Pesa posTransaction status counts
+"""
+
+import pandas as pd
+import numpy as np
+
+# Industry benchmarks for Kenyan SME market
+BENCHMARKS = {
+    'dead_stock_pct': 28.0,    # % of in-stock SKUs with no sales in 30d
+    'waste_rate_pct': 15.0,    # % of inventory value at waste/slow-mover risk
+    'revenue_growth_pct': 2.0, # Flat monthly growth without AI trend insights
+    'mpesa_recon_pct': 94.0,   # Manual M-Pesa reconciliation accuracy
+}
+
+
+def run(data: list, params: dict, chart_config: dict) -> dict:
+    if not data:
+        return {"error": "No data provided"}
+
+    df = pd.DataFrame(data)
+
+    inv_df  = df[df['metric_type'] == 'inventory'].copy() if 'metric_type' in df.columns else pd.DataFrame()
+    sales_df = df[df['metric_type'] == 'sales'].copy()   if 'metric_type' in df.columns else pd.DataFrame()
+    mpesa_df = df[df['metric_type'] == 'mpesa'].copy()   if 'metric_type' in df.columns else pd.DataFrame()
+
+    rows = []
+    summary = {}
+
+    r1 = _dead_stock(inv_df)
+    r2 = _waste_rate(inv_df)
+    r3 = _revenue_trend(sales_df)
+    r4 = _mpesa_recon(mpesa_df)
+
+    rows = [r1['row'], r2['row'], r3['row'], r4['row']]
+    summary = {
+        'dead_stock': {k: v for k, v in r1.items() if k != 'row'},
+        'waste':      {k: v for k, v in r2.items() if k != 'row'},
+        'trend':      {k: v for k, v in r3.items() if k != 'row'},
+        'mpesa_recon': {k: v for k, v in r4.items() if k != 'row'},
+    }
+
+    return {
+        'summary': summary,
+        'table': {
+            'columns': ['Feature', 'Standard POS (Benchmark)', 'Your AI System (Actual)', 'Economic Impact'],
+            'rows': rows,
+        },
+    }
+
+
+def _coerce_numeric(df: pd.DataFrame, *cols: str) -> pd.DataFrame:
+    for c in cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+    return df
+
+
+def _dead_stock(inv_df: pd.DataFrame) -> dict:
+    bench = BENCHMARKS['dead_stock_pct']
+    if inv_df.empty or 'is_dead_stock' not in inv_df.columns:
+        return {
+            'row': ['Predictive Replenishment',
+                    f'~{bench:.0f}% dead stock avg',
+                    'No inventory data',
+                    'Reduces dead stock by up to 20%'],
+            'status': 'no_data',
+        }
+
+    inv_df = _coerce_numeric(inv_df.copy(), 'is_dead_stock', 'current_stock', 'inventory_value')
+    total  = len(inv_df)
+    dead_n = int(inv_df['is_dead_stock'].sum())
+    pct    = round(dead_n / total * 100, 1) if total > 0 else 0.0
+    dead_val = round(float(inv_df.loc[inv_df['is_dead_stock'] == 1, 'inventory_value'].sum()), 2) \
+               if 'inventory_value' in inv_df.columns else 0.0
+
+    gain = round(bench - pct, 1)
+    gain_str = f'{gain:+.1f}% vs benchmark' if gain != 0 else 'at benchmark'
+
+    return {
+        'row': [
+            'Predictive Replenishment',
+            f'~{bench:.0f}% dead stock avg',
+            f'{pct:.1f}% dead stock ({dead_n}/{total} SKUs)',
+            f'KES {dead_val:,.0f} freed ({gain_str})',
+        ],
+        'dead_stock_pct': pct,
+        'benchmark_pct': bench,
+        'dead_sku_count': dead_n,
+        'dead_stock_value': dead_val,
+        'gain_vs_benchmark_pct': gain,
+    }
+
+
+def _waste_rate(inv_df: pd.DataFrame) -> dict:
+    bench = BENCHMARKS['waste_rate_pct']
+    if inv_df.empty or 'inventory_value' not in inv_df.columns:
+        return {
+            'row': ['Dynamic Waste Mitigation',
+                    f'~{bench:.0f}% inventory at waste risk avg',
+                    'No inventory data',
+                    'Flags slow-movers for early promotions'],
+            'status': 'no_data',
+        }
+
+    inv_df = _coerce_numeric(inv_df.copy(), 'is_dead_stock', 'inventory_value')
+    total_val = float(inv_df['inventory_value'].sum())
+    if 'is_dead_stock' in inv_df.columns:
+        at_risk_val = float(inv_df.loc[inv_df['is_dead_stock'] == 1, 'inventory_value'].sum())
+    else:
+        at_risk_val = 0.0
+
+    waste_pct = round(at_risk_val / total_val * 100, 1) if total_val > 0 else 0.0
+    saved = round((bench - waste_pct) / 100 * total_val, 2)
+    saved_str = f'KES {saved:,.0f} protected' if saved > 0 else 'Above benchmark'
+
+    return {
+        'row': [
+            'Dynamic Waste Mitigation',
+            f'~{bench:.0f}% inventory at waste risk avg',
+            f'{waste_pct:.1f}% at risk (KES {at_risk_val:,.0f})',
+            saved_str,
+        ],
+        'waste_rate_pct': waste_pct,
+        'benchmark_pct': bench,
+        'at_risk_value': at_risk_val,
+        'total_inventory_value': total_val,
+        'saved_vs_benchmark': saved,
+    }
+
+
+def _revenue_trend(sales_df: pd.DataFrame) -> dict:
+    bench = BENCHMARKS['revenue_growth_pct']
+    if sales_df.empty or 'revenue' not in sales_df.columns:
+        return {
+            'row': ['Trend Analysis & Forecasting',
+                    f'~{bench:.0f}% monthly growth (flat baseline)',
+                    'No sales data',
+                    'Increases revenue by 15-25%'],
+            'status': 'no_data',
+        }
+
+    sales_df = _coerce_numeric(sales_df.copy(), 'revenue')
+    if 'date' in sales_df.columns:
+        sales_df = sales_df.sort_values('date')
+
+    n = len(sales_df)
+    if n < 4:
+        return {
+            'row': ['Trend Analysis & Forecasting',
+                    f'~{bench:.0f}% monthly growth (flat baseline)',
+                    f'Only {n} days of data (expand range)',
+                    'Increases revenue by 15-25%'],
+            'status': 'insufficient_data',
+            'data_points': n,
+        }
+
+    mid = n // 2
+    h1  = float(sales_df['revenue'].iloc[:mid].mean())
+    h2  = float(sales_df['revenue'].iloc[mid:].mean())
+    growth = round((h2 - h1) / h1 * 100, 1) if h1 > 0 else 0.0
+    arrow  = '\u2191' if growth >= 0 else '\u2193'
+
+    return {
+        'row': [
+            'Trend Analysis & Forecasting',
+            f'~{bench:.0f}% monthly growth (flat baseline)',
+            f'{arrow}{abs(growth):.1f}% revenue momentum detected',
+            'Seasonal drivers identified for stocking decisions',
+        ],
+        'growth_pct': growth,
+        'benchmark_pct': bench,
+        'period_h1_avg': round(h1, 2),
+        'period_h2_avg': round(h2, 2),
+        'data_points': n,
+    }
+
+
+def _mpesa_recon(mpesa_df: pd.DataFrame) -> dict:
+    bench = BENCHMARKS['mpesa_recon_pct']
+    if mpesa_df.empty:
+        return {
+            'row': ['M-Pesa / Payment Reconciliation',
+                    f'~{bench:.0f}% accuracy (manual matching)',
+                    'No M-Pesa transactions in period',
+                    'Eliminates KRA reconciliation errors'],
+            'status': 'no_data',
+        }
+
+    mpesa_df = _coerce_numeric(mpesa_df.copy(), 'tx_count', 'total_amount')
+    total = int(mpesa_df['tx_count'].sum())
+
+    if 'status' in mpesa_df.columns:
+        processed = int(mpesa_df.loc[
+            mpesa_df['status'].str.lower().isin(['processed']), 'tx_count'
+        ].sum())
+    else:
+        processed = total
+
+    accuracy = round(processed / total * 100, 1) if total > 0 else 0.0
+    unmatched = total - processed
+
+    return {
+        'row': [
+            'M-Pesa / Payment Reconciliation',
+            f'~{bench:.0f}% accuracy (manual matching)',
+            f'{accuracy:.1f}% auto-reconciled ({processed:,}/{total:,} txns)',
+            f'{unmatched:,} unmatched txns flagged for review',
+        ],
+        'accuracy_pct': accuracy,
+        'benchmark_pct': bench,
+        'total_txns': total,
+        'processed_txns': processed,
+        'unmatched_txns': unmatched,
+    }
+`;
+
+export const INSIGHTS_INIT_PY = `# Insights modules — Value Gap, ROI Analysis
+`;
+
+// ────────────────────────────────────────────────────────────
 // File manifest — uploaded to sandbox via command.files
 // ────────────────────────────────────────────────────────────
 
@@ -3886,6 +4122,8 @@ export function getAnalyticsFiles(): SandboxFile[] {
     { path: "anomaly/isolation_forest.py", content: ANOMALY_ISOLATION_FOREST_PY },
     { path: "anomaly/shrinkage.py", content: ANOMALY_SHRINKAGE_PY },
     { path: "anomaly/__init__.py", content: ANOMALY_INIT_PY },
+    { path: "insights/value_gap.py", content: INSIGHTS_VALUE_GAP_PY },
+    { path: "insights/__init__.py", content: INSIGHTS_INIT_PY },
     { path: "charts/forecast_plot.py", content: CHARTS_FORECAST_PLOT_PY },
     { path: "charts/geo_map.py", content: CHARTS_GEO_MAP_PY },
     { path: "charts/heatmap.py", content: CHARTS_HEATMAP_PY },

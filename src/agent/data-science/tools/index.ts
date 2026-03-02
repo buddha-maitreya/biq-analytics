@@ -10,6 +10,7 @@ import {
   analyzeTrendsTool,
   generateReportTool,
   searchKnowledgeTool,
+  ingestKnowledgeTool,
   scanDocumentTool,
   createExportReportTool,
   createPredictiveAnalyticsTool,
@@ -36,6 +37,9 @@ export type {
   PredictiveAnalyticsResult,
 } from "./types";
 
+// Re-export ingestKnowledgeTool for direct use
+export { ingestKnowledgeTool } from "./specialists";
+
 /**
  * Static tools map (sandbox-independent, safe to reuse across requests).
  * NOTE: export_report is no longer here — it's created per-request in
@@ -46,6 +50,7 @@ export const sharedTools = {
   analyze_trends: analyzeTrendsTool,
   generate_report: generateReportTool,
   search_knowledge: searchKnowledgeTool,
+  ingest_knowledge: ingestKnowledgeTool,
   scan_document: scanDocumentTool,
   get_business_snapshot: getBusinessSnapshotTool,
 };

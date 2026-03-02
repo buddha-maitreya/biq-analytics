@@ -37,7 +37,7 @@ const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"]
   { page: "inventory", icon: "🏭", labelKey: "warehouse", fallback: "Inventory" },
   { page: "scan", icon: "📷", labelKey: null, fallback: "Scanner" },
   { page: "approvals", icon: "✅", labelKey: null, fallback: "Approvals" },
-  { page: "reports", icon: "📈", labelKey: null, fallback: "Reports" },
+  { page: "reports", icon: "📊", labelKey: null, fallback: "Analytics" },
   { page: "admin", icon: "⚙️", labelKey: null, fallback: "Admin" },
   { page: "email", icon: "📧", labelKey: null, fallback: "Email" },
   { page: "about", icon: "ℹ️", labelKey: null, fallback: "About" },

@@ -83,31 +83,50 @@ If no code is found, set "found": false and explain in "error".`;
 }
 
 function getStockSheetPrompt(): string {
-  return `You are a stock sheet / inventory document reader for ${config.companyName}.
-Analyze the provided image (photo of a stock sheet, spreadsheet, or inventory list) and extract the tabular data.
+  return `You are a business document scanner for ${config.companyName}. Small businesses use many types of records — handwritten sheets, typed lists, or photos of notebooks. A single document may contain inventory counts, sales records, product prices, or any combination.
 
-Terminology: "${config.labels.product}" for products.
+Your job:
+1. Identify ALL column types / data present in the document
+2. Extract EVERY visible line item with all relevant fields
 
 OUTPUT FORMAT (JSON only):
 {
+  "documentType": "inventory_only" | "sales_only" | "product_catalog" | "mixed_inventory_sales" | "unknown",
+  "documentDate": "ISO date if visible, else null",
+  "confidence": 0.0-1.0,
+  "warnings": ["any readability issues"],
   "items": [
     {
-      "name": "Product name as written",
-      "sku": "SKU/code if visible",
-      "quantity": 123,
-      "unit": "pieces/kg/liters/etc",
-      "location": "warehouse/shelf location if visible",
-      "notes": "any additional notes"
+      "name": "Product/item name as written",
+      "sku": "SKU or code if visible, else null",
+      "barcode": "barcode value if visible, else null",
+      "stockCount": null,
+      "openingStock": null,
+      "closingStock": null,
+      "quantitySold": null,
+      "unitPrice": null,
+      "totalSales": null,
+      "costPrice": null,
+      "unit": "pieces/kg/boxes/etc or null",
+      "location": "shelf/warehouse if visible, else null",
+      "paymentMethod": "cash/card/mpesa/etc if visible, else null",
+      "customerName": "if visible, else null",
+      "soldBy": "if visible, else null",
+      "notes": "any other notes"
     }
-  ],
-  "documentDate": "date if visible (ISO format)",
-  "totalItems": 5,
-  "confidence": 0.0-1.0,
-  "warnings": ["any issues with readability"]
+  ]
 }
 
-Extract ALL visible line items. Use null for fields that aren't visible.
-If the image is blurry or partially obscured, note it in warnings.`;
+COLUMN CLASSIFICATION RULES:
+- "Stock", "Balance", "On Hand", "Count", "Qty", "Closing" columns → stockCount or closingStock
+- "Opening", "Opening Stock", "B/F" columns → openingStock
+- "Sold", "Sales", "Units Sold", "Qty Sold", "Out" columns → quantitySold
+- "Price", "Rate", "Unit Price", "Selling Price" columns → unitPrice
+- "Total", "Amount", "Revenue", "Sales Amount" columns → totalSales
+- "Cost", "Buy Price", "Purchase Price" columns → costPrice
+- Numbers only (no currency symbols) for all numeric fields
+- Use null for any field not visible or not applicable
+- Extract EVERY visible row — do not skip any`;
 }
 
 function getInvoicePrompt(): string {

@@ -273,9 +273,9 @@ export default function ReportsPage({ config }: ReportsPageProps) {
     <div className="page reports-page">
       <div className="page-header-row">
         <div>
-          <h2>📈 Reports</h2>
+          <h2>📊 Analytics</h2>
           <span className="text-muted">
-            Generate reports and run predictive analytics
+            Business reports, predictive analytics, and AI insights
           </span>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>

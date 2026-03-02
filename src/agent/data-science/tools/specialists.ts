@@ -117,31 +117,53 @@ If no code is found, set "found": false and explain in "error".`;
 }
 
 function getStockSheetPrompt(): string {
-  return `You are a stock sheet / inventory document reader for ${config.companyName}.
-Analyze the provided image (photo of a stock sheet, spreadsheet, or inventory list) and extract the tabular data.
+  return `You are a business document scanner for ${config.companyName}. Small businesses use many types of records — handwritten sheets, typed lists, or photos of notebooks. A single document may contain inventory counts, sales records, product prices, or any combination.
 
-Terminology: "${config.labels.product}" for products.
+Your job:
+1. Identify ALL column types / data present in the document
+2. Extract EVERY visible line item with all relevant fields
 
 OUTPUT FORMAT (JSON only):
 {
+  "documentType": "inventory_only" | "sales_only" | "product_catalog" | "mixed_inventory_sales" | "unknown",
+  "documentDate": "ISO date if visible, else null",
+  "confidence": 0.0-1.0,
+  "warnings": ["any readability issues"],
   "items": [
     {
-      "name": "Product name as written",
-      "sku": "SKU/code if visible",
-      "quantity": 123,
-      "unit": "pieces/kg/liters/etc",
-      "location": "warehouse/shelf location if visible",
-      "notes": "any additional notes"
+      "name": "Product/item name as written",
+      "sku": "SKU or code if visible, else null",
+      "barcode": "barcode value if visible, else null",
+      "stockCount": null,        // Current on-hand quantity (stock count / closing balance)
+      "openingStock": null,      // Opening balance if shown
+      "closingStock": null,      // Closing balance if shown
+      "quantitySold": null,      // Units SOLD during period (from 'Sold', 'Sales', 'Qty Sold' columns)
+      "unitPrice": null,         // Selling price per unit
+      "totalSales": null,        // Total revenue from this item (qty * price, or as shown)
+      "costPrice": null,         // Purchase/cost price if visible
+      "unit": "pieces/kg/boxes/etc or null",
+      "location": "shelf/warehouse if visible, else null",
+      "paymentMethod": "cash/card/mpesa/etc if visible at line level, else null",
+      "customerName": "customer name if visible, else null",
+      "soldBy": "cashier/salesperson name if visible, else null",
+      "notes": "any other visible notes"
     }
-  ],
-  "documentDate": "date if visible (ISO format)",
-  "totalItems": 5,
-  "confidence": 0.0-1.0,
-  "warnings": ["any issues with readability"]
+  ]
 }
 
-Extract ALL visible line items. Use null for fields that aren't visible.
-If the image is blurry or partially obscured, note it in warnings.`;
+COLUMN CLASSIFICATION RULES:
+- "Stock", "Balance", "On Hand", "Count", "Qty", "Closing" columns → stockCount or closingStock
+- "Opening", "Opening Stock", "B/F" columns → openingStock
+- "Sold", "Sales", "Units Sold", "Qty Sold", "Out" columns → quantitySold
+- "Price", "Rate", "Unit Price", "Selling Price" columns → unitPrice
+- "Total", "Amount", "Revenue", "Sales Amount" columns → totalSales
+- "Cost", "Buy Price", "Purchase Price" columns → costPrice
+- If the same column clearly means stock on hand → stockCount
+- Numbers only (no currency symbols or units) for all numeric fields
+- Use null for any field not present or not applicable for that row
+- Extract EVERY row/line item visible — do not skip any
+
+${config.labels.product} terminology: "${config.labels.product}" refers to products.`;
 }
 
 function getInvoicePrompt(): string {
@@ -300,6 +322,56 @@ export const searchKnowledgeTool = tool({
       };
     } catch (err) {
       return agentError("Knowledge Base", err);
+    }
+  },
+});
+
+export const ingestKnowledgeTool = tool({
+  description:
+    "Add a document or text to the business knowledge base so it can be searched later. " +
+    "Use when the user uploads a document that is business knowledge — employee policies, procedures, " +
+    "supplier information, product manuals, business rules, FAQs, or any reference material. " +
+    "After ingestion, the document is searchable via search_knowledge. " +
+    "Do NOT use for stock sheets, invoices, or barcodes — use scan_document for those.",
+  parameters: z.object({
+    content: z
+      .string()
+      .describe("The full text content of the document to ingest"),
+    title: z
+      .string()
+      .describe("Human-readable document title (e.g. 'Employee Leave Policy 2026')"),
+    filename: z
+      .string()
+      .optional()
+      .describe("Original filename of the document"),
+    category: z
+      .string()
+      .optional()
+      .describe("Document category: 'hr', 'operations', 'supplier', 'product', 'policy', 'finance', or 'general'"),
+  }),
+  execute: async ({ content, title, filename, category }): Promise<SearchKnowledgeResult> => {
+    try {
+      const result = await knowledgeBase.run({
+        action: "ingest",
+        documents: [
+          {
+            content,
+            title,
+            filename: filename ?? title,
+            category: category ?? "general",
+            chunkIndex: -1, // Auto-chunk
+          },
+        ],
+      });
+      return {
+        answer: result.success
+          ? `Document "${title}" successfully added to the knowledge base (${result.ingested ?? 0} chunks indexed).`
+          : `Failed to ingest document: ${result.error ?? "Unknown error"}`,
+        sources: [],
+        found: result.success,
+      };
+    } catch (err) {
+      return agentError("Knowledge Base", err) as SearchKnowledgeResult;
     }
   },
 });
@@ -617,9 +689,7 @@ export const scanDocumentTool = tool({
         }
         // ── Auto-commit invoice ingestions ──
         // Invoice scans uploaded via chat should create a real invoice record
-        // immediately so they appear on the Invoices page. The uploading user
-        // is recorded as the reviewer. Stock-sheet and barcode ingestions
-        // may still require approval depending on workflow config.
+        // immediately so they appear on the Invoices page.
         if (mode === "invoice" && ingestionResult?.ingestionId && ingestionResult.status === "staged") {
           try {
             const reviewerId = attachmentUserId ?? "system";
@@ -628,6 +698,20 @@ export const scanDocumentTool = tool({
             ingestionResult.status = "committed";
           } catch (commitErr: any) {
             console.log(`[SCAN:5b] Invoice auto-commit FAILED (non-fatal)`, { error: commitErr?.message?.slice(0, 300) });
+          }
+        }
+        // ── Auto-commit stock-sheet ingestions ──
+        // Stock sheets uploaded via chat should populate inventory immediately.
+        // Items with SKU/barcode matches update existing inventory;
+        // unmatched items are created as new products.
+        if (mode === "stock-sheet" && ingestionResult?.ingestionId && ingestionResult.status === "staged") {
+          try {
+            const reviewerId = attachmentUserId ?? "system";
+            const commitResult = await commitIngestion(ingestionResult.ingestionId, reviewerId, "Auto-committed from chat upload");
+            console.log(`[SCAN:5c] Stock-sheet auto-committed`, { ingestionId: ingestionResult.ingestionId, committed: commitResult.committed, skipped: commitResult.skipped, errors: commitResult.errors });
+            ingestionResult.status = "committed";
+          } catch (commitErr: any) {
+            console.log(`[SCAN:5c] Stock-sheet auto-commit FAILED (non-fatal)`, { error: commitErr?.message?.slice(0, 300) });
           }
         }
       } catch (ingErr: any) {
@@ -677,8 +761,8 @@ export function createExportReportTool(
     "Export a report to a downloadable file. Supports PDF, Excel (XLSX), Word (DOCX), and PowerPoint (PPTX). " +
     "Use when the user asks to download, export, or save a report. " +
     "The exported file includes company branding, Table of Contents, and 'Prepared by' attribution automatically. " +
-    "PREFERRED: Provide reportType + startDate + endDate — the tool fetches and renders the report with full charts internally. " +
-    "FALLBACK: Provide content directly for ad-hoc exports (no charts). " +
+    "FASTEST PATH: If you already called generate_report and have its content, pass content directly — charts are extracted automatically, no redundant generation. " +
+    "STANDARD PATH: Provide reportType + startDate + endDate — the tool generates the report and charts internally. " +
     "For data-heavy exports prefer Excel, presentations use PowerPoint, printable reports use PDF, editable use Word. " +
     "ANALYTICS CHARTS: If you have results from run_predictive_analytics, pass their charts via analyticsCharts.",
   parameters: z.object({
@@ -708,8 +792,10 @@ export function createExportReportTool(
       .string()
       .optional()
       .describe(
-        "Report content in markdown format — use only for ad-hoc exports when reportType is not applicable. " +
-        "When reportType is provided, this is ignored."
+        "Report content in markdown format. " +
+        "FAST PATH: If you already called generate_report, pass its content here instead of providing reportType — " +
+        "charts will still be extracted automatically via a dedicated LLM call, saving ~30s of redundant generation. " +
+        "Use reportType when you have NOT already generated the report."
       ),
     subtitle: z
       .string()
@@ -757,64 +843,30 @@ export function createExportReportTool(
             startDate,
             endDate,
             format: "markdown",
-            skipCache: true, // Always generate fresh for export — avoid hitting a chartless cached report
+            // skipCache intentionally omitted: the [2b] fallback extracts charts
+            // from prose regardless of whether chart blocks are embedded, so a
+            // cache hit from a concurrent generate_report call is fine and saves
+            // ~30s of redundant LLM work (critical for staying under the 3m SSE
+            // session timeout).
           });
           const { content: cleanContent, charts } = extractChartBlocksFromContent(result.content);
           reportContent = cleanContent;
           allChartSpecs = charts;
           logger?.info("[export_report:2] Report fetched", { contentLen: reportContent.length, chartSpecsCount: allChartSpecs.length });
 
-          // ── Fallback: extract charts via a dedicated LLM call ──────────────
-          // The report-generator LLM reliably ignores chart embedding instructions
-          // regardless of prompt strength. This second focused call does only ONE
-          // job — produce chart JSON from the data already in the report — making
-          // it far more reliable than asking the writer to do both tasks at once.
-          if (allChartSpecs.length === 0 && reportContent.length > 200) {
-            logger?.info("[export_report:2b] No chart blocks embedded — extracting via dedicated LLM call");
-            try {
-              const { text: chartJson } = await generateText({
-                model: await getModel("gpt-4o-mini"), // Fast model — purely structured JSON task, no reasoning needed
-                temperature: 0.1,
-                system: `You are a data visualization specialist. Your only job is to extract chart specifications from a business report.
-
-Output ONLY a valid JSON array — no markdown fences, no explanation, just raw JSON.
-
-Each chart must use this exact schema:
-{"type":"bar","title":"string","data":[{"label":"string","value":123}],"xField":"label","yField":"value","xLabel":"string","yLabel":"string"}
-
-Supported types: bar, line, area, pie, donut
-Rules:
-- Use ONLY real numbers that appear verbatim in the report
-- Pick the 3 most meaningful metrics to visualise
-- bar/line: comparisons and trends — use the field names that match the data
-- pie/donut: proportional/percentage breakdowns
-- Every "data" entry must have consistent key names matching xField and yField`,
-                prompt: `Extract 3 chart specifications from this business report. Return ONLY the JSON array:\n\n${reportContent.slice(0, 8000)}`,
-              });
-              const trimmed = chartJson.trim()
-                .replace(/^```json\s*/i, "")
-                .replace(/^```\s*/i, "")
-                .replace(/```\s*$/i, "")
-                .trim();
-              const parsed = JSON.parse(trimmed);
-              if (Array.isArray(parsed) && parsed.length > 0) {
-                allChartSpecs = parsed as import("@lib/charts").ChartSpec[];
-                logger?.info("[export_report:2b] Chart specs extracted", { chartCount: allChartSpecs.length });
-              }
-            } catch (err) {
-              logger?.warn("[export_report:2b] Chart extraction failed (non-critical)", { error: String(err) });
-            }
-          }
+          // Chart extraction disabled — tables-only mode (re-enable with Python sandbox)
         } catch (err) {
           logger?.error("[export_report] Report generation failed", { error: String(err) });
           return agentError("Report Generator", err);
         }
       } else {
-        // Fallback: use provided content, extract any inline chart blocks
+        // Content-provided path: extract any inline chart blocks first
         const { content: cleanContent, charts: inlineSpecs } = extractChartBlocksFromContent(reportContent);
         reportContent = cleanContent;
         allChartSpecs = inlineSpecs;
         logger?.info("[export_report:1] Using provided content", { contentLen: reportContent.length, inlineCharts: inlineSpecs.length });
+
+        // Chart extraction disabled — tables-only mode (re-enable with Python sandbox)
       }
 
       // ── Python-first chart rendering ──────────────────────
@@ -845,7 +897,6 @@ Rules:
         subtitle,
         preparedBy,
         ...(preRenderedImages.length > 0 ? { preRenderedImages } : {}),
-        ...(allChartSpecs.length > 0 ? { charts: allChartSpecs } : {}),
       });
       return {
         downloadUrl: result.downloadUrl,

@@ -29,6 +29,7 @@
     "@ai-sdk/anthropic": "^1.0.0",
     "@ai-sdk/groq": "^1.0.0",
     "@ai-sdk/openai": "^1.0.0",
+    "@react-pdf/renderer": "^4.3.2",
     "@types/onscan.js": "^1.5.6",
     "ai": "^4.0.0",
     "barcode-detector": "^3.0.8",

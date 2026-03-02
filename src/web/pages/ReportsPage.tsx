@@ -19,7 +19,7 @@ interface SavedReport {
 }
 
 type ReportType = "sales-summary" | "inventory-health" | "customer-activity" | "financial-overview";
-type ExportFormat = "pdf" | "xlsx" | "docx" | "pptx" | "csv";
+type ExportFormat = "pdf" | "xlsx" | "pptx";
 
 const REPORT_TYPES = [
   { value: "sales-summary" as const, label: "Sales Summary", icon: "📊", desc: "Revenue, orders, top products, and sales trends" },
@@ -29,11 +29,9 @@ const REPORT_TYPES = [
 ];
 
 const FORMAT_OPTIONS: { value: ExportFormat; label: string; icon: string; desc: string }[] = [
-  { value: "pdf",  label: "PDF (.pdf)",   icon: "📕", desc: "Print-ready formatted report" },
+  { value: "pdf",  label: "PDF (.pdf)",   icon: "📕", desc: "Magazine-quality formatted report" },
   { value: "xlsx", label: "Excel (.xlsx)", icon: "📗", desc: "Spreadsheet with formatted tables" },
-  { value: "docx", label: "Word (.docx)",  icon: "📘", desc: "Editable Word document" },
   { value: "pptx", label: "PowerPoint (.pptx)", icon: "📙", desc: "Presentation slides" },
-  { value: "csv",  label: "CSV (.csv)",    icon: "📄", desc: "Comma-separated for any tool" },
 ];
 
 function getPresetRange(preset: string): { start: string; end: string } {
@@ -190,43 +188,13 @@ export default function ReportsPage({ config }: ReportsPageProps) {
     }
   };
 
-  const downloadFile = (content: string, filename: string, mimeType: string) => {
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   const handleDownload = async () => {
     if (!reportContent || exporting) return;
     const ts = new Date().toISOString().slice(0, 10);
     const baseName = `${reportType}-${ts}`;
     setExportError(null);
 
-    if (exportFormat === "csv") {
-      // CSV: client-side markdown table extraction (no server round-trip needed)
-      const lines = reportContent.split("\n");
-      const csvLines: string[] = [];
-      for (const line of lines) {
-        if (line.startsWith("|") && !line.match(/^\|[\s-|]+$/)) {
-          const cells = line.split("|").filter(Boolean).map(c => {
-            const trimmed = c.trim();
-            return trimmed.includes(",") || trimmed.includes('"')
-              ? `"${trimmed.replace(/"/g, '""')}"` : trimmed;
-          });
-          csvLines.push(cells.join(","));
-        } else if (line.trim() && !line.startsWith("#") && !line.startsWith("-") && !line.startsWith("*")) {
-          csvLines.push(line.trim());
-        }
-      }
-      downloadFile(csvLines.join("\n"), `${baseName}.csv`, "text/csv;charset=utf-8;");
-      return;
-    }
-
-    // pdf / xlsx / docx / pptx — call the server export API for professional branded output
+    // pdf / xlsx / pptx — call the server export API for professional branded output
     setExporting(true);
     try {
       const res = await fetch("/api/reports/export", {

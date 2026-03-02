@@ -278,7 +278,7 @@ function ReportResult({ output }: { output: any }) {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
-  const handleExport = async (format: "pdf" | "xlsx" | "docx" | "pptx" = "pdf") => {
+  const handleExport = async (format: "pdf" | "xlsx" | "pptx" = "pdf") => {
     if (exporting || !output?.content) return;
     setExporting(true);
     setExportError(null);
@@ -344,14 +344,6 @@ function ReportResult({ output }: { output: any }) {
             title="Download as Excel"
           >
             📊 Excel
-          </button>
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={() => handleExport("docx")}
-            disabled={exporting}
-            title="Download as Word"
-          >
-            📄 Word
           </button>
           <button
             className="btn btn-secondary btn-sm"

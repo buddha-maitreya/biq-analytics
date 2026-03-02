@@ -137,13 +137,13 @@ reports.get("/reports/:id/download", async (c) => {
 });
 
 // ════════════════════════════════════════════════════════════
-// REPORT EXPORT (PDF / Excel / Word / PowerPoint)
+// REPORT EXPORT (PDF / Excel / PowerPoint)
 // ════════════════════════════════════════════════════════════
 
 export const exportSchema = s.object({
   content: s.string(),
   title: s.string(),
-  format: s.enum(["pdf", "xlsx", "docx", "pptx"]),
+  format: s.enum(["pdf", "xlsx", "pptx"]),
   subtitle: s.optional(s.string()),
 });
 
@@ -211,14 +211,14 @@ reports.post("/reports/export",
 /**
  * POST /reports/:id/export — Export an existing saved report to a binary format.
  *
- * Query param: ?format=pdf|xlsx|docx|pptx
+ * Query param: ?format=pdf|xlsx|pptx
  */
 reports.post("/reports/:id/export", async (c) => {
   const id = c.req.param("id");
   const format = (c.req.query("format") || "pdf") as ExportFormat;
 
-  if (!["pdf", "xlsx", "docx", "pptx"].includes(format)) {
-    return c.json({ error: "Invalid format. Use: pdf, xlsx, docx, pptx" }, 400);
+  if (!["pdf", "xlsx", "pptx"].includes(format)) {
+    return c.json({ error: "Invalid format. Use: pdf, xlsx, pptx" }, 400);
   }
 
   const report = await getReportById(id);

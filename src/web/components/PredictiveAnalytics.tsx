@@ -33,8 +33,9 @@ interface AnalyticsChart {
 interface AnalyticsResult {
   success: boolean;
   summary?: Record<string, unknown>;
+  insight?: string;
   charts?: AnalyticsChart[];
-  table?: { columns: string[]; rows: Record<string, unknown>[] };
+  table?: { columns: string[]; rows: (Record<string, unknown> | unknown[])[] };
   meta?: {
     action: string;
     dataRowCount: number;
@@ -81,6 +82,114 @@ const DATE_PRESETS = [
   { value: "last180", label: "180 days" },
   { value: "last365", label: "1 year" },
 ];
+
+// ── Human-friendly summary helpers ──────────────────────────
+
+/** Labels that replace raw camelCase keys in the summary display */
+const SUMMARY_LABELS: Record<string, string> = {
+  // Prophet / forecasting
+  model: "Forecast Model",
+  horizonDays: "Forecast Period",
+  totalForecast: "Total Predicted Revenue",
+  avgDailyForecast: "Average Daily Revenue",
+  peakForecastDay: "Busiest Expected Day",
+  peakForecastValue: "Peak Day Revenue",
+  historicalDays: "Days of History Used",
+  historicalAvgDaily: "Recent Daily Average",
+  trend: "Revenue Trend",
+  trendPct: "Trend Change",
+  // ARIMA
+  aic: "Model Fit Score",
+  rmse: "Prediction Accuracy",
+  // Holt-Winters
+  alpha: "Level Smoothing",
+  beta: "Trend Smoothing",
+  gamma: "Seasonal Smoothing",
+  // Safety stock
+  avgServiceLevel: "Stock Safety Level",
+  totalSafetyStockUnits: "Safety Buffer (units)",
+  totalReorderUnits: "Recommended Reorder",
+  // ABC-XYZ
+  aCount: "A-Class Products",
+  bCount: "B-Class Products",
+  cCount: "C-Class Products",
+  // RFM
+  segmentCount: "Customer Segments",
+  totalCustomers: "Customers Analyzed",
+  championsCount: "Top Customers",
+  // Generic
+  dataRowCount: "Data Points",
+  durationMs: "Analysis Time",
+};
+
+/** Keys to hide from the summary cards (technical params the user doesn't need) */
+const HIDDEN_SUMMARY_KEYS = new Set([
+  "confidenceInterval",
+  "seasonalityMode",
+  "weeklySeasonality",
+  "yearlySeasonality",
+  "changepointSensitivity",
+  "holidayCountry",
+  "includeHolidays",
+]);
+
+/** Format a summary value for display */
+function formatSummaryValue(key: string, val: unknown): string {
+  if (val === null || val === undefined) return "—";
+
+  // Trend direction with emoji
+  if (key === "trend") {
+    const t = String(val).toLowerCase();
+    if (t === "up") return "📈 Growing";
+    if (t === "down") return "📉 Declining";
+    return "➡️ Stable";
+  }
+
+  // Trend percentage
+  if (key === "trendPct") {
+    const n = Number(val);
+    const sign = n > 0 ? "+" : "";
+    return `${sign}${n.toFixed(1)}%`;
+  }
+
+  // Horizon in human terms
+  if (key === "horizonDays") {
+    const d = Number(val);
+    if (d === 7) return "1 week ahead";
+    if (d === 14) return "2 weeks ahead";
+    if (d === 30) return "~1 month ahead";
+    if (d === 60) return "~2 months ahead";
+    if (d === 90) return "~3 months ahead";
+    return `${d} days ahead`;
+  }
+
+  // Duration in seconds
+  if (key === "durationMs") return `${(Number(val) / 1000).toFixed(1)}s`;
+
+  // Currency-like large numbers
+  if (typeof val === "number") {
+    const moneyKeys = ["totalForecast", "avgDailyForecast", "peakForecastValue", "historicalAvgDaily",
+                        "totalRevenue", "avgRevenue", "revenue", "monetary"];
+    if (moneyKeys.includes(key)) {
+      return val >= 1_000_000
+        ? `${(val / 1_000_000).toFixed(2)}M`
+        : val >= 1_000
+          ? `${(val / 1_000).toFixed(1)}K`
+          : val.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    }
+    // Percentages
+    if (key.toLowerCase().includes("pct") || key.toLowerCase().includes("percent")) {
+      return `${val.toFixed(1)}%`;
+    }
+    // Integers
+    if (val % 1 === 0) return val.toLocaleString();
+    // Decimals
+    return val.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+
+  if (typeof val === "object") return JSON.stringify(val);
+  return String(val);
+}
 
 // ── Component ───────────────────────────────────────────────
 
@@ -303,25 +412,28 @@ export default function PredictiveAnalytics() {
             )}
           </div>
 
+          {/* Narrative insight */}
+          {result.insight && (
+            <div className="analytics-insight-box">
+              <p style={{ margin: 0, lineHeight: 1.6 }}>{result.insight}</p>
+            </div>
+          )}
+
           {/* Summary metrics */}
           {result.summary && Object.keys(result.summary).length > 0 && (
             <div className="analytics-summary-grid">
-              {Object.entries(result.summary).map(([key, val]) => (
-                <div key={key} className="analytics-summary-card">
-                  <span className="analytics-summary-label">
-                    {key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-                  </span>
-                  <span className="analytics-summary-value">
-                    {typeof val === "number"
-                      ? val % 1 === 0
-                        ? val.toLocaleString()
-                        : val.toFixed(2)
-                      : typeof val === "object"
-                        ? JSON.stringify(val)
-                        : String(val)}
-                  </span>
-                </div>
-              ))}
+              {Object.entries(result.summary)
+                .filter(([key]) => !HIDDEN_SUMMARY_KEYS.has(key))
+                .map(([key, val]) => {
+                  const label = SUMMARY_LABELS[key] || key.replace(/([A-Z])/g, " $1").replace(/_/g, " ").replace(/^\w/, c => c.toUpperCase()).trim();
+                  const formatted = formatSummaryValue(key, val);
+                  return (
+                    <div key={key} className="analytics-summary-card">
+                      <span className="analytics-summary-label">{label}</span>
+                      <span className="analytics-summary-value">{formatted}</span>
+                    </div>
+                  );
+                })}
             </div>
           )}
 
@@ -356,15 +468,19 @@ export default function PredictiveAnalytics() {
                 <tbody>
                   {result.table.rows.slice(0, 100).map((row, i) => (
                     <tr key={i}>
-                      {result.table!.columns.map((col) => (
-                        <td key={col}>
-                          {typeof row[col] === "number"
-                            ? (row[col] as number) % 1 === 0
-                              ? (row[col] as number).toLocaleString()
-                              : (row[col] as number).toFixed(2)
-                            : String(row[col] ?? "")}
-                        </td>
-                      ))}
+                      {result.table!.columns.map((col, colIdx) => {
+                        // Python modules return rows as arrays, not objects
+                        const cellVal = Array.isArray(row) ? row[colIdx] : (row as Record<string, unknown>)[col];
+                        return (
+                          <td key={col}>
+                            {typeof cellVal === "number"
+                              ? cellVal % 1 === 0
+                                ? cellVal.toLocaleString()
+                                : cellVal.toLocaleString(undefined, { maximumFractionDigits: 0 })
+                              : String(cellVal ?? "")}
+                          </td>
+                        );
+                      })}
                     </tr>
                   ))}
                 </tbody>

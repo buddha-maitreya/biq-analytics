@@ -2466,24 +2466,64 @@ def run(data: list, params: dict, chart_config: dict) -> dict:
         'trendPct': round(trend_pct, 1),
     }
 
-    # ── Table: forecast by week ──
+    # ── Narrative insight (plain English for non-technical users) ──
+    trend_word = 'growing' if trend_pct > 2 else ('declining' if trend_pct < -2 else 'stable')
+    trend_abs = abs(round(trend_pct, 0))
+    peak_date_str = str(peak_day['ds'].strftime('%A, %B %d'))
+
+    fmt_avg = f"{avg_daily_forecast:,.0f}"
+    fmt_total = f"{total_forecast:,.0f}"
+    fmt_hist = f"{float(daily['y'].mean()):,.0f}"
+    fmt_peak = f"{float(peak_day['yhat']):,.0f}"
+
+    if trend_pct < -5:
+        action = f"This suggests demand is cooling — consider reducing stock orders by {min(int(trend_abs), 50)}% compared to recent levels to avoid excess inventory."
+    elif trend_pct > 5:
+        action = f"Demand is picking up — make sure you have enough stock to meet a potential {int(trend_abs)}% increase. Now is a good time to place larger orders."
+    else:
+        action = "Demand looks steady — maintain your current ordering rhythm."
+
+    insight = (
+        f"Over the next {horizon_days} days, your business is projected to generate approximately "
+        f"{fmt_total} in total revenue, averaging about {fmt_avg} per day. "
+        f"Your recent daily average was {fmt_hist}, so the forecast is "
+        f"{'roughly in line' if abs(trend_pct) <= 2 else f'{trend_word} by about {int(trend_abs)}%'}. "
+        f"The busiest day is expected to be {peak_date_str} (projected {fmt_peak}). "
+        f"{action}"
+    )
+
+    # ── Table: forecast by week (with readable date ranges) ──
     future_forecast = future_forecast.copy()
-    future_forecast['week'] = future_forecast['ds'].dt.isocalendar().week
-    weekly = future_forecast.groupby('week').agg(
-        avg_forecast=('yhat', 'mean'),
+    future_forecast['week_start'] = future_forecast['ds'] - pd.to_timedelta(future_forecast['ds'].dt.dayofweek, unit='D')
+    weekly = future_forecast.groupby('week_start').agg(
+        week_end=('ds', 'max'),
+        avg_daily=('yhat', 'mean'),
+        total=('yhat', 'sum'),
         lower=('yhat_lower', 'mean'),
         upper=('yhat_upper', 'mean'),
+        days=('ds', 'count'),
     ).reset_index()
+    weekly = weekly.sort_values('week_start')
 
     table = {
-        'columns': ['Week', 'Avg Forecast', 'Lower Bound', 'Upper Bound'],
-        'rows': [[int(r['week']), round(r['avg_forecast'], 1),
-                   round(r['lower'], 1), round(r['upper'], 1)]
-                  for _, r in weekly.iterrows()],
+        'columns': ['Week', 'Days', 'Daily Avg', 'Week Total', 'Best Case', 'Worst Case'],
+        'rows': [
+            [
+                f"{r['week_start'].strftime('%b %d')} – {r['week_end'].strftime('%b %d')}",
+                int(r['days']),
+                round(r['avg_daily'], 0),
+                round(r['total'], 0),
+                round(r['upper'], 0),
+                round(r['lower'], 0),
+            ]
+            for _, r in weekly.iterrows()
+        ],
     }
 
     return {
+        'success': True,
         'summary': summary,
+        'insight': insight,
         'charts': [chart],
         'table': table,
     }

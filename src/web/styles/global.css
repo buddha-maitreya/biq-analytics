@@ -11669,6 +11669,29 @@ a, button, input, select, textarea, [role="button"], .nav-item, .btn {
   word-break: break-word;
 }
 
+/* ── Insight callout box ── */
+.analytics-insight-box {
+  position: relative;
+  padding: 16px 18px 16px 18px;
+  margin-bottom: 20px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.06) 0%, rgba(16, 185, 129, 0.06) 100%);
+  border: 1px solid rgba(59, 130, 246, 0.18);
+  border-left: 4px solid rgba(59, 130, 246, 0.6);
+  border-radius: 10px;
+  font-size: 0.88rem;
+  line-height: 1.65;
+  color: var(--text-primary);
+}
+
+.analytics-insight-box strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
 /* ── Charts ── */
 .analytics-charts {
   display: flex;

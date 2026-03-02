@@ -261,7 +261,10 @@ export default function PredictiveAnalytics() {
       const data = await res.json();
 
       if (!res.ok || data.error) {
-        setError(data.error || `Request failed (HTTP ${res.status})`);
+        const detail = data.traceback
+          ? `\n\nDiagnostic detail:\n${typeof data.traceback === 'string' ? data.traceback.slice(0, 800) : JSON.stringify(data.traceback).slice(0, 800)}`
+          : '';
+        setError((data.error || `Request failed (HTTP ${res.status})`) + detail);
       } else {
         setResult(data);
       }
@@ -390,7 +393,7 @@ export default function PredictiveAnalytics() {
       {/* Error */}
       {error && (
         <div className="card" style={{ borderLeft: "3px solid #ef4444", padding: 16 }}>
-          <p style={{ color: "#ef4444", margin: 0 }}>❌ {error}</p>
+          <p style={{ color: "#ef4444", margin: 0, whiteSpace: 'pre-wrap', fontFamily: error.includes('Diagnostic') ? 'monospace' : 'inherit', fontSize: error.includes('Diagnostic') ? '0.8rem' : undefined }}>❌ {error}</p>
         </div>
       )}
 

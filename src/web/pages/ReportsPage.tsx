@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useAPI } from "@agentuity/react";
 import PredictiveAnalytics from "../components/PredictiveAnalytics";
 import type { AppConfig } from "../types";
+import { renderMarkdown } from "@web/lib/markdown";
 
 interface ReportsPageProps {
   config: AppConfig;
@@ -441,7 +442,7 @@ export default function ReportsPage({ config }: ReportsPageProps) {
             )}
           </div>
           <div className="report-content-area">
-            <pre className="report-text">{reportContent}</pre>
+            {renderMarkdown(reportContent)}
           </div>
         </div>
       )}

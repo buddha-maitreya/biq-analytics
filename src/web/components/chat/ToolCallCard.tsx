@@ -11,6 +11,7 @@
 
 import React, { useState } from "react";
 import type { ToolCall } from "../../hooks/useChatStream";
+import { renderMarkdown } from "@web/lib/markdown";
 
 interface ToolCallCardProps {
   toolCall: ToolCall;
@@ -326,7 +327,7 @@ function ReportResult({ output }: { output: any }) {
         {output.period?.end?.split("T")[0]}
       </div>
       <div className="tool-report-content">
-        {renderSimpleMarkdown(output.content || "")}
+        {renderMarkdown(output.content || "")}
       </div>
       {output.content && (
         <div className="tool-report-actions">
@@ -522,46 +523,3 @@ function formatValue(val: unknown): string {
   return String(val);
 }
 
-/** Very simple markdown subset renderer (headers, bold, bullet lists) */
-function renderSimpleMarkdown(text: string) {
-  const lines = text.split("\n");
-  const elements: React.ReactNode[] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    if (line.startsWith("### ")) {
-      elements.push(<h4 key={i}>{line.slice(4)}</h4>);
-    } else if (line.startsWith("## ")) {
-      elements.push(<h3 key={i}>{line.slice(3)}</h3>);
-    } else if (line.startsWith("# ")) {
-      elements.push(<h2 key={i}>{line.slice(2)}</h2>);
-    } else if (line.startsWith("- ") || line.startsWith("* ")) {
-      elements.push(
-        <li key={i}>{renderInline(line.slice(2))}</li>
-      );
-    } else if (line.trim() === "") {
-      elements.push(<br key={i} />);
-    } else {
-      elements.push(<p key={i}>{renderInline(line)}</p>);
-    }
-  }
-
-  return <>{elements}</>;
-}
-
-function renderInline(text: string): React.ReactNode {
-  // Bold: **text**
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  return (
-    <>
-      {parts.map((part, i) =>
-        part.startsWith("**") && part.endsWith("**") ? (
-          <strong key={i}>{part.slice(2, -2)}</strong>
-        ) : (
-          <span key={i}>{part}</span>
-        )
-      )}
-    </>
-  );
-}

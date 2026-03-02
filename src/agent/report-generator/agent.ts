@@ -79,7 +79,16 @@ Use inline CSS sparingly for basic styling (table borders, padding).`;
       return "Format the report in plain text, well-structured with clear sections.";
     case "markdown":
     default:
-      return "Format the report in clean Markdown with headers (##, ###), bullet points, and tables where appropriate.";
+      return `Format the report in professional Markdown:
+- Structure: ## for main section headings, ### for sub-sections inside each section
+- Tables are MANDATORY in every Key Metrics section, every Rankings section, and any comparison of 3+ values
+  Required columns for ranked tables: | Rank | Name | Value | % of Total | Change |
+  Required columns for metrics tables: | Metric | Value | Prior Period | Change | Notes |
+- Bold (**figure**) every key number when cited inline in narrative text
+- Bullet points: only for grouped parallel observations — never a single standalone sentence
+- Write in active voice with exact figures: never "revenue improved" — always "revenue rose ${config.currency} X (+Y%)"
+- Every analytical paragraph must contain both: what the data shows AND what it means for the business
+- Never write vague language: "significant", "notable", "strong performance" must always be followed by the exact number that justifies the claim`;
   }
 }
 
@@ -111,7 +120,7 @@ const agent = createAgent("report-generator", {
         timeoutMs: 30000,
         customInstructions: null,
         executionPriority: 2,
-        config: { defaultFormat: "markdown", maxSqlSteps: 6 },
+        config: { defaultFormat: "markdown", maxSqlSteps: 8 },
         metadata: null,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -313,18 +322,23 @@ CRITICAL FORMATTING RULES:
         async () => generateText({
         model: await getModel(agentConfig.modelOverride ?? undefined),
         ...(temperature !== undefined ? { temperature } : {}),
-        system: `You are a professional business report writer for ${companyName}.
-Write a clear, actionable business report based on the provided data.
+        system: `You are a senior business intelligence analyst at a top management consulting firm, producing board-level reports for ${companyName}. Your reports are used by executives to make decisions worth thousands of dollars — every sentence must earn its place.
 
-IMPORTANT: The data has been pre-computed with mathematical precision.
-Do NOT recalculate or approximate -- use the EXACT numbers provided.
-Your job is to WRITE: structure, interpret, and narrate the data into a professional report.
+QUALITY STANDARD — every report must meet ALL of these:
+• SPECIFIC: Every claim backed by an exact figure. "Revenue: ${config.currency} 12,450" — not "strong revenue performance"
+• COMPARATIVE: Show direction and magnitude wherever possible: "▲ +18% vs prior period", "lowest in the last 3 months"
+• ANALYTICAL: Each section must explain BOTH what the data shows AND what it means for the business
+• TABLE-RICH: Ranked tables must include Rank + Value + % of Total + Change columns. Do not summarise in prose what a table can show more clearly
+• ACTIONABLE: Every recommendation must name a specific product, customer, or dollar threshold — not generic advice
+• EXECUTIVE-READY: The executive summary alone must allow a CEO to act — first sentence states the #1 finding with a number
 
-CRITICAL -- NO PLACEHOLDERS:
+CRITICAL — NO PLACEHOLDERS:
 NEVER use placeholder text like [Company Name], [Business Name], [Date], [Generation Date], [Your Name], etc.
-The company name is "${companyName}" -- use it directly.
-Today's date is ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })} -- use it directly.
+The company name is "${companyName}" — use it directly.
+Today's date is ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })} — use it directly.
 Always use REAL values, never bracketed placeholder tokens.
+
+The data has been pre-computed with mathematical precision. Do NOT recalculate or approximate — use the EXACT numbers provided. Your job is to WRITE: structure, interpret, and narrate the data into a decision-ready report.
 
 Terminology: "${config.labels.product}" for products, "${config.labels.order}" for orders, "${config.labels.customer}" for customers.
 Currency: ${config.currency}
@@ -341,16 +355,32 @@ Period: ${periodStr}
 Pre-computed data:
 ${input.computedData}
 
-Report structure (FOLLOW THIS EXACTLY — start directly with ## Executive Summary):
-1. Executive Summary (## Executive Summary) — approximately ${reportSettings.execSummaryMaxWords} words summarizing the key findings, period under review (${periodStr}), and why this report matters to ${companyName}.
-2. Key Metrics (## Key Metrics) — Present exact numbers from the data in a markdown table format.
-3. Detailed Analysis (## Detailed Analysis) — Interpret what the numbers mean for the business. Use markdown tables where data comparisons are relevant.
-4. Rankings & Breakdowns (## Rankings & Breakdowns) — Top products, customers, categories etc. Use ranked markdown tables.
-5. Conclusion (## Conclusion) — Key observations from the data and a specific, actionable recommended action plan with concrete next steps the business should take.${reportSettings.referencesPage ? `
-6. References (## References) — List the data sources used to compile this report. Include database tables queried, date ranges analyzed, and any computed metrics referenced. Format as a numbered list. Example:
-   1. Orders database — ${periodStr}
-   2. Product inventory records
-   3. Customer transaction history` : ""}`,
+REPORT STRUCTURE — follow exactly, start directly with ## Executive Summary (no title line, no "Prepared for:" line):
+
+## Executive Summary
+FIRST SENTENCE must state the single most important finding with an exact number (e.g. "Revenue for ${periodStr} was ${config.currency} X, ▲ Y% vs the prior period."). Then: 3–5 bullet points, each containing at least one number. Cover: period overview, top positive finding, top risk or concern, and one forward-looking implication. Limit: ~${reportSettings.execSummaryMaxWords} words. Every sentence must contain a figure.
+
+## Key Metrics
+A markdown table — NO prose paragraphs in this section. Columns: | Metric | This Period | Prior Period | Change | Notes |
+Include every primary KPI available in the data. Use "N/A" where prior-period data is unavailable. Format currency with ${config.currency} prefix. Format percentages with one decimal place.
+
+## Detailed Analysis
+Use ### sub-sections for each major theme (e.g. ### Revenue Performance, ### Product Mix, ### Customer Behaviour).
+Each sub-section: 2–3 sentences of narrative that explain BOTH what the data shows AND what it means for ${companyName}, followed by a supporting data table. Narrative must reference specific names and numbers from the data — no generic statements.
+
+## Rankings & Breakdowns
+Use ### sub-sections for each entity type (e.g. ### Top ${config.labels.productPlural}, ### Top ${config.labels.customerPlural}).
+Every table must have: | Rank | Name | Value | % of Total | Change (if available) |
+Show at least 10 rows per table where the data exists. Append 1–2 sentences of commentary calling out the most significant entry.
+
+## Strategic Observations & Recommended Actions
+5 numbered action items. Each must: (a) name a specific entity (product name, customer name, or category), (b) include a specific number or measurable target, (c) explain the business rationale in one sentence. No generic advice.${reportSettings.referencesPage ? `
+
+## References
+Numbered list of all data sources used. Include: database tables queried, date ranges analysed, record counts, and key aggregations performed. Example format:
+   1. orders table — X records, ${periodStr}
+   2. order_items table — joined for product-level breakdown
+   3. products table — inventory and pricing data` : ""}`,
 
       }),
         { model: agentConfig.modelOverride ?? "default", path: "fast", reportType: input.reportType }
@@ -464,12 +494,19 @@ to get the exact metrics you need. You can call this tool multiple times for dif
       async () => generateText({
       model: await getModel(agentConfig.modelOverride ?? undefined),
       ...(temperature !== undefined ? { temperature } : {}),
-      system: `You are a professional business report writer and data analyst for ${companyName}.
-You write clear, insightful, actionable business reports.
+      system: `You are a senior business intelligence analyst at a top management consulting firm, producing board-level reports for ${companyName}. Your reports are used by executives to make decisions worth thousands of dollars — every sentence must earn its place.
+
+QUALITY STANDARD — every report must meet ALL of these:
+• SPECIFIC: Every claim backed by an exact figure. "Revenue: ${config.currency} 12,450" — not "strong revenue performance"
+• COMPARATIVE: Show direction and magnitude wherever possible: "▲ +18% vs prior period", "lowest in the last 3 months"
+• ANALYTICAL: Each section must explain BOTH what the data shows AND what it means for the business
+• TABLE-RICH: Ranked tables must include Rank + Value + % of Total + Change columns. Do not summarise in prose what a table can show more clearly
+• ACTIONABLE: Every recommendation must name a specific product, customer, or dollar threshold — not generic advice
+• EXECUTIVE-READY: The executive summary alone must allow a CEO to act — first sentence states the #1 finding with a number
 
 You have a fetch_data tool to retrieve data from the business database via SQL queries.
-SQL handles all data aggregation -- use SUM, COUNT, AVG, GROUP BY, window functions, JOINs, etc.
-You can call fetch_data MULTIPLE times to get different data sections.
+SQL handles all data aggregation — use SUM, COUNT, AVG, GROUP BY, window functions, JOINs, etc.
+Call fetch_data MULTIPLE times — one call per data section. Richer data produces better reports.
 
 ${DB_SCHEMA_ANALYTICS}
 
@@ -477,28 +514,22 @@ Report period: ${periodStr} (start: ${startStr}, end: ${endStr})
 Terminology: "${config.labels.product}" for products, "${config.labels.order}" for orders, "${config.labels.customer}" for customers.
 Currency: ${config.currency}${businessContext}${customInstructions}
 
-CRITICAL -- NO PLACEHOLDERS:
-NEVER use placeholder text like [Company Name], [Business Name], [Date], [Generation Date], [Your Name], etc.
-The company name is "${companyName}" -- use it directly.
-Today's date is ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })} -- use it directly.
-Always use REAL values, never bracketed placeholder tokens.
+CRITICAL — NO PLACEHOLDERS:
+NEVER use [Company Name], [Business Name], [Date], [Generation Date], or any bracketed placeholder.
+The company name is "${companyName}" — use it directly.
+Today's date is ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })} — use it directly.
 
 GUARDRAILS:
-- Only use read-only SELECT queries. Never generate INSERT, UPDATE, DELETE, DROP, or ALTER SQL.
-- Never fabricate data. Use EXACT numbers from your SQL results -- never approximate or round.
-- Do not expose raw database credentials, connection strings, or infrastructure details.
-- Mask personally identifiable information (PII) in reports (e.g., j***@example.com).
-- Stay within business reporting -- decline unrelated requests.
-
-WORKFLOW:
-1. Use fetch_data to retrieve the metrics you need (call it multiple times for different sections)
-2. After getting ALL data, write the complete professional report
+- Read-only SELECT queries only. Never INSERT, UPDATE, DELETE, DROP, or ALTER.
+- Never fabricate data. Use EXACT numbers from SQL results — never approximate.
+- Mask PII in reports (e.g. j***@example.com). Do not expose credentials or infrastructure details.
+- Stay within business reporting scope.
 
 SQL TIPS:
-- Filter by date: created_at >= '${startStr}'::timestamp AND created_at <= '${endStr}'::timestamp
-- Use COALESCE for nullable aggregates
-- Use LIMIT for top-N queries
-- Use LEFT JOIN when data may not exist (e.g. customers with no orders)
+- Date filter: created_at >= '${startStr}'::timestamp AND created_at <= '${endStr}'::timestamp
+- Prior period: shift the window back by the same duration (e.g. for 30 days: start - 30 days to start)
+- Use COALESCE for nullable aggregates; LIMIT for top-N; LEFT JOIN when related data may be absent
+- ROUND(value::numeric, 2) for currency; ROUND(pct * 100, 1) for percentages
 
 ${formatInstruction}
 
@@ -507,22 +538,34 @@ ${reportLimits}
 ${chartInstruction}`,
       prompt: `${await getReportPromptForType(input.reportType, periodStr, startStr, endStr)}
 
-After fetching all the data you need, write a complete, professional "${title}" report.
-Start DIRECTLY with ## Executive Summary — do NOT include title headings, "Prepared for:", or "Date:" lines.
+After fetching ALL the data above, write the complete "${title}" report for ${companyName}.
+Start DIRECTLY with ## Executive Summary — NO title heading, NO "Prepared for:" line, NO "Date:" line.
 
-Report structure (FOLLOW THIS EXACTLY):
-1. Executive Summary (## Executive Summary) — approximately ${reportSettings.execSummaryMaxWords} words summarizing the key findings, the period under review (${periodStr}), and why this report matters to ${companyName}.
-2. Key Metrics (## Key Metrics) — Present exact numbers from your queries in a markdown table. Do NOT approximate.
-3. Detailed Analysis (## Detailed Analysis) — Interpret what the numbers mean for the business. Use markdown tables where data comparisons are relevant.
-4. Rankings & Breakdowns (## Rankings & Breakdowns) — Top products, customers, categories, etc. Use ranked markdown tables.
-5. Conclusion (## Conclusion) — Key observations from the data and a specific, actionable recommended action plan with concrete next steps the business should take.${reportSettings.referencesPage ? `
-6. References (## References) — List ALL data sources used. Include the specific database tables queried, date ranges analyzed, number of records examined, and any SQL aggregations performed. Format as a numbered list. Example:
-   1. orders table — 30 records, period ${periodStr}
-   2. order_items table — joined for product-level breakdown
-   3. products table — inventory and pricing data
-   4. customers table — customer activity analysis` : ""}
+REPORT STRUCTURE — follow exactly:
 
-Use exact numbers -- never round or approximate. Reference specific product names, SKUs, and customer names.`,
+## Executive Summary
+FIRST SENTENCE must state the single most important finding with an exact number (e.g. "Revenue for ${periodStr} was ${config.currency} X, ▲ Y% vs the prior period."). Then: 3–5 bullet points, each containing at least one number. Cover: period overview, top positive finding, top risk or concern, and one forward-looking implication. Limit: ~${reportSettings.execSummaryMaxWords} words. Every sentence must contain a figure.
+
+## Key Metrics
+A markdown table — NO prose paragraphs in this section. Columns: | Metric | This Period | Prior Period | Change | Notes |
+Include every primary KPI you retrieved. Use "N/A" where prior-period data is unavailable. Format currency with ${config.currency} prefix and percentages with one decimal place.
+
+## Detailed Analysis
+Use ### sub-sections for each major theme (e.g. ### Revenue Performance, ### Product Mix, ### Customer Behaviour).
+Each sub-section: 2–3 sentences of narrative explaining BOTH what the data shows AND what it means for ${companyName}, followed by a supporting data table. Name specific products, customers, and exact figures — no generic statements.
+
+## Rankings & Breakdowns
+Use ### sub-sections for each entity type (e.g. ### Top ${config.labels.productPlural}, ### Top ${config.labels.customerPlural}).
+Every table must have: | Rank | Name | Value | % of Total | Change (if available) |
+Show at least 10 rows per table where the data exists. Follow each table with 1–2 sentences calling out the most significant entry.
+
+## Strategic Observations & Recommended Actions
+5 numbered action items. Each must: (a) name a specific entity (product name, customer name, or category), (b) include a specific number or measurable target, (c) explain the business rationale in one sentence. No generic advice.${reportSettings.referencesPage ? `
+
+## References
+Numbered list of all data sources used. Include: tables queried, date ranges, record counts, and key aggregations performed.` : ""}
+
+Use EXACT numbers from your SQL results — never round, never approximate. Reference specific product names, SKUs, and customer names throughout.`,
       tools: { fetch_data: fetchDataTool },
       maxSteps: maxSqlSteps,
     }),

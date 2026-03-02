@@ -39,6 +39,7 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
   const {
     sessions,
     activeSessionId,
+    hasMoreSessions,
     messages,
     streamingText,
     streamingToolCalls,
@@ -46,6 +47,7 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
     isConnected,
     error,
     loadSessions,
+    loadMoreSessions,
     createSession,
     selectSession,
     deleteSession,
@@ -274,9 +276,11 @@ export default function AssistantPage({ config, onOpenSidebar }: AssistantPagePr
       <SessionSidebar
         sessions={sessions}
         activeSessionId={activeSessionId}
+        hasMore={hasMoreSessions}
         onSelect={selectSession}
         onCreate={createSession}
         onDelete={deleteSession}
+        onLoadMore={loadMoreSessions}
         mobileOpen={sidebarOpen}
         onCloseMobile={() => setSidebarOpen(false)}
       />

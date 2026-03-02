@@ -1557,6 +1557,26 @@ textarea {
   color: #ef4444;
 }
 
+.session-sidebar-load-more {
+  display: block;
+  width: 100%;
+  padding: 10px 0;
+  margin-top: 4px;
+  background: none;
+  border: none;
+  color: var(--color-primary, #3b82f6);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.session-sidebar-load-more:hover {
+  background: rgba(59, 130, 246, 0.08);
+}
+
 /* Mobile sidebar backdrop & slide-over */
 .session-sidebar-backdrop {
   display: none;

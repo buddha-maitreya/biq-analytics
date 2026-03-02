@@ -123,9 +123,12 @@ chat.post("/chat/sessions", async (c) => {
   return c.json({ data: session }, 201);
 });
 
-/** GET /sessions — List user's chat sessions */
+/** GET /sessions — List user's chat sessions (paginated) */
 chat.get("/chat/sessions", async (c) => {
   const user = getUser(c);
+
+  const limit = Math.min(Math.max(parseInt(c.req.query("limit") || "5", 10), 1), 50);
+  const offset = Math.max(parseInt(c.req.query("offset") || "0", 10), 0);
 
   const sessions = await db.query.chatSessions.findMany({
     where: and(
@@ -133,10 +136,14 @@ chat.get("/chat/sessions", async (c) => {
       eq(chatSessions.status, "active")
     ),
     orderBy: [desc(chatSessions.updatedAt)],
-    limit: 50,
+    limit: limit + 1,  // fetch one extra to detect hasMore
+    offset,
   });
 
-  return c.json({ data: sessions });
+  const hasMore = sessions.length > limit;
+  const data = hasMore ? sessions.slice(0, limit) : sessions;
+
+  return c.json({ data, hasMore, offset, limit });
 });
 
 /** DELETE /sessions/:id — Delete (archive) a chat session */

@@ -9,9 +9,11 @@ import type { ChatSession } from "../../hooks/useChatStream";
 interface SessionSidebarProps {
   sessions: ChatSession[];
   activeSessionId: string | null;
+  hasMore: boolean;
   onSelect: (id: string) => void;
   onCreate: () => void;
   onDelete: (id: string) => void;
+  onLoadMore: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
 }
@@ -19,9 +21,11 @@ interface SessionSidebarProps {
 const SessionSidebar = React.memo(function SessionSidebar({
   sessions,
   activeSessionId,
+  hasMore,
   onSelect,
   onCreate,
   onDelete,
+  onLoadMore,
   mobileOpen,
   onCloseMobile,
 }: SessionSidebarProps) {
@@ -86,6 +90,15 @@ const SessionSidebar = React.memo(function SessionSidebar({
               </button>
             </div>
           ))}
+
+          {hasMore && (
+            <button
+              className="session-sidebar-load-more"
+              onClick={onLoadMore}
+            >
+              Load more
+            </button>
+          )}
         </div>
       </aside>
     </>

@@ -69,6 +69,8 @@ export interface ChatSession {
 export interface ChatState {
   sessions: ChatSession[];
   activeSessionId: string | null;
+  /** Whether there are older sessions to load */
+  hasMoreSessions: boolean;
   /** Messages keyed by ID (Map for O(1) access like Coder's useSessionEvents) */
   messages: Map<string, ChatMessage>;
   /** Tool calls for the current streaming response, keyed by toolCallId */
@@ -89,7 +91,8 @@ export interface ChatState {
 
 type ChatAction =
   // Session management
-  | { type: "SET_SESSIONS"; sessions: ChatSession[] }
+  | { type: "SET_SESSIONS"; sessions: ChatSession[]; hasMore?: boolean }
+  | { type: "APPEND_SESSIONS"; sessions: ChatSession[]; hasMore?: boolean }
   | { type: "ADD_SESSION"; session: ChatSession }
   | { type: "REMOVE_SESSION"; sessionId: string }
   | { type: "SET_ACTIVE_SESSION"; sessionId: string | null }
@@ -121,6 +124,7 @@ type ChatAction =
 const initialState: ChatState = {
   sessions: [],
   activeSessionId: null,
+  hasMoreSessions: false,
   messages: new Map(),
   streamingToolCalls: new Map(),
   streamingText: "",
@@ -136,7 +140,14 @@ const initialState: ChatState = {
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case "SET_SESSIONS":
-      return { ...state, sessions: action.sessions };
+      return { ...state, sessions: action.sessions, hasMoreSessions: action.hasMore ?? false };
+
+    case "APPEND_SESSIONS":
+      return {
+        ...state,
+        sessions: [...state.sessions, ...action.sessions],
+        hasMoreSessions: action.hasMore ?? false,
+      };
 
     case "ADD_SESSION":
       return { ...state, sessions: [action.session, ...state.sessions] };
@@ -172,7 +183,17 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     // (e.g. "temp-1740000000") survive a concurrent verifyAuthAndHydrate().
     case "INIT_MESSAGES": {
       const messages = new Map(state.messages);
+      // Remove any optimistic temp messages that are now in DB (dedup by role+content)
       for (const msg of action.messages) {
+        for (const [key, existing] of messages) {
+          if (
+            key.startsWith("temp-") &&
+            existing.role === msg.role &&
+            existing.content === msg.content
+          ) {
+            messages.delete(key);
+          }
+        }
         messages.set(msg.id, msg);
       }
       return { ...state, messages };
@@ -570,21 +591,30 @@ export function useChatStream() {
 
   // ── Session management ─────────────────────────────────
 
-  const loadSessions = useCallback(async () => {
+  const loadSessions = useCallback(async (append = false) => {
     try {
-      const res = await fetch("/api/chat/sessions", {
+      const offset = append ? state.sessions.length : 0;
+      const res = await fetch(`/api/chat/sessions?limit=5&offset=${offset}`, {
         headers: getAuthHeaders(),
       });
       if (res.ok) {
-        const { data } = await res.json();
-        dispatch({ type: "SET_SESSIONS", sessions: data });
+        const { data, hasMore } = await res.json();
+        if (append) {
+          dispatch({ type: "APPEND_SESSIONS", sessions: data, hasMore });
+        } else {
+          dispatch({ type: "SET_SESSIONS", sessions: data, hasMore });
+        }
       } else {
         console.warn("[Chat] loadSessions failed", { status: res.status, statusText: res.statusText });
       }
     } catch (err: any) {
       console.error("[Chat] loadSessions error", { error: err?.message });
     }
-  }, []);
+  }, [state.sessions.length]);
+
+  const loadMoreSessions = useCallback(async () => {
+    await loadSessions(true);
+  }, [loadSessions]);
 
   const createSession = useCallback(async (): Promise<string | null> => {
     try {
@@ -785,6 +815,7 @@ export function useChatStream() {
       // State
       sessions: state.sessions,
       activeSessionId: state.activeSessionId,
+      hasMoreSessions: state.hasMoreSessions,
       messages: sortedMessages,
       streamingText: state.streamingText,
       streamingToolCalls: sortedStreamingToolCalls,
@@ -793,6 +824,7 @@ export function useChatStream() {
       error: state.error,
       // Actions
       loadSessions,
+      loadMoreSessions,
       createSession,
       selectSession,
       deleteSession,
@@ -804,6 +836,7 @@ export function useChatStream() {
     [
       state.sessions,
       state.activeSessionId,
+      state.hasMoreSessions,
       sortedMessages,
       state.streamingText,
       sortedStreamingToolCalls,
@@ -811,6 +844,7 @@ export function useChatStream() {
       state.isConnected,
       state.error,
       loadSessions,
+      loadMoreSessions,
       createSession,
       selectSession,
       deleteSession,

@@ -120,7 +120,7 @@ const agent = createAgent("report-generator", {
         timeoutMs: 30000,
         customInstructions: null,
         executionPriority: 2,
-        config: { defaultFormat: "markdown", maxSqlSteps: 8 },
+        config: { defaultFormat: "markdown", maxSqlSteps: 5 },
         metadata: null,
         createdAt: new Date(),
         updatedAt: new Date(),

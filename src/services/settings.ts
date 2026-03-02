@@ -129,20 +129,31 @@ export async function getSetting(key: string): Promise<string> {
   return row?.value ?? DEFAULTS[key] ?? "";
 }
 
+let _allSettingsCache: Record<string, string> | null = null;
+let _allSettingsCacheAt = 0;
+const ALL_SETTINGS_TTL = 60_000;
+
 /** Get all settings as a key-value map */
 export async function getAllSettings(): Promise<Record<string, string>> {
+  const now = Date.now();
+  if (_allSettingsCache && now - _allSettingsCacheAt < ALL_SETTINGS_TTL) {
+    return { ..._allSettingsCache };
+  }
   const rows = await db.query.businessSettings.findMany();
   const map: Record<string, string> = { ...DEFAULTS };
   for (const row of rows) {
     map[row.key] = row.value;
   }
-  return map;
+  _allSettingsCache = map;
+  _allSettingsCacheAt = now;
+  return { ...map };
 }
 
 /** Update one or more settings (upsert) */
 export async function updateSettings(
   updates: Record<string, string>
 ): Promise<Record<string, string>> {
+  _allSettingsCache = null; // invalidate on write
   for (const [key, value] of Object.entries(updates)) {
     const existing = await db.query.businessSettings.findFirst({
       where: eq(businessSettings.key, key),

@@ -30,36 +30,24 @@ const ROLE_EMOJIS: Record<string, string> = {
 };
 
 const navItems: { page: Page; icon: string; labelKey?: keyof AppConfig["labels"] | null; fallback: string }[] = [
-  { page: "assistant", icon: "🤖", labelKey: null, fallback: "AI Assistant" },
-  { page: "dashboard", icon: "📊", labelKey: null, fallback: "Dashboard" },
-  { page: "products", icon: "📦", labelKey: "productPlural", fallback: "Products / Services" },
-  { page: "operations", icon: "🛒", labelKey: null, fallback: "Operations" },
-  { page: "inventory", icon: "🏭", labelKey: "warehouse", fallback: "Inventory" },
-  { page: "scan", icon: "📷", labelKey: null, fallback: "Scanner" },
-  { page: "approvals", icon: "✅", labelKey: null, fallback: "Approvals" },
-  { page: "reports", icon: "📊", labelKey: null, fallback: "Analytics" },
-  { page: "admin", icon: "⚙️", labelKey: null, fallback: "Admin" },
-  { page: "email", icon: "📧", labelKey: null, fallback: "Email" },
-  { page: "about", icon: "ℹ️", labelKey: null, fallback: "About" },
+  { page: "dashboard",  icon: "📊", labelKey: null, fallback: "Dashboard" },
+  { page: "analytics",  icon: "🔬", labelKey: null, fallback: "Analytics Explorer" },
+  { page: "assistant",  icon: "🤖", labelKey: null, fallback: "AI Assistant" },
+  { page: "reports",    icon: "📋", labelKey: null, fallback: "Reports" },
+  { page: "admin",      icon: "⚙️", labelKey: null, fallback: "Admin" },
+  { page: "about",      icon: "ℹ️", labelKey: null, fallback: "About" },
 ];
 
 /** Pages restricted by role (base access — can be extended via permissions) */
 const ROLE_VISIBLE: Record<string, Page[]> = {
-  viewer: ["dashboard", "products", "operations", "inventory", "approvals", "reports", "about"],
-  staff: ["dashboard", "products", "operations", "inventory", "scan", "approvals", "reports", "about"],
-  manager: ["dashboard", "products", "operations", "inventory", "scan", "approvals", "reports", "about"],
-  admin: ["dashboard", "products", "operations", "inventory", "scan", "approvals", "reports", "admin", "about"],
+  viewer:  ["dashboard", "analytics", "reports", "about"],
+  staff:   ["dashboard", "analytics", "assistant", "reports", "about"],
+  manager: ["dashboard", "analytics", "assistant", "reports", "about"],
+  admin:   ["dashboard", "analytics", "assistant", "reports", "admin", "about"],
 };
 
-/** Pages that can be unlocked via the permissions array (regardless of role) */
-const PERMISSION_PAGES: Record<string, Page> = {
-  assistant: "assistant",
-};
 
 const Sidebar = React.memo(function Sidebar({ config, currentPage, onNavigate, user, onLogout, mobileOpen, onCloseMobile }: SidebarProps) {
-  // ── Pending approval count badge (visibility-aware, adaptive interval) ──
-  const [pendingCount, setPendingCount] = useState(0);
-
   // ── Swipe-to-close for mobile sidebar drawer ──
   const sidebarRef = useRef<HTMLElement>(null);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
@@ -79,43 +67,10 @@ const Sidebar = React.memo(function Sidebar({ config, currentPage, onNavigate, u
     touchStart.current = null;
   }, [onCloseMobile]);
 
-  // Fetch approvals count once when navigating to the Approvals page,
-  // or periodically if polling is enabled in settings (approvalsPolling === "interval").
-  const fetchApprovalsCount = async () => {
-    try {
-      const res = await fetch("/api/approvals/pending/count");
-      if (res.ok) {
-        const json = await res.json();
-        setPendingCount(json.data?.count ?? 0);
-      }
-    } catch { /* ignore */ }
-  };
-
-  // Refresh count whenever the user navigates to the Approvals page
-  useEffect(() => {
-    if (currentPage === "approvals") fetchApprovalsCount();
-  }, [currentPage]);
-
-  // Background polling — only when enabled in settings
-  useEffect(() => {
-    if (config.approvalsPolling !== "interval") return;
-    const INTERVAL = 30 * 60_000; // 30 min
-    fetchApprovalsCount(); // fetch once on mount
-    const timer = setInterval(fetchApprovalsCount, INTERVAL);
-    return () => clearInterval(timer);
-  }, [config.approvalsPolling]);
-
-  // super_admin sees everything; others get role-based pages + permission-granted pages
-  let visiblePages: Page[] | null = null; // null = all pages (super_admin)
-  if (ROLE_VISIBLE[user.role]) {
-    visiblePages = [...ROLE_VISIBLE[user.role]];
-    // Add permission-gated pages
-    for (const [perm, page] of Object.entries(PERMISSION_PAGES)) {
-      if (user.permissions?.includes(perm) && !visiblePages.includes(page)) {
-        visiblePages.unshift(page); // Add at the top
-      }
-    }
-  }
+  // super_admin sees everything; others get role-based pages
+  const visiblePages: Page[] | null = ROLE_VISIBLE[user.role]
+    ? [...ROLE_VISIBLE[user.role]]
+    : null; // null = all pages (super_admin)
 
   const handleNav = (p: Page) => {
     onNavigate(p);
@@ -160,9 +115,6 @@ const Sidebar = React.memo(function Sidebar({ config, currentPage, onNavigate, u
                 <span className="nav-label">
                   {item.labelKey ? config.labels[item.labelKey] : item.fallback}
                 </span>
-                {item.page === "approvals" && pendingCount > 0 && (
-                  <span className="nav-badge">{pendingCount > 99 ? "99+" : pendingCount}</span>
-                )}
               </button>
             ))}
         </nav>

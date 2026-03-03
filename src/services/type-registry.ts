@@ -122,6 +122,139 @@ const BUILTIN_ANALYSIS_TYPES: TypeDefinition[] = [
       },
     ],
   },
+  {
+    slug: "dead-stock",
+    label: "Dead Stock Analysis",
+    description: "Identifies slow-moving inventory with no recent sales",
+    promptTemplate: `Perform DEAD STOCK analysis:
+- Fetch all active {{PRODUCT_LABEL_PLURAL}} with current inventory quantities and their last sale dates
+- Identify {{PRODUCT_LABEL_PLURAL}} with zero sales in the last 30 days that still have stock on hand
+- Calculate the capital tied up in dead stock (quantity * cost_price) per {{PRODUCT_LABEL}}
+- Rank by capital at risk (highest first) and flag items with no sales in 60+ days as critical
+- Suggest actions: markdown/bundle candidates, return-to-supplier, or write-off
+- Return structured data with per-{{PRODUCT_LABEL}} dead stock metrics and total capital at risk`,
+    fewShotExamples: [
+      {
+        userInput: "Which products are sitting on the shelf unsold?",
+        expectedBehavior: "Query products with inventory > 0 and no recent sales. Calculate tied-up capital per item. Sort by capital at risk descending. Flag items with 60+ days of no movement as critical.",
+      },
+    ],
+  },
+  {
+    slug: "cash-simulation",
+    label: "Cash-in-Stock Simulation",
+    description: "Monte Carlo analysis of capital tied up in inventory by ABC tier",
+    promptTemplate: `Perform CASH-IN-STOCK SIMULATION:
+- Fetch all active {{PRODUCT_LABEL_PLURAL}} with cost_price, current stock quantity, and average daily sales rate (last 90 days)
+- Classify each {{PRODUCT_LABEL}} into ABC tiers by inventory value (A = top 80%, B = next 15%, C = bottom 5%)
+- Run a Monte Carlo simulation (1000 iterations) modeling demand variability to estimate:
+  * Expected days until each {{PRODUCT_LABEL}} sells through
+  * Capital recovery timeline by ABC tier
+  * Total working capital currently locked in inventory
+- Identify over-stocked items where current stock exceeds 60 days of projected demand
+- Return structured data with per-tier capital summaries, recovery timelines, and over-stock flags`,
+    fewShotExamples: [
+      {
+        userInput: "How much cash is locked in my inventory?",
+        expectedBehavior: "Calculate inventory value per product (qty * cost). Classify into ABC tiers. Simulate demand to project sell-through timelines. Identify over-stocked items exceeding 60 days of demand.",
+      },
+    ],
+  },
+  {
+    slug: "procurement-plan",
+    label: "Procurement Plan",
+    description: "Aggregates restock needs by supplier into a purchase plan",
+    promptTemplate: `Generate a PROCUREMENT PLAN:
+- Fetch all active {{PRODUCT_LABEL_PLURAL}} where current stock is at or below reorder point
+- Group restock needs by supplier name
+- For each supplier, calculate: number of SKUs to reorder, total units needed, estimated cost (units * cost_price), and lead time
+- Prioritize suppliers with the most critical stockout risk (items already at zero)
+- Generate a consolidated purchase order summary per supplier
+- Return structured data with per-supplier order summaries and a total procurement budget estimate`,
+    fewShotExamples: [
+      {
+        userInput: "What do I need to order and from whom?",
+        expectedBehavior: "Query products below reorder point. Group by supplier. Calculate order quantities, costs, and urgency. Produce a consolidated PO summary per supplier.",
+      },
+    ],
+  },
+  {
+    slug: "supplier-analysis",
+    label: "Supplier Reliability Analysis",
+    description: "Scores suppliers on on-time delivery rate and lead time variance",
+    promptTemplate: `Perform SUPPLIER RELIABILITY ANALYSIS:
+- Note: Delivery tracking data is not yet available in the system
+- When delivery data becomes available, this analysis will:
+  * Score each supplier on on-time delivery rate (deliveries within promised lead time / total deliveries)
+  * Calculate lead time variance (standard deviation of actual vs promised delivery days)
+  * Compute a composite reliability score (weighted: 60% on-time rate + 40% consistency)
+  * Rank suppliers from most to least reliable
+  * Flag suppliers with on-time rate below 80% or high lead time variance
+- For now, return a placeholder indicating delivery tracking needs to be enabled
+- Return structured data explaining what metrics will be available once delivery tracking is active`,
+  },
+  {
+    slug: "seasonal-detect",
+    label: "Seasonal Pattern Detection",
+    description: "FFT-based auto-detection of weekly, monthly, and annual cycles in sales",
+    promptTemplate: `Perform SEASONAL PATTERN DETECTION:
+- Fetch daily sales aggregates for the last {timeframeDays} days (minimum 90 days recommended)
+- Apply Fast Fourier Transform (FFT) to the daily revenue time series to identify dominant frequency components
+- Detect and classify seasonal cycles: weekly (5-9 day period), monthly (25-35 day period), quarterly (80-100 day period), annual (350-380 day period)
+- For each detected cycle, report: period length in days, amplitude (strength of the pattern), phase (peak timing), and signal-to-noise ratio
+- Identify the strongest seasonal pattern and provide a plain-language interpretation (e.g. "Sales peak every Friday" or "Monthly cycle with peaks around the 15th")
+- Return structured data with detected cycles ranked by amplitude, including confidence scores based on signal-to-noise ratio`,
+    fewShotExamples: [
+      {
+        userInput: "Are there seasonal patterns in my sales?",
+        expectedBehavior: "Apply FFT to daily revenue series. Identify dominant frequencies. Map to weekly/monthly/annual cycles. Report peak timing and pattern strength with confidence scores.",
+      },
+    ],
+  },
+  {
+    slug: "stockout-cost",
+    label: "Stockout Cost Estimation",
+    description: "Quantifies revenue lost from zero-stock periods",
+    promptTemplate: `Perform STOCKOUT COST ESTIMATION:
+- Identify all {{PRODUCT_LABEL_PLURAL}} currently out of stock (inventory quantity = 0)
+- For each out-of-stock {{PRODUCT_LABEL}}, estimate:
+  * Average daily sales rate (from the 90 days before stockout)
+  * Number of days out of stock (from last inventory adjustment to now)
+  * Estimated lost revenue (daily_sales * selling_price * stockout_days)
+  * Estimated lost profit (daily_sales * margin * stockout_days)
+- Aggregate totals: total estimated lost revenue, total lost profit, number of affected SKUs
+- Rank by estimated revenue loss (highest first)
+- Include a recommendation for each item: reorder urgency based on historical demand
+- Return structured data with per-{{PRODUCT_LABEL}} stockout costs and aggregate impact`,
+    fewShotExamples: [
+      {
+        userInput: "How much am I losing from stockouts?",
+        expectedBehavior: "Find products with zero stock. Calculate their average daily sales from recent history. Multiply by stockout duration and price to estimate lost revenue. Rank by impact.",
+      },
+    ],
+  },
+  {
+    slug: "sales-velocity",
+    label: "Sales Velocity Scoring",
+    description: "Composite velocity x margin quadrant analysis (Stars, Volume, Premium, Dogs)",
+    promptTemplate: `Perform SALES VELOCITY SCORING:
+- Fetch all active {{PRODUCT_LABEL_PLURAL}} with sales volume and pricing data for the last {timeframeDays} days
+- Calculate per-{{PRODUCT_LABEL}}: daily velocity (units_sold / days_in_period), margin percentage ((price - cost) / price * 100), revenue contribution
+- Compute velocity score (percentile rank) and margin score (percentile rank)
+- Classify into quadrants:
+  * Stars: high velocity + high margin (top performers — protect and expand)
+  * Volume Movers: high velocity + low margin (drive revenue but thin margins — optimize pricing)
+  * Premium: low velocity + high margin (niche items — maintain availability, targeted marketing)
+  * Dogs: low velocity + low margin (underperformers — consider discontinuing or repricing)
+- Use median velocity and median margin as the quadrant boundaries
+- Return structured data with per-{{PRODUCT_LABEL}} velocity metrics, quadrant assignments, and quadrant summaries`,
+    fewShotExamples: [
+      {
+        userInput: "Which products are my stars vs dogs?",
+        expectedBehavior: "Calculate velocity (units/day) and margin % per product. Use median as boundary. Classify into Stars/Volume/Premium/Dogs quadrants. Summarize each quadrant with counts and revenue share.",
+      },
+    ],
+  },
 ];
 
 // ── Built-in Report Types ──────────────────────────────────

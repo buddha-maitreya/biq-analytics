@@ -22,21 +22,12 @@ function useTheme() {
 }
 
 // ── Lazy-loaded page components (code splitting) ──
-// Only the active page is loaded, reducing initial bundle by ~60-70%.
 const Dashboard = React.lazy(() => import("./pages/Dashboard"));
-const ProductsPage = React.lazy(() => import("./pages/ProductsPage"));
-const OrdersPage = React.lazy(() => import("./pages/OrdersPage"));
-const CustomersPage = React.lazy(() => import("./pages/CustomersPage"));
-const OperationsPage = React.lazy(() => import("./pages/OperationsPage"));
-const InventoryPage = React.lazy(() => import("./pages/InventoryPage"));
-const InvoicesPage = React.lazy(() => import("./pages/InvoicesPage"));
+const AnalyticsPage = React.lazy(() => import("./pages/AnalyticsPage"));
 const AssistantPage = React.lazy(() => import("./pages/AssistantPage"));
 const ReportsPage = React.lazy(() => import("./pages/ReportsPage"));
 const AdminPage = React.lazy(() => import("./pages/AdminPage"));
-const ApprovalsPage = React.lazy(() => import("./pages/ApprovalsPage"));
 const AboutPage = React.lazy(() => import("./pages/AboutPage"));
-const EmailPage = React.lazy(() => import("./pages/EmailPage"));
-const ScanPage = React.lazy(() => import("./pages/ScanPage"));
 
 // LoginPage stays eagerly loaded — it's the first thing users see
 import LoginPage from "./pages/LoginPage";
@@ -48,19 +39,11 @@ export type { Page, AppConfig, AuthUser };
 /** Page title labels for mobile header */
 const PAGE_TITLES: Record<Page, string> = {
   dashboard: "Dashboard",
-  products: "Products",
-  operations: "Operations",
-  orders: "Orders",
-  customers: "Customers",
-  inventory: "Inventory",
-  scan: "Scanner",
-  invoices: "Invoices",
-  assistant: "Executive AI Assistant",
-  reports: "Analytics",
-  approvals: "Approvals",
+  analytics: "Analytics Explorer",
+  assistant: "AI Assistant",
+  reports: "Reports",
   admin: "Admin",
   settings: "Settings",
-  email: "Email",
   about: "About",
 };
 
@@ -149,33 +132,17 @@ export default function App() {
   const renderPage = () => {
     switch (page) {
       case "dashboard":
-        return <Dashboard config={cfg} />;
-      case "products":
-        return <ProductsPage config={cfg} />;
-      case "operations":
-        return <OperationsPage config={cfg} />;
-      case "orders":
-        return <OrdersPage config={cfg} />;
-      case "customers":
-        return <CustomersPage config={cfg} />;
-      case "inventory":
-        return <InventoryPage config={cfg} />;
-      case "scan":
-        return <ScanPage config={cfg} />;
-      case "invoices":
-        return <InvoicesPage config={cfg} />;
+        return <Dashboard config={cfg} onNavigate={setPage} />;
+      case "analytics":
+        return <AnalyticsPage config={cfg} />;
       case "assistant":
         return <AssistantPage config={cfg} onOpenSidebar={() => setSidebarOpen(true)} />;
       case "reports":
         return <ReportsPage config={cfg} />;
-      case "approvals":
-        return <ApprovalsPage config={cfg} user={user} />;
       case "admin":
         return <AdminPage config={cfg} onSaved={refreshConfig} />;
       case "settings":
         return <AdminPage config={cfg} onSaved={refreshConfig} />;
-      case "email":
-        return <EmailPage config={cfg} user={user} />;
       case "about":
         return <AboutPage config={cfg} />;
     }

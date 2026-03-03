@@ -2,19 +2,11 @@
 
 export type Page =
   | "dashboard"
-  | "products"
-  | "operations"
-  | "orders"
-  | "customers"
-  | "inventory"
-  | "scan"
-  | "invoices"
+  | "analytics"
   | "assistant"
   | "reports"
-  | "approvals"
   | "admin"
   | "settings"
-  | "email"
   | "about";
 
 /** Authenticated user returned by the auth API */

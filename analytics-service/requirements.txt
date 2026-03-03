@@ -1,0 +1,16 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.8.2
+pydantic-settings==2.4.0
+pandas==2.2.3
+numpy==1.26.4
+scipy==1.14.1
+matplotlib==3.9.2
+prophet==1.1.6
+cmdstanpy==1.2.4
+statsmodels==0.14.4
+scikit-learn==1.5.2
+mlxtend==0.23.1
+lifetimes==0.11.3
+seaborn==0.13.2
+squarify==0.4.3

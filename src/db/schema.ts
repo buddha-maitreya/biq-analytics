@@ -107,6 +107,9 @@ export const products = pgTable(
     minStockLevel: integer("min_stock_level").default(0),
     maxStockLevel: integer("max_stock_level"),
     reorderPoint: integer("reorder_point").default(0),
+    externalId: varchar("external_id", { length: 255 }),
+    externalSource: varchar("external_source", { length: 100 }),
+    supplierName: varchar("supplier_name", { length: 255 }),
     metadata: metadata(),
     ...timestamps(),
   },
@@ -115,6 +118,7 @@ export const products = pgTable(
     index("idx_products_category").on(t.categoryId),
     index("idx_products_barcode").on(t.barcode),
     index("idx_products_active").on(t.isActive),
+    index("idx_products_external_id").on(t.externalId),
   ]
 );
 
@@ -442,12 +446,15 @@ export const customers = pgTable(
     balance: numeric("balance", { precision: 12, scale: 2 })
       .notNull()
       .default("0"),
+    externalId: varchar("external_id", { length: 255 }),
+    externalSource: varchar("external_source", { length: 100 }),
     metadata: metadata(),
     ...timestamps(),
   },
   (t) => [
     index("idx_customers_email").on(t.email),
     index("idx_customers_active").on(t.isActive),
+    index("idx_customers_external_id").on(t.externalId),
   ]
 );
 
@@ -492,6 +499,8 @@ export const orders = pgTable(
     paymentReference: varchar("payment_reference", { length: 255 }),
     /** Payment status: pending, paid, partial, refunded */
     paymentStatus: varchar("payment_status", { length: 50 }).notNull().default("pending"),
+    externalId: varchar("external_id", { length: 255 }),
+    externalSource: varchar("external_source", { length: 100 }),
     metadata: metadata(),
     ...timestamps(),
   },
@@ -500,6 +509,7 @@ export const orders = pgTable(
     index("idx_orders_customer").on(t.customerId),
     index("idx_orders_status").on(t.statusId),
     index("idx_orders_created").on(t.createdAt),
+    index("idx_orders_external_id").on(t.externalId),
   ]
 );
 

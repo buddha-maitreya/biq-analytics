@@ -160,4 +160,89 @@ router.post("/admin/sandbox/snapshot", async (c) => {
   }
 });
 
+// ─── Data Connector Sync Management ─────────────────────────
+
+import { getConnector, listConnectors } from "@services/connectors";
+
+/**
+ * GET /admin/connectors — list available data connectors
+ */
+router.get("/admin/connectors", async (c) => {
+  const connectors = listConnectors();
+  return c.json({
+    data: connectors.map((conn) => ({
+      type: conn.type,
+      displayName: conn.displayName,
+    })),
+  });
+});
+
+/**
+ * GET /admin/syncs — list sync history
+ * Reads recent sync records from KV store (if available via c.var.kv).
+ * Falls back to an empty list if KV is not provisioned.
+ */
+router.get("/admin/syncs", async (c) => {
+  // NOTE: KV access pattern depends on the Agentuity runtime context.
+  // In agent handlers it's ctx.kv; in Hono routes it may be c.var.kv or
+  // accessed via a service import. Adjust if the KV access pattern differs.
+  const kv = c.var.kv;
+  if (!kv) {
+    return c.json({ data: [], message: "KV store not available in this context" });
+  }
+
+  try {
+    // Scan for sync records stored by import agent (keys like "sync:*" or "import:*:latest")
+    const syncRecords: unknown[] = [];
+    const connectorTypes = ["csv", "rest"];
+    for (const connType of connectorTypes) {
+      try {
+        const record = await kv.get("imports", `import:${connType}:latest`);
+        if (record) {
+          syncRecords.push({ connector: connType, ...record });
+        }
+      } catch {
+        // Key doesn't exist — skip
+      }
+    }
+    return c.json({ data: syncRecords });
+  } catch {
+    return c.json({ data: [] });
+  }
+});
+
+/**
+ * POST /admin/syncs/:connector/now — trigger a manual sync for a connector
+ */
+router.post("/admin/syncs/:connector/now", async (c) => {
+  const connectorType = c.req.param("connector");
+  const connector = getConnector(connectorType);
+  if (!connector) {
+    return c.json({ error: `Unknown connector: ${connectorType}` }, 404);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+
+  // Validate connector config
+  const config = {
+    type: connectorType,
+    settings: (body.settings ?? {}) as Record<string, unknown>,
+    fieldMapping: body.fieldMapping as Record<string, string> | undefined,
+  };
+
+  const validation = await connector.validate(config);
+  if (!validation.valid) {
+    return c.json({ error: validation.error }, 400);
+  }
+
+  // Run sync
+  const result = await connector.sync(config, {
+    dryRun: body.dryRun ?? false,
+    batchSize: body.batchSize ?? 100,
+    mode: body.mode ?? "upsert",
+  });
+
+  return c.json({ data: result });
+});
+
 export default router;

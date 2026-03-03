@@ -30,6 +30,8 @@ import { db, webhookSources as webhookSourcesTable, webhookEvents as webhookEven
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import { handlePosSale } from "@services/pos-webhook";
+import { normalizeProduct, normalizeOrder, normalizeCustomer } from "@services/normalizer";
+import { products, orders, customers, inventory } from "@db/schema";
 
 // ── Service Handler Registry ───────────────────────────────
 // Maps handler names to service functions for non-agent webhook processing.
@@ -39,6 +41,11 @@ import { handlePosSale } from "@services/pos-webhook";
 type ServiceHandler = (payload: unknown, source: string, eventId: string) => Promise<unknown>;
 const serviceHandlers: Record<string, ServiceHandler> = {
   pos: handlePosSale,
+  sale_created: handleSaleCreated,
+  product_updated: handleProductUpdated,
+  inventory_adjusted: handleInventoryAdjusted,
+  customer_created: handleCustomerCreated,
+  customer_updated: handleCustomerUpdated,
 };
 
 // ── Types ──────────────────────────────────────────────────
@@ -188,6 +195,265 @@ async function logEvent(event: WebhookEvent) {
   } catch {
     // Non-critical — don't fail the webhook
   }
+}
+
+// ── Generic Connector Event Handlers ───────────────────────
+
+async function handleSaleCreated(payload: unknown, source: string, eventId: string): Promise<unknown> {
+  const raw = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+  const normalized = normalizeOrder(raw, undefined, source);
+
+  // Check for existing order by externalId or orderNumber
+  if (normalized.externalId) {
+    const existing = await db
+      .select()
+      .from(orders)
+      .where(eq(orders.externalId, normalized.externalId))
+      .limit(1);
+
+    if (existing.length > 0) {
+      await db.update(orders).set({
+        totalAmount: String(normalized.totalAmount),
+        paymentMethod: normalized.paymentMethod ?? existing[0].paymentMethod,
+        paymentReference: normalized.paymentReference ?? existing[0].paymentReference,
+        notes: normalized.notes ?? existing[0].notes,
+        externalSource: normalized.externalSource ?? existing[0].externalSource,
+        metadata: { ...((existing[0].metadata as Record<string, unknown>) ?? {}), ...normalized.metadata, webhookEventId: eventId },
+        updatedAt: new Date(),
+      }).where(eq(orders.id, existing[0].id));
+      return { action: "updated", orderId: existing[0].id };
+    }
+  }
+
+  // Create new order
+  const [created] = await db.insert(orders).values({
+    orderNumber: normalized.orderNumber ?? `WH-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    totalAmount: String(normalized.totalAmount),
+    paymentMethod: normalized.paymentMethod,
+    paymentReference: normalized.paymentReference,
+    notes: normalized.notes,
+    externalId: normalized.externalId,
+    externalSource: normalized.externalSource,
+    metadata: { ...normalized.metadata, webhookEventId: eventId },
+  }).returning({ id: orders.id });
+
+  return { action: "created", orderId: created.id };
+}
+
+async function handleProductUpdated(payload: unknown, source: string, eventId: string): Promise<unknown> {
+  const raw = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+  const normalized = normalizeProduct(raw, undefined, source);
+
+  // Check for existing product by externalId or SKU
+  if (normalized.externalId) {
+    const existing = await db
+      .select()
+      .from(products)
+      .where(eq(products.externalId, normalized.externalId))
+      .limit(1);
+
+    if (existing.length > 0) {
+      await db.update(products).set({
+        name: normalized.name || existing[0].name,
+        price: normalized.sellingPrice !== undefined ? String(normalized.sellingPrice) : existing[0].price,
+        costPrice: normalized.costPrice !== undefined ? String(normalized.costPrice) : existing[0].costPrice,
+        unit: normalized.unit ?? existing[0].unit,
+        supplierName: normalized.supplierName ?? existing[0].supplierName,
+        externalSource: normalized.externalSource ?? existing[0].externalSource,
+        metadata: { ...((existing[0].metadata as Record<string, unknown>) ?? {}), ...normalized.metadata, webhookEventId: eventId },
+        updatedAt: new Date(),
+      }).where(eq(products.id, existing[0].id));
+      return { action: "updated", productId: existing[0].id };
+    }
+  }
+
+  if (normalized.sku) {
+    const existing = await db
+      .select()
+      .from(products)
+      .where(eq(products.sku, normalized.sku))
+      .limit(1);
+
+    if (existing.length > 0) {
+      await db.update(products).set({
+        name: normalized.name || existing[0].name,
+        price: normalized.sellingPrice !== undefined ? String(normalized.sellingPrice) : existing[0].price,
+        costPrice: normalized.costPrice !== undefined ? String(normalized.costPrice) : existing[0].costPrice,
+        unit: normalized.unit ?? existing[0].unit,
+        supplierName: normalized.supplierName ?? existing[0].supplierName,
+        externalId: normalized.externalId ?? existing[0].externalId,
+        externalSource: normalized.externalSource ?? existing[0].externalSource,
+        metadata: { ...((existing[0].metadata as Record<string, unknown>) ?? {}), ...normalized.metadata, webhookEventId: eventId },
+        updatedAt: new Date(),
+      }).where(eq(products.id, existing[0].id));
+      return { action: "updated", productId: existing[0].id };
+    }
+  }
+
+  // Create new product
+  const [created] = await db.insert(products).values({
+    name: normalized.name || "Unknown Product",
+    sku: normalized.sku ?? `WH-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    price: String(normalized.sellingPrice ?? "0"),
+    costPrice: normalized.costPrice !== undefined ? String(normalized.costPrice) : undefined,
+    unit: normalized.unit ?? "piece",
+    supplierName: normalized.supplierName,
+    externalId: normalized.externalId,
+    externalSource: normalized.externalSource,
+    metadata: { ...normalized.metadata, webhookEventId: eventId },
+  }).returning({ id: products.id });
+
+  return { action: "created", productId: created.id };
+}
+
+async function handleInventoryAdjusted(payload: unknown, source: string, eventId: string): Promise<unknown> {
+  const raw = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+
+  const sku = String(raw.sku ?? raw.product_code ?? "");
+  const externalId = String(raw.id ?? raw.external_id ?? raw.externalId ?? "");
+  const quantityChange = Number(raw.quantity ?? raw.qty ?? raw.adjustment ?? 0);
+
+  if (!sku && !externalId) {
+    return { action: "skipped", reason: "No product identifier (sku or externalId) provided" };
+  }
+
+  // Find product by externalId or SKU
+  let product: { id: string; name: string } | undefined;
+  if (externalId) {
+    const results = await db
+      .select({ id: products.id, name: products.name })
+      .from(products)
+      .where(eq(products.externalId, externalId))
+      .limit(1);
+    product = results[0];
+  }
+  if (!product && sku) {
+    const results = await db
+      .select({ id: products.id, name: products.name })
+      .from(products)
+      .where(eq(products.sku, sku))
+      .limit(1);
+    product = results[0];
+  }
+
+  if (!product) {
+    return { action: "skipped", reason: `Product not found: sku=${sku}, externalId=${externalId}` };
+  }
+
+  // Find the first inventory record for this product and update quantity
+  const invRecords = await db
+    .select()
+    .from(inventory)
+    .where(eq(inventory.productId, product.id))
+    .limit(1);
+
+  if (invRecords.length > 0) {
+    const newQty = invRecords[0].quantity + quantityChange;
+    await db.update(inventory).set({
+      quantity: newQty >= 0 ? newQty : 0,
+      updatedAt: new Date(),
+    }).where(eq(inventory.id, invRecords[0].id));
+    return { action: "updated", productId: product.id, newQuantity: newQty >= 0 ? newQty : 0 };
+  }
+
+  return { action: "skipped", reason: "No inventory record found for product" };
+}
+
+async function handleCustomerCreated(payload: unknown, source: string, eventId: string): Promise<unknown> {
+  const raw = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+  const normalized = normalizeCustomer(raw, undefined, source);
+
+  // Check for existing customer by externalId or email
+  if (normalized.externalId) {
+    const existing = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.externalId, normalized.externalId))
+      .limit(1);
+
+    if (existing.length > 0) {
+      return { action: "skipped", reason: "Customer with this externalId already exists", customerId: existing[0].id };
+    }
+  }
+
+  if (normalized.email) {
+    const existing = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.email, normalized.email))
+      .limit(1);
+
+    if (existing.length > 0) {
+      return { action: "skipped", reason: "Customer with this email already exists", customerId: existing[0].id };
+    }
+  }
+
+  // Create new customer
+  const [created] = await db.insert(customers).values({
+    name: normalized.name || "Unknown Customer",
+    email: normalized.email,
+    phone: normalized.phone,
+    address: normalized.address,
+    externalId: normalized.externalId,
+    externalSource: normalized.externalSource,
+    metadata: { ...normalized.metadata, webhookEventId: eventId },
+  }).returning({ id: customers.id });
+
+  return { action: "created", customerId: created.id };
+}
+
+async function handleCustomerUpdated(payload: unknown, source: string, eventId: string): Promise<unknown> {
+  const raw = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+  const normalized = normalizeCustomer(raw, undefined, source);
+
+  // Find existing customer by externalId or email
+  let existing: (typeof customers.$inferSelect) | undefined;
+
+  if (normalized.externalId) {
+    const results = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.externalId, normalized.externalId))
+      .limit(1);
+    existing = results[0];
+  }
+
+  if (!existing && normalized.email) {
+    const results = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.email, normalized.email))
+      .limit(1);
+    existing = results[0];
+  }
+
+  if (!existing) {
+    // Create if not found (upsert behavior)
+    const [created] = await db.insert(customers).values({
+      name: normalized.name || "Unknown Customer",
+      email: normalized.email,
+      phone: normalized.phone,
+      address: normalized.address,
+      externalId: normalized.externalId,
+      externalSource: normalized.externalSource,
+      metadata: { ...normalized.metadata, webhookEventId: eventId },
+    }).returning({ id: customers.id });
+
+    return { action: "created", customerId: created.id };
+  }
+
+  // Update existing customer
+  await db.update(customers).set({
+    name: normalized.name || existing.name,
+    phone: normalized.phone ?? existing.phone,
+    address: normalized.address ?? existing.address,
+    externalId: normalized.externalId ?? existing.externalId,
+    externalSource: normalized.externalSource ?? existing.externalSource,
+    metadata: { ...((existing.metadata as Record<string, unknown>) ?? {}), ...normalized.metadata, webhookEventId: eventId },
+    updatedAt: new Date(),
+  }).where(eq(customers.id, existing.id));
+
+  return { action: "updated", customerId: existing.id };
 }
 
 // ── Router ─────────────────────────────────────────────────

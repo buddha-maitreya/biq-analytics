@@ -335,6 +335,116 @@ async function fetchValueGapData(range: DateRange): Promise<Record<string, unkno
   ] as Record<string, unknown>[];
 }
 
+/** Products with no sales in the last 30+ days (dead stock) */
+async function fetchDeadStockData(range: DateRange): Promise<Record<string, unknown>[]> {
+  const result = await db.execute(sql`
+    SELECT p.name AS product_name, p.sku,
+           COALESCE(i.quantity, 0) AS current_stock,
+           MAX(s.created_at) AS last_sale_date,
+           COALESCE(SUM(s.quantity), 0) AS total_sold_30d,
+           p.cost_price, p.price AS selling_price
+    FROM products p
+    LEFT JOIN inventory i ON i.product_id = p.id
+    LEFT JOIN sales s ON s.product_id = p.id AND s.created_at >= (CURRENT_DATE - INTERVAL '30 days')
+    WHERE p.is_active = true
+    GROUP BY p.id, p.name, p.sku, i.quantity, p.cost_price, p.price
+    HAVING COALESCE(i.quantity, 0) > 0
+    ORDER BY last_sale_date ASC NULLS FIRST
+  `);
+  return dbRows(result) as Record<string, unknown>[];
+}
+
+/** Products with cost and stock for capital simulation */
+async function fetchCashInStockData(_range: DateRange): Promise<Record<string, unknown>[]> {
+  const result = await db.execute(sql`
+    SELECT p.name AS product_name, p.sku, p.cost_price,
+           COALESCE(i.quantity, 0) AS quantity,
+           COALESCE(AVG(s.quantity)::numeric / 30.0, 0) AS avg_daily_sales,
+           p.price AS selling_price
+    FROM products p
+    LEFT JOIN inventory i ON i.product_id = p.id
+    LEFT JOIN sales s ON s.product_id = p.id AND s.created_at >= (CURRENT_DATE - INTERVAL '90 days')
+    WHERE p.is_active = true AND p.cost_price > 0
+    GROUP BY p.id, p.name, p.sku, p.cost_price, i.quantity, p.price
+    ORDER BY (p.cost_price * COALESCE(i.quantity, 0)) DESC
+  `);
+  return dbRows(result) as Record<string, unknown>[];
+}
+
+/** Products needing restock grouped by supplier */
+async function fetchProcurementData(_range: DateRange): Promise<Record<string, unknown>[]> {
+  const result = await db.execute(sql`
+    SELECT p.name AS product_name, p.sku,
+           p.supplier_name,
+           COALESCE(i.quantity, 0) AS current_stock,
+           p.reorder_point,
+           p.cost_price,
+           14 AS lead_time_days
+    FROM products p
+    LEFT JOIN inventory i ON i.product_id = p.id
+    WHERE p.is_active = true
+      AND p.reorder_point > 0
+      AND COALESCE(i.quantity, 0) <= p.reorder_point
+    ORDER BY p.supplier_name NULLS LAST, p.name
+  `);
+  return dbRows(result) as Record<string, unknown>[];
+}
+
+/** Supplier delivery tracking (stub — no delivery table yet) */
+async function fetchSupplierPerformanceData(_range: DateRange): Promise<Record<string, unknown>[]> {
+  // Supplier delivery tracking data is not yet available.
+  // This will be populated once delivery tracking is added to the schema.
+  return [];
+}
+
+/** Products with zero-stock periods for stockout cost estimation */
+async function fetchStockoutHistory(_range: DateRange): Promise<Record<string, unknown>[]> {
+  const result = await db.execute(sql`
+    SELECT p.name AS product_name, p.sku,
+           p.price AS selling_price,
+           COALESCE(AVG(daily_sales.qty), 0) AS avg_daily_sales,
+           GREATEST(0, DATE_PART('day', NOW() - MAX(it.created_at))) AS stockout_days
+    FROM products p
+    LEFT JOIN inventory i ON i.product_id = p.id AND i.quantity = 0
+    LEFT JOIN inventory_transactions it ON it.product_id = p.id AND it.type = 'adjustment'
+    LEFT JOIN (
+      SELECT product_id, AVG(quantity) AS qty FROM sales
+      WHERE created_at >= CURRENT_DATE - INTERVAL '90 days'
+      GROUP BY product_id
+    ) daily_sales ON daily_sales.product_id = p.id
+    WHERE p.is_active = true AND COALESCE(i.quantity, 0) = 0
+    GROUP BY p.id, p.name, p.sku, p.price
+  `);
+  return dbRows(result) as Record<string, unknown>[];
+}
+
+/** Sales velocity scoring — volume and margins per product */
+async function fetchSalesVelocityData(range: DateRange): Promise<Record<string, unknown>[]> {
+  const startDate = range.start;
+  const endDate = range.end;
+  // Compute days in period for velocity calculation
+  const days = Math.max(
+    1,
+    Math.ceil(
+      (new Date(endDate).getTime() - new Date(startDate).getTime()) / 86_400_000
+    )
+  );
+
+  const result = await db.execute(sql`
+    SELECT p.name AS product_name, p.sku,
+           COALESCE(SUM(s.quantity), 0) AS quantity_sold,
+           ${days} AS days_in_period,
+           p.price AS selling_price,
+           p.cost_price
+    FROM products p
+    LEFT JOIN sales s ON s.product_id = p.id AND s.created_at >= ${startDate}::date AND s.created_at <= ${endDate}::date
+    WHERE p.is_active = true AND p.price > 0
+    GROUP BY p.id, p.name, p.sku, p.price, p.cost_price
+    ORDER BY quantity_sold DESC
+  `);
+  return dbRows(result) as Record<string, unknown>[];
+}
+
 /** Warehouse/region performance for geo map */
 async function fetchRegionalPerformance(range: DateRange): Promise<Record<string, unknown>[]> {
   const result = await db.execute(sql`
@@ -388,6 +498,14 @@ const ACTION_QUERY_MAP: Record<AnalyticsAction, (range: DateRange) => Promise<Re
   "anomaly.shrinkage": fetchInventoryWithTransactions,
   // Insights
   "insights.value_gap": fetchValueGapData,
+  "insights.dead_stock": fetchDeadStockData,
+  "insights.cash_simulation": fetchCashInStockData,
+  "insights.procurement_plan": fetchProcurementData,
+  "insights.supplier_analysis": fetchSupplierPerformanceData,
+  "insights.stockout_cost": fetchStockoutHistory,
+  "insights.sales_velocity": fetchSalesVelocityData,
+  // Seasonal
+  "forecast.seasonal_detect": fetchDailySales,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -541,5 +659,56 @@ export const PREDICTIVE_ANALYTICS_TYPES: AnalyticsTypeInfo[] = [
     description: "Compares what your records say you should have in stock against what is physically there, then flags every product with unexplained discrepancies. Answers: 'Where is my inventory disappearing — theft, damage, spoilage, or recording errors?'",
     category: "anomaly",
     icon: "📦",
+  },
+  // New Insights
+  {
+    action: "insights.dead_stock",
+    label: "Dead Stock Analysis",
+    description: "Identifies slow-moving inventory with no recent sales, ranks by capital at risk, and suggests markdown/bundle/write-off actions. Answers: 'Which products are gathering dust and tying up my cash?'",
+    category: "insights",
+    icon: "🪦",
+  },
+  {
+    action: "insights.cash_simulation",
+    label: "Cash-in-Stock Simulation",
+    description: "Monte Carlo simulation of capital tied up in inventory by ABC tier, projecting sell-through timelines and flagging over-stocked items. Answers: 'How much working capital is locked in my warehouse and when will I recover it?'",
+    category: "insights",
+    icon: "💰",
+  },
+  {
+    action: "insights.procurement_plan",
+    label: "Procurement Plan",
+    description: "Aggregates restock needs by supplier into a consolidated purchase plan with estimated costs and lead times. Answers: 'What do I need to order and from which suppliers?'",
+    category: "insights",
+    icon: "📋",
+  },
+  {
+    action: "insights.supplier_analysis",
+    label: "Supplier Reliability Analysis",
+    description: "Scores suppliers on on-time delivery rate and lead time variance with a composite reliability score. Answers: 'Which suppliers can I trust and which need attention?'",
+    category: "insights",
+    icon: "🤝",
+  },
+  {
+    action: "insights.stockout_cost",
+    label: "Stockout Cost Estimation",
+    description: "Quantifies revenue and profit lost from zero-stock periods by estimating missed sales from historical demand. Answers: 'How much money am I losing because products are out of stock?'",
+    category: "insights",
+    icon: "🚫",
+  },
+  {
+    action: "insights.sales_velocity",
+    label: "Sales Velocity Scoring",
+    description: "Classifies products into Stars, Volume Movers, Premium, and Dogs based on velocity x margin quadrant analysis. Answers: 'Which products are my stars and which should I drop?'",
+    category: "insights",
+    icon: "⚡",
+  },
+  // New Forecasting
+  {
+    action: "forecast.seasonal_detect",
+    label: "Seasonal Pattern Detection",
+    description: "Uses FFT (Fast Fourier Transform) to auto-detect weekly, monthly, and annual cycles in your sales data. Answers: 'Are there hidden seasonal patterns I should plan around?'",
+    category: "forecasting",
+    icon: "🌊",
   },
 ];

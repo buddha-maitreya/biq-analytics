@@ -37,6 +37,20 @@ import { logAnalyticsMetric } from "@lib/analytics-metrics";
 import type { KVStore } from "@lib/cache";
 
 // ────────────────────────────────────────────────────────────
+// Environment
+// ────────────────────────────────────────────────────────────
+
+const ANALYTICS_SERVICE_URL = process.env.ANALYTICS_SERVICE_URL;
+const ANALYTICS_TIMEOUT_MS = parseInt(process.env.ANALYTICS_TIMEOUT_MS ?? "60000", 10);
+
+// ────────────────────────────────────────────────────────────
+// Circuit Breaker State (module-level)
+// ────────────────────────────────────────────────────────────
+
+let consecutiveFailures = 0;
+let circuitBreakerOpenUntil = 0;
+
+// ────────────────────────────────────────────────────────────
 // Types
 // ────────────────────────────────────────────────────────────
 
@@ -66,7 +80,15 @@ export type AnalyticsAction =
   | "anomaly.transactions"
   | "anomaly.shrinkage"
   // Insights
-  | "insights.value_gap";
+  | "insights.value_gap"
+  | "insights.dead_stock"
+  | "insights.cash_simulation"
+  | "insights.procurement_plan"
+  | "insights.supplier_analysis"
+  | "insights.stockout_cost"
+  | "insights.sales_velocity"
+  // Seasonal
+  | "forecast.seasonal_detect";
 
 /**
  * Map action prefixes to their analytics category for config lookup.
@@ -83,6 +105,7 @@ const ACTION_TO_CATEGORY: Record<string, AnalyticsCategory> = {
   "forecast.": "forecasting",
   "classify.": "customer", // RFM, CLV, bundles = customer analytics
   "anomaly.": "anomaly",
+  "insights.": "classification", // insights.* actions use classification config
 };
 
 /** Resolve an action to its analytics category */
@@ -173,14 +196,16 @@ const DEFAULT_CPU = "500m";
 // ────────────────────────────────────────────────────────────
 
 /**
- * Run a Python analytics action in an isolated sandbox.
+ * Run a Python analytics action.
  *
- * Calls sandboxApi.run() directly per the Agentuity Sandbox SDK.
- * All Python files are uploaded via command.files on every call.
- * The snapshot provides pre-installed packages (fast cold start).
+ * Routes to either the FastAPI analytics microservice (when
+ * ANALYTICS_SERVICE_URL is set) or falls back to the Agentuity
+ * sandbox execution path.
  *
- * @param sandboxApi - The sandbox API (`ctx.sandbox` in agents, `c.var.sandbox` in routes)
+ * @param sandboxApi - The sandbox API (`ctx.sandbox` in agents, `c.var.sandbox` in routes).
+ *                     Ignored when ANALYTICS_SERVICE_URL is set.
  * @param request - The action, data, and optional params
+ * @param kv - Optional KV store for logging execution metrics
  * @returns Structured result with summary, charts, and/or table data
  *
  * @example
@@ -210,6 +235,117 @@ export async function runAnalytics(
   sandboxApi: { run: (opts: Record<string, unknown>) => Promise<SandboxRunResult> },
   request: AnalyticsRequest,
   /** Optional KV store for logging execution metrics */
+  kv?: KVStore
+): Promise<AnalyticsResult> {
+  if (ANALYTICS_SERVICE_URL) {
+    return runAnalyticsViaService(request, kv);
+  }
+  return runAnalyticsViaSandbox(sandboxApi, request, kv);
+}
+
+// ────────────────────────────────────────────────────────────
+// HTTP Service Path (FastAPI microservice)
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Run analytics via the external FastAPI microservice.
+ *
+ * Includes retry with exponential backoff (3 attempts) and a
+ * circuit breaker that opens after 5 consecutive failures
+ * (30-second cooldown).
+ */
+async function runAnalyticsViaService(
+  request: AnalyticsRequest,
+  kv?: KVStore
+): Promise<AnalyticsResult> {
+  const startedAt = Date.now();
+
+  // Circuit breaker: skip if recently tripped
+  if (circuitBreakerOpenUntil > Date.now()) {
+    return { success: false, error: "Analytics service temporarily unavailable (circuit open)" };
+  }
+
+  // Build chart config the same way the sandbox path does
+  const category = getActionCategory(request.action);
+  let chartConfig: Record<string, unknown> = {};
+  try {
+    const chartCfg = await getAnalyticsConfig("charts");
+    chartConfig = chartCfg.params;
+  } catch {
+    // Non-critical — charts will use defaults
+  }
+
+  let lastError: Error | null = null;
+  const delays = [1000, 2000, 4000]; // exponential backoff
+
+  for (let attempt = 0; attempt <= 2; attempt++) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt - 1]));
+    }
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), ANALYTICS_TIMEOUT_MS);
+
+      const res = await fetch(`${ANALYTICS_SERVICE_URL}/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: request.action,
+          data: request.data,
+          params: request.params ?? {},
+          chart_config: chartConfig,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!res.ok && res.status >= 500) {
+        throw new Error(`Analytics service HTTP ${res.status}`);
+      }
+
+      const result = await res.json() as AnalyticsResult;
+      consecutiveFailures = 0; // reset on success
+
+      // Log metrics (same as sandbox path)
+      if (kv) {
+        logAnalyticsMetric(kv, {
+          action: request.action,
+          success: result.success,
+          durationMs: Date.now() - startedAt,
+          exitCode: result.success ? 0 : 1,
+          dataRowCount: request.data.length,
+          timestamp: Date.now(),
+        }).catch(() => {}); // Non-critical — never block on metrics
+      }
+
+      return result;
+    } catch (err: unknown) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      consecutiveFailures++;
+      if (consecutiveFailures >= 5) {
+        circuitBreakerOpenUntil = Date.now() + 30_000; // 30s open
+      }
+    }
+  }
+
+  return { success: false, error: lastError?.message ?? "Analytics service unavailable" };
+}
+
+// ────────────────────────────────────────────────────────────
+// Sandbox Execution Path
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Run a Python analytics action in an isolated Agentuity sandbox.
+ *
+ * Calls sandboxApi.run() directly per the Agentuity Sandbox SDK.
+ * All Python files are uploaded via command.files on every call.
+ * The snapshot provides pre-installed packages (fast cold start).
+ */
+async function runAnalyticsViaSandbox(
+  sandboxApi: { run: (opts: Record<string, unknown>) => Promise<SandboxRunResult> },
+  request: AnalyticsRequest,
   kv?: KVStore
 ): Promise<AnalyticsResult> {
   const { action, data, params: overrideParams } = request;

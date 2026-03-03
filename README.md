@@ -1,57 +1,92 @@
-# Business IQ Enterprise
+# BIQ Analytics
 
-**Enterprise-grade, industry-agnostic Inventory & Sales Management platform powered by AI agents.**
+**AI-powered Business Intelligence platform that plugs into any POS or ERP system.**
 
-Business IQ Enterprise is a full-stack business management system that combines traditional CRUD operations with AI-powered insights, natural language queries, and automated report generation. Built on the [Agentuity](https://agentuity.dev) platform, it deploys as a single-tenant application — one dedicated instance per client with isolated compute, storage, and configuration.
+BIQ Analytics is an agentic BI platform that connects to your existing business systems, transforms raw transaction data into AI-powered forecasts, anomaly detection, customer intelligence, and board-quality reports. No migration. No disruption. Just smarter decisions.
+
+Built on the [Agentuity](https://agentuity.dev) platform with a shared [FastAPI analytics microservice](analytics-service/), it deploys as a single-tenant application — one dedicated instance per client with isolated compute, storage, and configuration.
+
+**Developed by [Ruskins AI Consulting LTD](https://ruskins.ai) © 2026**
 
 ---
 
-## Vision
+## What BIQ Analytics Does
 
-Modern businesses need more than spreadsheets and rigid ERP systems. Business IQ Enterprise brings **intelligent automation** to everyday operations:
+BIQ Analytics is **the AI brain behind your business**. It sits on top of your existing systems and delivers:
 
-- **Ask questions in plain English** — "Which products are running low?" or "Show me sales trends for the last quarter" — and get instant, data-backed answers from AI agents.
-- **Automatic insights** — Demand forecasting, anomaly detection, restock recommendations, and sales trend analysis without manual number-crunching.
-- **Any industry, same platform** — A restaurant, hardware store, chemical supplier, or clinic all run the same codebase. Terminology, units, tax rules, and workflows adapt through environment variables — zero code changes.
-- **Single-tenant by design** — Every client gets their own deployment, database, and configuration. No shared data, no tenant ID hacks, no row-level security workarounds.
+- **Demand Forecasting** — Prophet (with Kenyan holiday calendar), ARIMA, Holt-Winters, seasonal detection
+- **Inventory Intelligence** — ABC-XYZ classification, safety stock + EOQ optimization, dead stock identification, shrinkage detection
+- **Customer Analytics** — RFM segmentation, CLV prediction (BG/NBD + Gamma-Gamma), churn risk, bundle detection
+- **Anomaly Detection** — IsolationForest for transaction anomalies, statistical shrinkage detection
+- **Financial Insights** — Cash-in-stock simulation, stockout cost estimation, procurement planning, supplier analysis, sales velocity
+- **Natural Language Chat** — Ask your data questions in plain English and get AI-narrated answers
+- **Board-Quality Reports** — AI-generated PDF/XLSX/PPTX reports with inline charts and executive narratives
+- **9 Chart Types** — Sales trends, heatmaps, scatter plots, treemaps, Pareto, waterfall, forecast plots, geo maps, rendered composites
+
+### What BIQ Analytics Is NOT
+
+| Not This | Why |
+|----------|-----|
+| **ERP** | We don't replace your business systems — we make them smarter |
+| **POS** | We don't handle transactions — we analyze them |
+| **Accounting Software** | We don't do bookkeeping — we surface financial insights |
+
+---
+
+## Platform Status
+
+| Layer | State |
+|-------|-------|
+| Platform foundation (Agentuity + Neon Postgres + React 19) | ✅ Production-ready |
+| 7 Agentuity agents (orchestrated) | ✅ Live |
+| 27 Python analytics modules (FastAPI microservice) | ✅ Railway-ready |
+| BI frontend (Dashboard, Analytics Explorer, Reports, Assistant) | ✅ Complete |
+| Data connectors + webhooks (CSV, REST, webhook framework) | ✅ Framework live |
+| M-Pesa / Paystack payment adapters | ⚠️ Adapters built, live API wiring pending |
+| KRA eTIMS compliance | ⚠️ Types + routes built, live API wiring pending |
+| Action agents (Restock, Collection, Digest, Anomaly Response) | 🔲 Next phase |
+| Email / WhatsApp output channels | 🔲 Planned |
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Agentuity Cloud                             │
-│                                                                     │
-│  ┌──────────────┐   ┌──────────────────┐   ┌────────────────────┐  │
-│  │   Frontend    │   │   API Routes     │   │    AI Agents       │  │
-│  │   (React +   │   │   (Hono-based)   │   │                    │  │
-│  │    Vite)      │   │                  │   │  business-assistant│  │
-│  │              │──▶│  /api/products    │──▶│  insights-analyzer │  │
-│  │  Dashboard   │   │  /api/orders     │   │  knowledge-base    │  │
-│  │  Products    │   │  /api/customers  │   │  report-generator  │  │
-│  │  Orders      │   │  /api/inventory  │   │                    │  │
-│  │  Customers   │   │  /api/invoices   │   └────────┬───────────┘  │
-│  │  Inventory   │   │  /api/pricing    │            │              │
-│  │  Invoices    │   │  /api/admin      │            │              │
-│  │  Reports     │   │  /api/chat       │            ▼              │
-│  │  Assistant   │   │  /api/reports    │   ┌────────────────────┐  │
-│  └──────────────┘   │  /api/documents  │   │  AI Gateway        │  │
-│                     │  /api/config     │   │  (OpenAI / Groq /  │  │
-│                     │  /api/health     │   │   Anthropic)       │  │
-│                     └────────┬─────────┘   └────────────────────┘  │
-│                              │                                      │
-│                              ▼                                      │
-│                     ┌──────────────────┐                            │
-│                     │  Neon Postgres   │                            │
-│                     │  (per-client DB) │                            │
-│                     └──────────────────┘                            │
-│                                                                     │
-│           ┌──────────┐  ┌──────────┐  ┌──────────────┐             │
-│           │ KV Store │  │  Vector  │  │ Object Store │             │
-│           │          │  │  Store   │  │              │             │
-│           └──────────┘  └──────────┘  └──────────────┘             │
-└─────────────────────────────────────────────────────────────────────┘
+External Systems (POS / ERP / M-Pesa / Paystack / eTIMS)
+        │ webhooks + connectors
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Agentuity Cloud (per client)                                   │
+│                                                                 │
+│  ┌─────────────┐  ┌──────────────────┐  ┌───────────────────┐  │
+│  │  Frontend   │  │   API Routes     │  │    AI Agents      │  │
+│  │  (React 19) │  │   (Hono-based)   │  │                   │  │
+│  │             │  │                  │  │  data-science     │  │
+│  │  Dashboard  │──▶  /api/admin      │──▶  insights-analyzer│  │
+│  │  Analytics  │  │  /api/chat       │  │  report-generator │  │
+│  │  Explorer   │  │  /api/reports    │  │  knowledge-base   │  │
+│  │  Reports    │  │  /api/config     │  │  scheduler        │  │
+│  │  Assistant  │  │  /api/webhooks   │  │  document-scanner │  │
+│  │             │  │  /api/health     │  │  data-import      │  │
+│  └─────────────┘  └────────┬─────────┘  └────────┬──────────┘  │
+│                            │                     │              │
+│                            ▼                     │              │
+│                   ┌──────────────────┐            │              │
+│                   │  Neon Postgres   │            │              │
+│                   │  (dedicated DB)  │            │              │
+│                   └──────────────────┘            │              │
+│                                                   │              │
+│        ┌──────────┐  ┌─────────┐  ┌───────────┐ │              │
+│        │ KV Store │  │ Vector  │  │ Object    │ │              │
+│        └──────────┘  └─────────┘  └───────────┘ │              │
+└──────────────────────────────────────────────────│──────────────┘
+                                                   │
+                              ┌─────────────────────▼──────────────┐
+                              │  Railway (shared across clients)   │
+                              │  analytics-service (FastAPI)       │
+                              │  27 Python modules                 │
+                              │  ~$10-15/mo flat                   │
+                              └────────────────────────────────────┘
 ```
 
 ### Layers
@@ -60,9 +95,10 @@ Modern businesses need more than spreadsheets and rigid ERP systems. Business IQ
 |-------|-----------|----------|
 | **Frontend** | React 19, Vite, `@agentuity/react` hooks | `src/web/` |
 | **API Routes** | Hono-based routers via `@agentuity/runtime` | `src/api/` |
-| **AI Agents** | Agentuity agents with Vercel AI SDK | `src/agent/` |
-| **Services** | Business logic layer (CRUD, calculations) | `src/services/` |
+| **AI Agents** | 7 Agentuity agents with Vercel AI SDK | `src/agent/` |
+| **Services** | Business logic, connectors, normalization | `src/services/` |
 | **Database** | Neon Postgres via Drizzle ORM | `src/db/` |
+| **Analytics Engine** | FastAPI + 27 Python modules (Prophet, scikit-learn, statsmodels) | `analytics-service/` |
 | **Storage** | KV, Vector, and Object stores via Agentuity SDK | Agent runtime |
 
 ---
@@ -72,6 +108,7 @@ Modern businesses need more than spreadsheets and rigid ERP systems. Business IQ
 ### Runtime & Language
 - **Runtime:** [Bun](https://bun.sh) — fast JavaScript runtime, bundler, and package manager
 - **Language:** TypeScript 5.x (strict mode)
+- **Analytics:** Python 3.13 (FastAPI microservice)
 
 ### Frontend
 - **Framework:** [React 19](https://react.dev)
@@ -87,7 +124,14 @@ Modern businesses need more than spreadsheets and rigid ERP systems. Business IQ
 ### AI & Intelligence
 - **SDK:** [Vercel AI SDK v4](https://sdk.vercel.ai) (`ai` package)
 - **Providers:** OpenAI, Anthropic (Claude), Groq — routed through AI Gateway
-- **Agents:** 4 specialized AI agents with typed input/output schemas
+- **Agents:** 7 specialized AI agents with typed input/output schemas
+
+### Analytics Engine
+- **Framework:** [FastAPI](https://fastapi.tiangolo.com/) with Pydantic validation
+- **Forecasting:** Prophet (with Kenyan holidays), ARIMA, SARIMA, Holt-Winters
+- **ML / Statistics:** scikit-learn (IsolationForest), statsmodels, scipy, lifetimes (BG/NBD + Gamma-Gamma)
+- **Visualization:** Matplotlib, Seaborn, Plotly, Vega-Lite
+- **Containerized:** Docker with CmdStan pre-compiled for Prophet
 
 ### Database & Storage
 - **Database:** [Neon Postgres](https://neon.tech) — serverless Postgres, one database per client
@@ -96,134 +140,155 @@ Modern businesses need more than spreadsheets and rigid ERP systems. Business IQ
 - **Additional Storage:** Agentuity KV store, Vector store (semantic search), Object store
 
 ### Deployment
-- **CLI:** Agentuity CLI (`agentuity deploy`)
+- **Platform:** Agentuity CLI (`agentuity deploy`) for the main app
+- **Analytics:** Railway (Docker) for the shared Python microservice
 - **Build:** Vite (frontend) + Bun bundler (server) — hybrid build system
 - **Environment:** WSL (Ubuntu 24.04) for builds and deploys from Windows
+
+---
+
+## 27 Analytics Modules
+
+### Charts (9)
+`sales_trends` · `heatmap` · `scatter` · `treemap` · `pareto` · `waterfall` · `forecast_plot` · `geo_map` · `render_chart`
+
+### Forecasting (5)
+`prophet_forecast` (Kenyan holidays) · `arima` · `holt_winters` · `safety_stock` (+ EOQ) · `seasonal_detect`
+
+### Classification (4)
+`abc_xyz` · `rfm` (segmentation) · `clv` (BG/NBD + Gamma-Gamma) · `bundles` (Apriori/FP-Growth)
+
+### Anomaly Detection (2)
+`isolation_forest` (transactions) · `shrinkage` (statistical)
+
+### Business Insights (7)
+`value_gap` · `dead_stock` · `cash_simulation` (Monte Carlo) · `procurement_plan` · `supplier_analysis` · `stockout_cost` · `sales_velocity`
+
+---
+
+## AI Agents
+
+| Agent | Purpose |
+|-------|---------|
+| **data-science** | Orchestrator — routes analytics queries to the right module, manages conversation context |
+| **insights-analyzer** | Runs Python analytics (sandbox for ad-hoc, microservice for production modules) |
+| **report-generator** | AI-narrated PDF/XLSX/PPTX reports with inline charts and executive summaries |
+| **knowledge-base** | RAG — document ingestion, vector embeddings, semantic search and retrieval |
+| **scheduler** | Cron-driven automation — scheduled reports, alerts, recurring analytics jobs |
+| **document-scanner** | Multimodal OCR, barcode extraction, invoice parsing |
+| **data-import** | CSV/REST/webhook data ingestion with auto field-detection and normalization |
+
+Agents communicate via typed Zod schemas and can call each other cross-agent. The data-science agent orchestrates the others to answer complex analytical questions.
 
 ---
 
 ## Project Structure
 
 ```
-business-iq-enterprise/
-├── agentuity.json              # Agentuity project config (projectId, region)
-├── agentuity.config.ts         # Build-time config (frontend env vars, Vite plugins)
+biq-analytics/
+├── agentuity.json              # Agentuity project config
+├── agentuity.config.ts         # Build-time config (frontend env vars, Vite)
 ├── app.ts                      # App entry point (createApp lifecycle)
 ├── package.json                # Dependencies and scripts
 ├── tsconfig.json               # TypeScript configuration
 ├── drizzle.config.ts           # Drizzle ORM migration config
 │
+├── analytics-service/          # Python analytics microservice
+│   ├── Dockerfile              #   Docker build (CmdStan + Prophet)
+│   ├── docker-compose.yml      #   Local dev compose
+│   ├── railway.toml            #   Railway deployment config
+│   ├── requirements.txt        #   Python dependencies
+│   ├── pyproject.toml          #   Python project config
+│   ├── src/
+│   │   ├── app.py              #   FastAPI entrypoint + /analyze route
+│   │   ├── config.py           #   Service configuration
+│   │   ├── dispatcher.py       #   Routes actions → modules
+│   │   ├── models.py           #   Pydantic request/response models
+│   │   ├── validation.py       #   Input validation
+│   │   ├── charts/             #   9 chart modules
+│   │   ├── forecasting/        #   5 forecasting modules
+│   │   ├── classification/     #   4 classification modules
+│   │   ├── anomaly/            #   2 anomaly detection modules
+│   │   └── insights/           #   7 business insight modules
+│   └── tests/                  #   pytest suite
+│
 ├── src/
 │   ├── agent/                  # AI Agents (auto-discovered at build time)
-│   │   ├── business-assistant/ #   Natural language business queries
-│   │   ├── insights-analyzer/  #   Demand forecasting, anomaly detection
-│   │   ├── knowledge-base/     #   Document ingestion & semantic search
-│   │   └── report-generator/   #   Automated report generation
+│   │   ├── data-science/       #   Analytics orchestrator
+│   │   ├── insights-analyzer/  #   Python analytics runner
+│   │   ├── report-generator/   #   AI report generation
+│   │   ├── knowledge-base/     #   RAG + vector search
+│   │   ├── scheduler/          #   Cron automation
+│   │   ├── document-scanner/   #   OCR + barcode
+│   │   └── data-import/        #   Data ingestion
 │   │
 │   ├── api/                    # HTTP API Routes (Hono-based)
-│   │   ├── index.ts            #   Route barrel file (all exports)
-│   │   ├── config.ts           #   /api/config, /api/health
-│   │   ├── products.ts         #   /api/products CRUD
-│   │   ├── categories.ts       #   /api/categories CRUD + tree
-│   │   ├── customers.ts        #   /api/customers CRUD
-│   │   ├── warehouses.ts       #   /api/warehouses CRUD
-│   │   ├── inventory.ts        #   /api/inventory (stock, adjustments, transfers)
-│   │   ├── orders.ts           #   /api/orders CRUD + status management
-│   │   ├── invoices.ts         #   /api/invoices CRUD + payments
-│   │   ├── pricing.ts          #   /api/pricing calculations + tax rules
 │   │   ├── admin.ts            #   /api/admin (stats, users, config)
-│   │   ├── documents.ts        #   /api/admin/documents (knowledge base)
 │   │   ├── chat.ts             #   /api/chat (AI assistant)
-│   │   └── reports.ts          #   /api/reports (AI report generation)
+│   │   ├── config.ts           #   /api/config, /api/health
+│   │   ├── reports.ts          #   /api/reports (AI reports)
+│   │   ├── webhooks.ts         #   /api/webhooks (M-Pesa, Paystack, generic)
+│   │   └── ...                 #   Additional CRUD routes
 │   │
 │   ├── db/                     # Database Layer
-│   │   ├── schema.ts           #   Drizzle schema (all tables + relations)
-│   │   └── index.ts            #   Database connection + query builder
+│   │   ├── schema.ts           #   Drizzle schema (53+ tables)
+│   │   ├── migrations/         #   SQL migration files
+│   │   └── index.ts            #   Database connection
 │   │
 │   ├── services/               # Business Logic Layer
-│   │   ├── products.ts         #   Product CRUD operations
-│   │   ├── categories.ts       #   Category tree management
-│   │   ├── customers.ts        #   Customer management
-│   │   ├── warehouses.ts       #   Warehouse operations
-│   │   ├── inventory.ts        #   Stock management + transactions
-│   │   ├── orders.ts           #   Order lifecycle management
-│   │   ├── invoices.ts         #   Invoice generation + payments
-│   │   ├── pricing.ts          #   Price calculation + tax rules
-│   │   ├── admin.ts            #   Admin operations + statistics
-│   │   └── index.ts            #   Service barrel file
+│   │   ├── connectors/         #   Data connector framework
+│   │   │   ├── csv.ts          #     CSV import with auto-mapping
+│   │   │   ├── rest.ts         #     Generic REST connector
+│   │   │   ├── registry.ts     #     Connector registry pattern
+│   │   │   └── types.ts        #     Connector interfaces
+│   │   ├── normalizer.ts       #   Auto field-detection + data normalization
+│   │   ├── type-registry.ts    #   Analytics type registry (all 27 modules)
+│   │   └── ...                 #   Additional service modules
 │   │
 │   ├── lib/                    # Shared Utilities
 │   │   ├── ai.ts               #   AI provider configuration
+│   │   ├── analytics.ts        #   HTTP bridge to analytics microservice
+│   │   ├── analytics-queries.ts#   SQL query builders for analytics data
 │   │   ├── config.ts           #   Environment-driven app config
-│   │   ├── errors.ts           #   Error handling middleware
-│   │   ├── pagination.ts       #   Pagination helpers
-│   │   ├── validation.ts       #   Zod validation utilities
-│   │   └── chunker.ts          #   Document chunking for vector store
+│   │   └── ...                 #   Errors, pagination, validation, chunker
 │   │
-│   ├── web/                    # Frontend (React + Vite)
-│   │   ├── index.html          #   Vite entry point
-│   │   ├── main.tsx            #   React bootstrap (AgentuityProvider)
-│   │   ├── App.tsx             #   Main app component + routing
-│   │   ├── components/         #   Shared UI components
+│   ├── web/                    # Frontend (React 19 + Vite)
+│   │   ├── App.tsx             #   Main app — routing + layout
+│   │   ├── pages/
+│   │   │   ├── Dashboard.tsx   #     BI dashboard — KPIs, trends, alerts
+│   │   │   ├── AnalyticsPage.tsx#    Analytics Explorer — all 27 modules
+│   │   │   ├── ReportsPage.tsx #     AI report generation + export
+│   │   │   ├── AssistantPage.tsx#    Natural language analytics chat
+│   │   │   └── AdminPage.tsx   #     System administration
+│   │   ├── components/
 │   │   │   └── Sidebar.tsx     #     Navigation sidebar
-│   │   ├── pages/              #   Page components
-│   │   │   ├── Dashboard.tsx   #     System overview + health
-│   │   │   ├── ProductsPage.tsx#     Product management
-│   │   │   ├── OrdersPage.tsx  #     Order management
-│   │   │   ├── CustomersPage.tsx#    Customer management
-│   │   │   ├── InventoryPage.tsx#    Stock levels + warehouses
-│   │   │   ├── InvoicesPage.tsx#     Invoice management
-│   │   │   ├── AdminPage.tsx   #     System administration
-│   │   │   ├── AssistantPage.tsx#    AI chat assistant
-│   │   │   └── ReportsPage.tsx #     AI report generation
 │   │   └── styles/             #   CSS stylesheets
 │   │
 │   ├── types/                  # TypeScript type declarations
 │   └── generated/              # Auto-generated by Agentuity CLI (gitignored)
 │
-├── scripts/                    # Build & validation scripts
-│   ├── pre-deploy.ts           #   Pre-deployment validation (6 checks)
-│   ├── build.ts                #   Windows-safe build wrapper
-│   └── fix-generated-paths.ts  #   Fix Windows backslash paths
-│
+├── scripts/                    # Build & utility scripts
+├── demo/                       # Seed data & demo configurations
+├── docs/                       # Technical documentation
 └── .copilot/skills/            # Platform documentation (dev reference only)
 ```
 
 ---
 
-## AI Agents
+## Data Connector Framework
 
-| Agent | Purpose | Input | Output |
-|-------|---------|-------|--------|
-| **business-assistant** | Natural language queries about business data | `{ message, context? }` | `{ reply, data?, suggestedActions? }` |
-| **insights-analyzer** | Demand forecasting, anomaly detection, restock recommendations, sales trends | `{ analysis, timeframeDays, productId?, limit }` | `{ analysisType, insights[], summary }` |
-| **knowledge-base** | Document ingestion, semantic search, and retrieval | `{ action, question?, documents?, keys? }` | `{ answer?, sources?, success }` |
-| **report-generator** | Automated business reports (sales, inventory, customer, financial) | `{ reportType, startDate?, endDate?, format }` | `{ title, period, content, generatedAt }` |
+BIQ Analytics ingests data from external systems — it doesn't require clients to re-enter data manually.
 
-Agents communicate via typed schemas (Zod) and can call each other cross-agent. The business assistant orchestrates other agents to answer complex questions.
+| Connector | Status | Description |
+|-----------|--------|-------------|
+| **CSV Import** | ✅ Live | Column auto-mapping, batch insert, preview |
+| **REST Connector** | ✅ Live | Generic REST API polling |
+| **Webhook Receiver** | ✅ Live | HMAC signature verification, idempotency |
+| **M-Pesa (Daraja)** | ⚠️ Adapter built | C2B normalization, STK Push, callbacks |
+| **Paystack** | ⚠️ Adapter built | Webhook signature verification, payment events |
+| **KRA eTIMS** | ⚠️ Routes built | Invoice submission, PIN/TCC validation |
 
----
-
-## Database Schema
-
-The database is **industry-neutral** — generic column names with `metadata` JSONB columns for vertical-specific attributes.
-
-| Table | Purpose |
-|-------|---------|
-| `categories` | Hierarchical product grouping (self-referencing parent) |
-| `products` | Core items — SKU, pricing, units, stock levels |
-| `warehouses` | Storage locations |
-| `inventory` | Stock levels per product per warehouse |
-| `inventory_transactions` | Audit trail for all stock changes |
-| `customers` | Customer records with credit limits and balances |
-| `order_statuses` | Configurable order workflow states (per deployment) |
-| `orders` | Sales orders with line items |
-| `order_items` | Line items within orders |
-| `invoices` | Invoices linked to orders/customers |
-| `invoice_items` | Line items within invoices |
-| `payments` | Payment records against invoices |
-| `tax_rules` | Configurable tax calculation rules |
-| `users` | System users (admin, staff, etc.) |
+All connectors normalize data through `externalId` + `externalSource` columns, enabling deduplication and source tracking.
 
 ---
 
@@ -231,15 +296,14 @@ The database is **industry-neutral** — generic column names with `metadata` JS
 
 The same codebase serves any industry. Configuration is purely through environment variables:
 
-| Variable | Example (Restaurant) | Example (Hardware Store) | Example (Chemical Supplier) |
-|----------|---------------------|--------------------------|----------------------------|
-| `PRODUCT_LABEL` | Menu Item | Product | Chemical |
-| `ORDER_LABEL` | Ticket | Sales Order | Purchase Order |
-| `CUSTOMER_LABEL` | Guest | Customer | Account |
-| `WAREHOUSE_LABEL` | Kitchen | Store | Depot |
-| `UNIT_DEFAULT` | portion | piece | kg |
-| `CURRENCY` | USD | EUR | GBP |
-| `COMPANY_NAME` | Joe's Diner | Bob's Hardware | ChemCorp |
+| Variable | Retail | Restaurant | Wholesale | Healthcare |
+|----------|--------|-----------|-----------|------------|
+| `PRODUCT_LABEL` | Product | Menu Item | Item | Medicine |
+| `ORDER_LABEL` | Sales Order | Ticket | Purchase Order | Requisition |
+| `CUSTOMER_LABEL` | Customer | Guest | Account | Facility |
+| `WAREHOUSE_LABEL` | Store | Kitchen | Depot | Pharmacy |
+| `UNIT_DEFAULT` | piece | portion | case | unit |
+| `CURRENCY` | KES | USD | EUR | GBP |
 
 No code branches, no industry conditionals, no vertical-specific columns. Same schema, same agents, same frontend — only config changes.
 
@@ -251,277 +315,73 @@ No code branches, no industry conditionals, no vertical-specific columns. Same s
 
 - [Bun](https://bun.sh) (v1.3+)
 - [Agentuity CLI](https://agentuity.dev) (v1.0+)
+- [Docker](https://docker.com) (for analytics-service local dev)
 - [WSL Ubuntu 24.04](https://learn.microsoft.com/en-us/windows/wsl/) (for Windows users)
-- Node.js 20+ (for some dev tools)
 
-### Installation
+### Quick Start
 
 ```bash
-git clone https://github.com/buddha-maitreya/business-iq-enterprise.git
-cd business-iq-enterprise
+# Clone
+git clone https://github.com/buddha-maitreya/biq-analytics.git
+cd biq-analytics
 bun install
-```
 
-### Environment Setup
-
-```bash
-# Create Agentuity project (one-time)
-agentuity project create --name business-iq-enterprise --database new
-
-# Pull environment variables (DATABASE_URL, AGENTUITY_SDK_KEY)
+# Create project + database
+agentuity project create --name "my-company-biq" --database new --no-build
 agentuity cloud env pull
 
-# Run database migrations
-bunx drizzle-kit migrate
+# Configure (edit .env with your branding, currency, API keys)
+
+# Deploy
+bunx drizzle-kit migrate    # Create database tables
+agentuity deploy             # Deploy to Agentuity cloud
 ```
 
-### Configuration
+### Analytics Service (Local Dev)
 
-Create or edit `.env` with your client-specific settings:
+```bash
+cd analytics-service
+docker-compose up            # Starts FastAPI on http://localhost:8000
+# Test: curl http://localhost:8000/health
+```
 
-```env
-# Branding
-COMPANY_NAME=My Business
-COMPANY_LOGO_URL=https://example.com/logo.png
+### Analytics Service (Production — Railway)
 
-# Localization
-CURRENCY=USD
-TAX_RATE=0.08
-TIMEZONE=America/Los_Angeles
-
-# Industry Terminology
-PRODUCT_LABEL=Product
-PRODUCT_LABEL_PLURAL=Products
-ORDER_LABEL=Order
-ORDER_LABEL_PLURAL=Orders
-CUSTOMER_LABEL=Customer
-CUSTOMER_LABEL_PLURAL=Customers
-WAREHOUSE_LABEL=Warehouse
-INVOICE_LABEL=Invoice
-UNIT_DEFAULT=piece
-
-# AI Provider
-LLM_PROVIDER_KEY=your-api-key
+```bash
+# Deploy analytics-service/ to Railway (Docker)
+# Set ANALYTICS_SERVICE_URL in Agentuity environment
+# The TypeScript bridge auto-routes analytics calls to the microservice
 ```
 
 ### Development
 
 ```bash
-agentuity dev       # Start dev server with hot reload
+agentuity dev               # Start dev server with hot reload
 ```
 
 ### Build & Deploy
 
 ```bash
-# Validate before deploying
-bun run validate
-
-# Build
-agentuity build
-
-# Deploy (from WSL on Windows)
-agentuity deploy
-```
-
-**Windows users:** All builds and deploys must run from WSL (Ubuntu 24.04) to avoid path issues. See the [deployment workflow](#deployment-workflow) section.
-
----
-
-## Deployment Workflow
-
-### Standard Process (WSL)
-
-```
-1. Develop on Windows (edit code in VS Code)
-2. Commit and push:
-     git add -A && git commit -m "message" && git push
-3. Deploy from WSL:
-     cd ~/business-iq-enterprise && git pull && agentuity deploy
+bun run validate            # Pre-deploy checks
+agentuity build             # Build
+agentuity deploy            # Deploy (from WSL on Windows)
 ```
 
 ---
 
-## New Client Installation Guide
+## Client Deployment Model
 
-Every client gets their own fully isolated deployment — separate Agentuity project, separate database, separate configuration. The process below can be performed by the client themselves (self-service) or by the vendor on the client's behalf.
-
-### Prerequisites (One-Time)
-
-The person deploying needs:
-
-| Requirement | How to Install |
-|------------|---------------|
-| **Bun** (v1.3+) | `curl -fsSL https://bun.sh/install \| bash` |
-| **Agentuity CLI** (v1.0+) | `curl -sSL https://agentuity.sh \| sh` |
-| **Git** | Pre-installed on most systems, or `sudo apt install git` |
-| **Agentuity Account** | Sign up at [app.agentuity.com](https://app.agentuity.com) |
-| **Linux / macOS / WSL** | Windows users need WSL Ubuntu 24.04 for builds |
-
-### Step-by-Step Installation
-
-#### 1. Authenticate with Agentuity
-
-```bash
-agentuity login
-```
-
-This opens a browser for authentication. Follow the prompts to log in.
-
-#### 2. Clone the Repository
-
-```bash
-git clone https://github.com/buddha-maitreya/business-iq-enterprise.git
-cd business-iq-enterprise
-```
-
-#### 3. Install Dependencies
-
-```bash
-bun install
-```
-
-#### 4. Create Client Project & Database
-
-```bash
-agentuity project create --name "client-company-name" --database new --no-build
-```
-
-This command:
-- Registers the project with Agentuity cloud
-- Creates `agentuity.json` with the new `projectId` and `orgId`
-- Provisions a dedicated Neon Postgres database
-- Auto-injects `DATABASE_URL` and `AGENTUITY_SDK_KEY` into the environment
-
-> **`--no-build`** skips the initial build (we configure env vars first).
-
-#### 5. Pull Environment Secrets
-
-```bash
-agentuity cloud env pull
-```
-
-This writes `DATABASE_URL` and `AGENTUITY_SDK_KEY` into `.env`.
-
-#### 6. Configure Client Environment
-
-Edit `.env` (or set via Agentuity dashboard → Secrets) with client-specific values:
-
-```env
-# ── Branding ──────────────────────────────────
-COMPANY_NAME=Acme Corporation
-COMPANY_LOGO_URL=https://acme.com/logo.png
-
-# ── Localization ──────────────────────────────
-CURRENCY=USD
-TAX_RATE=0.08
-TIMEZONE=America/New_York
-
-# ── Industry Terminology ──────────────────────
-# Customize labels to match the client's industry.
-# These control what the UI displays — the code never changes.
-PRODUCT_LABEL=Product
-PRODUCT_LABEL_PLURAL=Products
-ORDER_LABEL=Order
-ORDER_LABEL_PLURAL=Orders
-CUSTOMER_LABEL=Customer
-CUSTOMER_LABEL_PLURAL=Customers
-WAREHOUSE_LABEL=Warehouse
-INVOICE_LABEL=Invoice
-UNIT_DEFAULT=piece
-
-# ── AI Provider ───────────────────────────────
-LLM_PROVIDER_KEY=sk-...    # OpenAI, Anthropic, or Groq API key
-```
-
-**Industry examples:**
-
-| Setting | Restaurant | Hardware Store | Medical Supplier |
-|---------|-----------|---------------|-----------------|
-| `PRODUCT_LABEL` | Menu Item | Product | Supply |
-| `ORDER_LABEL` | Ticket | Sales Order | Requisition |
-| `CUSTOMER_LABEL` | Guest | Customer | Facility |
-| `WAREHOUSE_LABEL` | Kitchen | Store | Distribution Center |
-| `UNIT_DEFAULT` | portion | piece | unit |
-
-#### 7. Push Environment to Cloud
-
-```bash
-agentuity cloud env push
-```
-
-This syncs your `.env` values to the Agentuity cloud so the deployed app can read them.
-
-#### 8. Deploy
-
-```bash
-agentuity deploy
-```
-
-Expected output:
-```
-✓ Sync Env & Secrets
-✓ Build, Verify and Package
-  ✓ Typechecked in ~12s
-  ✓ Client built in ~2s
-  ✓ Server built in ~1s
-✓ Security Scan
-✓ Encrypt and Upload Deployment
-✓ Provision Deployment
-✓ Your project was deployed!
-
-→ Project: https://client-company-name-org-name.agentuity.run
-```
-
-#### 9. Run Database Migrations
-
-```bash
-bunx drizzle-kit migrate
-```
-
-This creates all tables in the client's dedicated database.
-
-#### 10. (Optional) Seed Initial Data
-
-```bash
-bun scripts/seed-demo.ts
-```
-
-Populates the database with starter data: default order statuses, sample tax rules, and optionally sample products/customers for testing.
-
-### Post-Installation Checklist
-
-| Step | Verify |
-|------|--------|
-| App loads | Visit the project URL — dashboard should render |
-| Health check | `GET /api/health` returns `{"status":"ok"}` |
-| Branding correct | Company name and labels match `.env` config |
-| Database connected | Products/Customers pages load (empty is fine) |
-| AI working | AI Assistant page responds to messages |
-
-### Updating a Client Deployment
-
-When new features are released:
-
-```bash
-cd business-iq-enterprise
-git pull                    # Get latest code
-agentuity deploy            # Rebuild and deploy
-bunx drizzle-kit migrate    # Apply any new migrations (safe to re-run)
-```
-
-The client's data, configuration, and environment variables are preserved across deployments. Only the code is updated.
-
-### Architecture: What Each Client Gets
+Every client gets a fully isolated deployment:
 
 ```
 ┌────────────────────────────────────────────────┐
-│  Client: Acme Corporation                      │
+│  Client: Safari Curio Shop                     │
 │                                                │
-│  Agentuity Project: acme-corp-biq              │
-│  URL: acme-corp-biq-org.agentuity.run          │
+│  Agentuity Project: safari-curio-biq           │
+│  URL: safari-curio-biq.agentuity.run           │
 │                                                │
 │  ┌──────────┐  ┌──────────┐  ┌──────────────┐ │
-│  │ Frontend │  │  Server  │  │  4 AI Agents │ │
+│  │ Frontend │  │  Server  │  │  7 AI Agents │ │
 │  │ (React)  │  │  (Hono)  │  │              │ │
 │  └──────────┘  └──────────┘  └──────────────┘ │
 │                      │                         │
@@ -530,43 +390,48 @@ The client's data, configuration, and environment variables are preserved across
 │            │  Neon Postgres   │                │
 │            │  (dedicated DB)  │                │
 │            └──────────────────┘                │
-│                                                │
-│  Config: COMPANY_NAME=Acme Corporation         │
-│          CURRENCY=USD                          │
-│          PRODUCT_LABEL=Product                 │
-│          ...                                   │
-└────────────────────────────────────────────────┘
+│                      │                         │
+│                      ▼                         │
+│          ANALYTICS_SERVICE_URL ──────────┐     │
+└──────────────────────────────────────────│─────┘
+                                           │
+                  ┌────────────────────────▼──┐
+                  │  Railway (shared)         │
+                  │  analytics-service        │
+                  │  27 Python modules        │
+                  │  ~$10-15/mo total         │
+                  └──────────────────────────┘
 ```
 
-Each client is completely isolated:
 - **Separate compute** — own Agentuity deployment
 - **Separate database** — own Neon Postgres instance
-- **Separate config** — own environment variables
-- **Separate URL** — own subdomain
-- **Separate AI context** — own knowledge base and conversation history
-
-No data crosses between clients. No shared infrastructure. No tenant ID columns.
+- **Separate config** — own environment variables and branding
+- **Shared analytics** — the Python microservice is stateless; it receives data, computes, returns results. No client data is stored.
 
 ---
 
-## API Endpoints
+## Production Testing Sequence
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/health` | Health check |
-| GET | `/api/config` | App configuration (labels, branding) |
-| GET/POST/PUT/DELETE | `/api/products` | Product CRUD |
-| GET/POST/PUT/DELETE | `/api/categories` | Category CRUD + tree |
-| GET/POST/PUT/DELETE | `/api/customers` | Customer CRUD |
-| GET/POST/PUT/DELETE | `/api/warehouses` | Warehouse CRUD |
-| GET/POST | `/api/inventory/*` | Stock levels, adjustments, transfers |
-| GET/POST/PUT | `/api/orders` | Order lifecycle management |
-| GET/POST | `/api/invoices` | Invoice management + payments |
-| GET/POST | `/api/pricing` | Price calculations + tax rules |
-| GET/POST/PUT/DELETE | `/api/admin/*` | Admin operations, users, config |
-| POST | `/api/admin/documents` | Knowledge base document management |
-| POST | `/api/chat` | AI assistant chat |
-| POST | `/api/reports` | AI report generation |
+1. Deploy `analytics-service/` to Railway → get URL
+2. Set `ANALYTICS_SERVICE_URL` in Agentuity → deploy main platform
+3. Smoke test: Dashboard → Analytics Explorer → Prophet forecast → PDF report
+4. Wire eTIMS live API (biggest Kenya differentiator)
+5. Wire M-Pesa live API (needed for Collection Agent)
+6. Build Weekly Digest Agent (first action agent — lowest risk, highest visible value)
+
+---
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for the full phased roadmap. Key upcoming milestones:
+
+- **Phase 6** — Wire live M-Pesa, Paystack, KRA eTIMS API calls (adapters already built)
+- **Phase 7** — Action agents: Restock, Collection, Compliance, Weekly Digest, Anomaly Response, CRM Sync
+- **Phase 8** — Email (SMTP) + WhatsApp Business API + SMS output channels
+- **Phase 9** — Production hardening, security audit, load testing
+- **Phase 10** — Advanced BI: multi-period comparison, scheduled delivery, product drill-downs
+
+The action agents in Phase 7 are where BIQ stops being a dashboard and becomes a **business operating system**. That's the real moat.
 
 ---
 
@@ -576,15 +441,15 @@ No data crosses between clients. No shared infrastructure. No tenant ID columns.
 |--------|---------|-------------|
 | `dev` | `agentuity dev` | Start development server |
 | `build` | `bun scripts/build.ts` | Build with Windows path fix |
-| `validate` | `bun scripts/pre-deploy.ts` | Pre-deploy validation (6 checks) |
+| `validate` | `bun scripts/pre-deploy.ts` | Pre-deploy validation |
 | `deploy` | `bun scripts/build.ts --deploy` | Build + deploy |
 | `db:generate` | `bunx drizzle-kit generate` | Generate migration files |
 | `db:migrate` | `bunx drizzle-kit migrate` | Run migrations |
-| `db:push` | `bunx drizzle-kit push` | Push schema directly |
-| `db:studio` | `bunx drizzle-kit studio` | Open Drizzle Studio GUI |
+| `db:seed` | `bun scripts/seed-demo.ts` | Seed demo data |
+| `test` | `bun test` | Run test suite |
 
 ---
 
 ## License
 
-Private — All rights reserved.
+Private — All rights reserved. © 2026 Ruskins AI Consulting LTD

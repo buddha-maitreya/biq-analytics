@@ -36,22 +36,24 @@
 
 All pages receive `config: AppConfig` as a prop. Use `config.labels.*` for display text — never hardcode domain terms.
 
+**Active pages (BI platform):**
+
 | File | Page Key | Description | RBAC |
 |------|----------|-------------|------|
-| `Dashboard.tsx` | `dashboard` | KPI cards, charts, recent activity | All roles |
-| `ProductsPage.tsx` | `products` | Product CRUD, search, categories | manager+ |
-| `OrdersPage.tsx` | `orders` | Order list, status workflow, details | staff+ |
-| `CustomersPage.tsx` | `customers` | Customer directory, purchase history | staff+ |
-| `InventoryPage.tsx` | `inventory` | Stock levels, movements, alerts | staff+ |
-| `InvoicesPage.tsx` | `invoices` | Invoice generation, list, PDF | staff+ |
-| `AssistantPage.tsx` | `assistant` | AI chat (business-assistant agent) | All roles |
-| `ReportsPage.tsx` | `reports` | AI-narrated business reports | manager+ |
-| `POSPage.tsx` | `pos` | Quick-sale / new order entry | staff+ |
-| `InvoiceCheckerPage.tsx` | `invoice_checker` | Invoice validation tool | manager+ |
-| `AdminPage.tsx` | `admin` / `settings` | Company settings, users, config | admin+ |
-| `EmailPage.tsx` | `email` | Email composition | manager+ |
+| `Dashboard.tsx` | `dashboard` | KPI cards, trend badges, interactive charts, drill-down, alerts panel | All roles |
+| `AnalyticsPage.tsx` | `analytics` | Analytics Explorer — run any of 27 analytics modules | All roles |
+| `AssistantPage.tsx` | `assistant` | AI chat (Data Science Assistant agent, SSE streaming) | staff+ |
+| `ReportsPage.tsx` | `reports` | AI-narrated PDF/XLSX/PPTX report generation | manager+ |
+| `AdminPage.tsx` | `admin` / `settings` | Company settings, users, AI config, integrations | admin+ |
 | `LoginPage.tsx` | — | Login form (shown when `!user`) | Public |
 | `AboutPage.tsx` | `about` | Version, branding, credits | All roles |
+
+**Archived pages (ERP features — files preserved, not in navigation):**
+`ProductsPage.tsx`, `OrdersPage.tsx`, `CustomersPage.tsx`, `InventoryPage.tsx`,
+`InvoicesPage.tsx`, `POSPage.tsx`, `ScanPage.tsx`, `OperationsPage.tsx`,
+`ApprovalsPage.tsx`, `EmailPage.tsx`, `InvoiceCheckerPage.tsx`
+
+To restore any: add to `navItems` in `Sidebar.tsx`, `PAGE_TITLES` + `renderPage()` in `App.tsx`, and `Page` union in `types.ts`.
 
 ---
 
